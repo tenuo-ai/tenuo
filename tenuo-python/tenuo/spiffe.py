@@ -1357,7 +1357,9 @@ class SpiffeWarrantIssuer:
         self.forwarded = forwarded  # A tenuo.spiffe_forwarded.SpiffeForwardedIdentity, or None.
         # Holder proofs of the single-request exchanges are remembered in this
         # process unless a store shared by several is given.
-        self._proof_store: ProofStore = proof_store or MemoryProofStore(max_jwt_proofs, max_jwt_proofs_per_identity)
+        self._proof_store: ProofStore = (
+            MemoryProofStore(max_jwt_proofs, max_jwt_proofs_per_identity) if proof_store is None else proof_store
+        )
         self._single = SingleRequestIssuer(
             signing_key=signing_key,
             # Looked up at each call: the callbacks may be replaced on a running issuer.

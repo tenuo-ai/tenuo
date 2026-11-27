@@ -22,8 +22,10 @@ import base64
 import hashlib
 import http.client
 import ipaddress
+import json
 import logging
 import secrets
+import socket
 import ssl
 import threading
 import time
@@ -134,6 +136,7 @@ def _url(value: str, allow_loopback_http: bool) -> None:
         raise ValueError("Use HTTPS; local HTTP requires allow_loopback_http=True")
     if parts.username or parts.password or parts.fragment or parts.query:
         raise ValueError("Endpoint URLs must not contain credentials, query, or fragment")
+    parts.port  # Raises ValueError for a port that is not one.
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +164,7 @@ class OAuthIdentity:
     @property
     def key(self) -> str:
         """The name limits are counted against: one user or workload, through one client, at one issuer."""
-        return f"{self.issuer} {self.client_id or ''} {self.subject}"
+        return json.dumps([self.issuer, self.client_id, self.subject], separators=(",", ":"))
 
 
 @dataclass(frozen=True)
@@ -259,7 +262,8 @@ class OAuthTokens:
         self._keys: Dict[str, Tuple[str, Any]] = {}
         self._loaded = self._attempted = float("-inf")
         self._fetching = False
-        self._lock = threading.Lock()
+        self._begun = self._in_use = 0  # Fetches begun, and which of them the keys in use came from.
+        self._lock = threading.Condition()
 
     def close(self) -> None:
         """Nothing is held open between fetches. Kept so callers can treat every source alike."""
@@ -275,7 +279,25 @@ class OAuthTokens:
             connection = http.client.HTTPSConnection(host, port, timeout=self._timeout, context=context)
         else:
             connection = http.client.HTTPConnection(host, port, timeout=self._timeout)
+
+        def give_up() -> None:
+            # The socket timeout bounds each read, not their sum: a provider that
+            # sends a little at a time is cut off here.
+            connected = connection.sock
+            if connected is not None:
+                try:
+                    socket.socket.shutdown(connected, socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        timer = threading.Timer(self._timeout, give_up)
+        timer.daemon = True
+        timer.start()
+        response: Optional[http.client.HTTPResponse] = None
         try:
+            connection.connect()
+            if time.monotonic() > deadline:
+                raise ValueError("Key endpoint too slow")
             connection.request("GET", path, headers={"Accept": "application/json"})
             response = connection.getresponse()
             if response.status != 200:  # A redirect included: the key location is configuration.
@@ -289,71 +311,98 @@ class OAuthTokens:
                 if len(raw) > _MAX_JSON or time.monotonic() > deadline:
                     raise ValueError("Key set too large or too slow")
         finally:
+            timer.cancel()
+            if response is not None:
+                response.close()  # Otherwise a refused answer keeps the socket until it is collected.
             connection.close()
         entries = _json(bytes(raw))["keys"]
-        if not isinstance(entries, list) or len(entries) > 100:
+        if not isinstance(entries, list) or len(entries) > 100 or any(not isinstance(e, dict) for e in entries):
             raise ValueError("Invalid keys")
         keys: Dict[str, Tuple[str, Any]] = {}
         seen = set()
         for entry in entries:
-            kid = _text(entry.get("kid"), "key ID")
-            if kid in seen:
-                raise ValueError("Duplicate key ID")
-            seen.add(kid)
+            # Two things refuse the whole set: one key ID twice, and private key
+            # material. An entry this adapter has no use for is passed over, and
+            # a token signed by it is simply not accepted.
+            kid = entry.get("kid")
+            if isinstance(kid, str):
+                if kid in seen:
+                    raise ValueError("Duplicate key ID")
+                seen.add(kid)
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
             if any(name in entry for name in ("d", "p", "q", "k")):
                 raise ValueError("Private or symmetric key")
             algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
-            if algorithm not in ("RS256", "ES256"):
+            if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not kid or len(kid) > 1024:
                 continue
-            key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
+            try:
+                key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
+            except Exception:
+                continue
             if algorithm == "RS256" and not (isinstance(key, rsa.RSAPublicKey) and key.key_size >= 2048):
-                raise ValueError("Invalid RSA key")
+                continue
             if algorithm == "ES256" and not (
                 isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP256R1)
             ):
-                raise ValueError("Invalid EC key")
+                continue
             keys[kid] = (algorithm, key)
         return keys
 
+    def _begin(self) -> int:
+        """Number a fetch that is about to start. Call with the lock held."""
+        self._begun += 1
+        self._attempted = time.monotonic()
+        return self._begun
+
+    def _use(self, keys: Dict[str, Tuple[str, Any]], number: int) -> None:
+        """Put a fetched key set to use, unless one fetched later is already in use. Call with the lock held."""
+        if number > self._in_use:
+            self._keys, self._loaded, self._in_use = keys, time.monotonic(), number
+
     def refresh(self) -> None:
         """Fetch the keys now, for example right after the provider withdrew one."""
+        with self._lock:
+            number = self._begin()
         try:
             keys = self._fetch()
         except Exception as exc:
             raise OAuthUnavailable("OAuth signing keys unavailable") from exc
         with self._lock:
-            self._keys, self._loaded = keys, time.monotonic()
-            self._attempted = self._loaded
+            self._use(keys, number)
+            self._lock.notify_all()
 
     def _key(self, kid: str) -> Tuple[str, Any]:
+        failure: Optional[BaseException] = None
+        number, keys = 0, {}
         with self._lock:
+            if self._fetching and time.monotonic() - self._loaded >= self._cache_seconds:
+                # No keys to judge any token by, and a fetch is under way: wait for it rather than refuse.
+                self._lock.wait_for(lambda: not self._fetching, self._timeout + 1)
             now = time.monotonic()
-            fresh = now - self._loaded < self._cache_seconds
-            if fresh and kid in self._keys:
+            if now - self._loaded < self._cache_seconds and kid in self._keys:
                 return self._keys[kid]
             fetch = not self._fetching and now - self._attempted >= self._refresh_interval
             if fetch:
-                self._fetching, self._attempted = True, now
+                self._fetching, number = True, self._begin()
         if fetch:  # One caller at a time, and never while holding the lock.
             try:
                 keys = self._fetch()
             except Exception as exc:
-                with self._lock:
-                    self._fetching = False
-                    usable = time.monotonic() - self._loaded < self._cache_seconds
-                if not usable:
-                    raise OAuthUnavailable("OAuth signing keys unavailable") from exc
-            else:
-                with self._lock:
-                    self._keys, self._loaded, self._fetching = keys, time.monotonic(), False
+                failure = exc
+            with self._lock:
+                if failure is None:
+                    self._use(keys, number)
+                self._fetching = False
+                self._lock.notify_all()
         with self._lock:
             if time.monotonic() - self._loaded >= self._cache_seconds:
-                raise OAuthUnavailable("OAuth signing keys unavailable")
-            if kid not in self._keys:
-                raise OAuthError("Invalid OAuth access token")
-            return self._keys[kid]
+                raise OAuthUnavailable("OAuth signing keys unavailable") from failure
+            if kid in self._keys:
+                return self._keys[kid]
+            if failure is not None:  # The key may be a new one that could not be fetched.
+                raise OAuthUnavailable("OAuth signing keys unavailable") from failure
+            raise OAuthError("Invalid OAuth access token")
 
     # -- tokens -----------------------------------------------------------
 
@@ -411,7 +460,9 @@ class OAuthTokens:
                 if claims.get(name) != constant:
                     raise ValueError()
             client = next((claims[name] for name in shape.client if name in claims), None)
-            if shape.has_clients and _text(client, "client") not in self._clients:
+            if client is not None or shape.has_clients:
+                _text(client, "client")
+            if shape.has_clients and client not in self._clients:
                 raise ValueError()
             for name, wanted in trust.where.items():
                 found = claims.get(name)
@@ -480,9 +531,11 @@ class TaskTemplate:
     carries ``task_id``, ``status`` (``"approved"``), integer ``expires_at``,
     one field for each name in ``owner``, and the fields the arguments refer
     to. ``owner`` says whose task it is, as attributes of the verified
-    identity: the default is a person's task (issuer, subject, tenant). For a
-    service acting for itself use ``("issuer", "client_id")``. Arguments not
-    named here stay unauthorized.
+    identity. By default it is a person's task: issuer and subject, and the
+    tenant as well when the trust has a ``tenant_claim``. For a service acting
+    for itself use ``("issuer", "client_id")``. An identity that lacks an
+    attribute the owner names owns nothing. Arguments not named here stay
+    unauthorized.
 
     ``compile`` returns ``None`` when there is no record, or the record is not
     this caller's approved and unexpired task: return that from your policy to
@@ -496,11 +549,13 @@ class TaskTemplate:
         tool: str,
         arguments: Mapping[str, Any],
         required_scopes: FrozenSet[str] = frozenset(),
-        owner: Sequence[str] = ("issuer", "subject", "tenant_id"),
+        owner: Optional[Sequence[str]] = None,
         ttl_seconds: int = 120,
         max_depth: int = 0,
     ):
         self.tool = _text(tool, "tool")
+        if isinstance(required_scopes, str) or isinstance(owner, str):
+            raise ValueError("required_scopes and owner are collections of names")
         if not arguments or any(not isinstance(v, (ExactFrom, MaximumFrom)) for v in arguments.values()):
             raise ValueError("Every argument needs ExactFrom or MaximumFrom")
         for key, binding in arguments.items():
@@ -508,11 +563,13 @@ class TaskTemplate:
             _text(binding.field, "task field")
             if isinstance(binding, MaximumFrom):
                 _integer(binding.minimum, "minimum", 0, 2**53 - 1)
-        if not owner or any(name not in ("issuer", "subject", "client_id", "tenant_id") for name in owner):
-            raise ValueError("owner names identity attributes: issuer, subject, client_id, tenant_id")
-        if "issuer" not in owner:
-            raise ValueError("owner must include the issuer: a subject or client means nothing without it")
-        self.arguments, self.owner = MappingProxyType(dict(arguments)), tuple(owner)
+        if owner is not None:
+            if not owner or any(name not in ("issuer", "subject", "client_id", "tenant_id") for name in owner):
+                raise ValueError("owner names identity attributes: issuer, subject, client_id, tenant_id")
+            if "issuer" not in owner:
+                raise ValueError("owner must include the issuer: a subject or client means nothing without it")
+        self.arguments = MappingProxyType(dict(arguments))
+        self.owner = None if owner is None else tuple(owner)
         self.required_scopes = frozenset(required_scopes)
         self.ttl_seconds = _integer(ttl_seconds, "TTL", 1, 3600)
         self.max_depth = _integer(max_depth, "delegation depth", 0, 16)
@@ -522,8 +579,9 @@ class TaskTemplate:
     ) -> Optional[TaskGrant]:
         if record is None:
             return None
+        owner = self.owner or (("issuer", "subject") + (("tenant_id",) if identity.tenant_id is not None else ()))
         owned = all(
-            getattr(identity, name) is not None and record.get(name) == getattr(identity, name) for name in self.owner
+            getattr(identity, name) is not None and record.get(name) == getattr(identity, name) for name in owner
         )
         if (
             record.get("task_id") != task_id
@@ -638,7 +696,7 @@ class OAuthWarrantIssuer:
             # Looked up at each call: the callbacks may be replaced on a running issuer.
             policy=lambda identity, task_id: self.policy(identity, task_id),
             audit=lambda record: self.audit(record),
-            store=proof_store or MemoryProofStore(),
+            store=MemoryProofStore() if proof_store is None else proof_store,
             refused=OAuthError,
             busy=OAuthUnavailable,
             validate=_validated,
@@ -653,6 +711,7 @@ class OAuthWarrantIssuer:
             ),
             max_ttl_seconds=_integer(max_ttl_seconds, "maximum TTL", 1, 3600),
             logger=logger,
+            unusable_grant_is_issuer_fault=True,
         )
 
     def close(self) -> None:
@@ -808,9 +867,14 @@ def request_warrant_oauth(
     ``issuer_key`` and bound to ``holder_key``. Every failure is an
     ``OAuthError``. Keep the token and the holder key out of model prompts and logs.
     """
-    _url(url, allow_loopback_http)
-    scheme, host, port, path = _split_url(url)
-    timeout = _seconds("timeout", timeout)
+    try:
+        _url(url, allow_loopback_http)
+        scheme, host, port, path = _split_url(url)
+        timeout = _seconds("timeout", timeout)
+    except OAuthError:
+        raise
+    except ValueError as exc:
+        raise OAuthError(str(exc)) from None
     proof = sign_oauth_holder_proof(token, holder_key, audience=audience, task_id=task_id)
 
     def connect() -> http.client.HTTPConnection:

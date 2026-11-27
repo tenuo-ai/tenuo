@@ -26,6 +26,7 @@ from tenuo.oauth import (
     KEYCLOAK,
     RFC9068,
     ClaimMap,
+    MemoryProofStore,
     ExactFrom,
     MaximumFrom,
     OAuthError,
@@ -203,7 +204,7 @@ def test_identity_is_what_the_token_said(provider, validator):
     )
     assert identity.scopes == {"refunds:write", "mail:send"}  # A list of scopes reads like a string of them.
     assert identity.claims["email"] == "a@acme.test"
-    assert identity.key == f"{provider['issuer']} support alice"
+    assert json.loads(identity.key) == [provider["issuer"], "support", "alice"]
     with pytest.raises(TypeError):
         identity.claims["email"] = "someone else"
 
@@ -359,6 +360,89 @@ def test_es256_and_algorithm_confusion(provider, validator):
         validator.authenticate(provider["token"](headers={"kid": "ec", "typ": "JWT"}))
 
 
+def test_a_refresh_is_not_undone_by_a_fetch_that_began_before_it(provider, validator):
+    token = provider["token"]()
+    assert validator.authenticate(token).subject == "alice"
+    validator._loaded = float("-inf")  # The keys have aged out, so the next token sends a caller to fetch.
+    provider["delay"] = 0.6
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        older = pool.submit(validator.authenticate, token)  # Its fetch reads the keys as they are now.
+        time.sleep(0.2)
+        provider["delay"], withdrawn = 0.0, provider["keys"]
+        provider["keys"] = []
+        validator.refresh()  # The operator withdrew the key and refreshed.
+        provider["keys"] = withdrawn  # Whatever the older fetch brings back must not replace that.
+        try:
+            older.result()
+        except OAuthError:
+            pass
+    with pytest.raises(OAuthError):
+        validator.authenticate(token)
+
+
+def test_callers_wait_for_the_first_fetch_instead_of_being_refused(provider, validator):
+    provider["delay"] = 0.4
+    token = provider["token"]()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        subjects = list(pool.map(lambda _: validator.authenticate(token).subject, range(4)))
+    assert subjects == ["alice"] * 4 and provider["calls"] == 1
+
+
+def test_a_new_key_that_cannot_be_fetched_is_unavailable_not_invalid(provider, validator):
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    provider["status"] = 503
+    time.sleep(0.02)
+    with pytest.raises(OAuthUnavailable):
+        validator.authenticate(provider["token"](headers={"kid": "rotated", "typ": "JWT"}))
+
+
+def test_entries_this_adapter_does_not_use_are_passed_over(provider, validator):
+    other = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP384R1()).public_key()))
+    weak = json.loads(
+        jwt.algorithms.RSAAlgorithm.to_jwk(rsa.generate_private_key(public_exponent=65537, key_size=1024).public_key())
+    )
+    provider["keys"] = [
+        {**other, "kid": "p384"},  # No alg, and not the curve this adapter uses.
+        {k: v for k, v in provider["keys"][0].items() if k != "kid"},  # No key ID: no token can name it.
+        {**weak, "kid": "weak", "alg": "RS256"},
+        {"kty": "RSA", "kid": "broken", "alg": "RS256", "n": "!", "e": "AQAB"},
+        {"kty": "OKP", "kid": "okp", "crv": "Ed25519", "x": "AAAA"},
+        *provider["keys"],
+    ]
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    assert set(validator._keys) == {"one"}
+
+
+def test_the_fetch_timeout_bounds_a_provider_that_answers_a_little_at_a_time(provider):
+    slow = socket.socket()
+    slow.bind(("127.0.0.1", 0))
+    slow.listen(1)
+
+    def drip():
+        connection, _ = slow.accept()
+        with connection:
+            connection.recv(4096)
+            for piece in [b"HTTP/1.1 200 OK\r\n"] + [b"X-Wait: 1\r\n"] * 40:
+                try:
+                    connection.sendall(piece)
+                except OSError:
+                    return
+                time.sleep(0.1)
+
+    threading.Thread(target=drip, daemon=True).start()
+    url = f"http://127.0.0.1:{slow.getsockname()[1]}"
+    instance = OAuthTokens(
+        Trust(url, AUDIENCE, url + "/keys", KEYCLOAK, clients=frozenset({"support"})),
+        allow_loopback_http=True,
+        timeout=0.5,
+    )
+    began = time.monotonic()
+    with pytest.raises(OAuthUnavailable):
+        instance.refresh()
+    slow.close()
+    assert time.monotonic() - began < 2
+
+
 # ---------------------------------------------------------------------------
 # Issuing
 # ---------------------------------------------------------------------------
@@ -415,9 +499,22 @@ def test_a_task_may_belong_to_a_service_instead_of_a_person(provider, setup):
     assert service.compile(identity, "t1", record).capabilities["refund"]
     assert service.compile(replace(identity, client_id="another"), "t1", record) is None
     assert service.compile(replace(identity, client_id=None), "t1", dict(record, client_id=None)) is None
-    for owner in ((), ("subject",), ("issuer", "email")):
+    for owner in ((), ("subject",), ("issuer", "email"), "issuer"):
         with pytest.raises(ValueError):
             TaskTemplate(tool="refund", arguments={"payment_id": ExactFrom("payment")}, owner=owner)
+    with pytest.raises(ValueError):
+        TaskTemplate(tool="refund", arguments={"payment_id": ExactFrom("payment")}, required_scopes="refunds:write")
+
+
+def test_a_person_owns_their_task_with_or_without_tenants(provider, setup):
+    issuer, _, _, task, _, template, _ = setup
+    identity = issuer.authenticate(provider["token"]())
+    assert template.compile(identity, "t1", task) is not None
+    assert template.compile(identity, "t1", dict(task, tenant_id="other")) is None  # The identity has a tenant.
+    without = replace(identity, tenant_id=None)  # A trust with no tenant_claim.
+    record = {name: value for name, value in task.items() if name != "tenant_id"}
+    assert template.compile(without, "t1", record) is not None
+    assert template.compile(replace(without, subject="bob"), "t1", record) is None
 
 
 def test_missing_fields_scope_and_expiry_cap(provider, setup):
@@ -443,6 +540,10 @@ def test_missing_fields_scope_and_expiry_cap(provider, setup):
         TaskGrant({"refund": {}}),  # A tool with no argument constraints would allow any call.
         TaskGrant({"refund": {"payment_id": Exact("p1")}}, ttl_seconds=0),
         TaskGrant({"refund": {"payment_id": Exact("p1")}}, max_depth=99),
+        TaskGrant(
+            {"refund": {"payment_id": Exact("p1")}}, expires_at=0
+        ),  # An approval that ended, not one without an end.
+        TaskGrant({"refund": {"payment_id": Exact("p1")}}, expires_at=1.5),
     ],
 )
 def test_what_a_policy_returns_is_checked(provider, setup, grant):
@@ -451,6 +552,27 @@ def test_what_a_policy_returns_is_checked(provider, setup, grant):
     with pytest.raises(OAuthError):
         ask(issuer, provider["token"](), holder)
     assert audits == []
+
+
+def test_a_proof_store_that_looks_empty_is_still_the_one_used(provider, validator):
+    class Counting(MemoryProofStore):
+        claims = 0
+
+        def __len__(self):
+            return 0  # Falsy.
+
+        def claim(self, key, keep_until, owner):
+            Counting.claims += 1
+            return super().claim(key, keep_until, owner)
+
+    issuer = OAuthWarrantIssuer(
+        credentials=validator,
+        signing_key=SigningKey.generate(),
+        proof_store=Counting(),
+        policy=lambda identity, task_id: TaskGrant({"refund": {"payment_id": Exact("p1")}}),
+        audit=lambda record: None,
+    )
+    assert ask(issuer, provider["token"](), SigningKey.generate()).id and Counting.claims == 1
 
 
 @pytest.mark.parametrize("change", ["task", "holder", "token", "audience", "expired", "future"])
@@ -546,6 +668,18 @@ def test_store_limits_and_expiry(tmp_path):
     assert store.claim("c1", time.time() + 100, "carol") == "full"
     store.release("a1")
     assert store.claim("c1", time.time() + 100, "carol") == "claimed"
+
+
+def test_sqlite_store_closes_what_it_opens(tmp_path, recwarn):
+    import gc
+    import warnings
+
+    warnings.simplefilter("always", ResourceWarning)
+    store = SQLiteProofStore(str(tmp_path / "proofs.db"))
+    store.claim("a", time.time() + 100, "alice")
+    store.release("a")
+    gc.collect()
+    assert not [warning for warning in recwarn if issubclass(warning.category, ResourceWarning)]
 
 
 def test_one_caller_cannot_fill_the_proof_memory_and_a_denial_leaves_nothing(provider, validator, tmp_path):
@@ -680,10 +814,27 @@ def test_dependency_failures_are_503(provider, setup, app):
     def unavailable(*_):
         raise OAuthError("task database detail")  # Whatever a callback raises is the issuer failing.
 
-    issuer.policy = unavailable
-    status, _, reply, _ = call_app(app, headers=bearer(token), body=compact(token, holder))
-    assert (status, reply) == (503, {"error": "unavailable", "message": "Issuer error"})
+    # So is a grant it returned that cannot be used: the caller can do nothing about either.
+    for policy in (unavailable, lambda *_: {"refund": {}}, lambda *_: TaskGrant({"refund": {}})):
+        issuer.policy = policy
+        status, _, reply, _ = call_app(app, headers=bearer(token), body=compact(token, holder))
+        assert (status, reply) == (503, {"error": "unavailable", "message": "Issuer error"})
     assert audits == []
+
+
+@pytest.mark.parametrize("shape", ["compact", "exchange"])
+def test_a_task_id_no_statement_can_carry_is_the_callers_mistake(provider, setup, app, shape):
+    _, holder, *_ = setup
+    token = provider["token"]()
+    surrogate = json.dumps("\ud800")  # Valid JSON, and not text that can be signed.
+    if shape == "compact":
+        body = compact(token, holder).replace(b'"t1"', surrogate.encode())
+        status, _, reply, _ = call_app(app, headers=bearer(token), body=body)
+    else:
+        form = dict(urllib.parse.parse_qsl(exchange(token, holder).decode()))
+        form["authorization_details"] = form["authorization_details"].replace('"t1"', surrogate)
+        status, _, reply, _ = call_app(app, headers=FORM, body=urllib.parse.urlencode(form).encode())
+    assert status in (400, 403), reply
 
 
 def test_one_identity_cannot_take_every_place(provider, setup):
@@ -926,8 +1077,9 @@ def test_client_and_endpoint_over_http(provider, setup, app):
             )
         with pytest.raises(ValueError):  # The token is not sent over plain HTTP unless that was asked for.
             request_warrant_oauth(url, token=token, task_id="t1", **{**options, "allow_loopback_http": False})
-        with pytest.raises(ValueError):
-            request_warrant_oauth("http://issuer.example/warrants", token=token, task_id="t1", **options)
+        for bad in ("http://issuer.example/warrants", "https://127.0.0.1:99999/warrants", "ftp://127.0.0.1/warrants"):
+            with pytest.raises(OAuthError):  # Every failure of the client is this one type.
+                request_warrant_oauth(bad, token=token, task_id="t1", **options)
     finally:
         server.should_exit = True
         thread.join(timeout=10)

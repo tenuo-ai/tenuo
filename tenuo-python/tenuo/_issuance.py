@@ -21,10 +21,11 @@ import math
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Type
+from typing import Any, Callable, Dict, Iterator, List, Optional, Protocol, Tuple, Type
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -210,14 +211,24 @@ class SQLiteProofStore:
             raise ValueError("The proof store needs a file")
         self.per_owner = _share(capacity, per_owner)
         self.capacity, self.path = capacity, str(Path(path))
-        with sqlite3.connect(self.path, timeout=5) as db:
+        with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS proofs (key TEXT PRIMARY KEY, expires REAL NOT NULL, owner TEXT)")
             db.execute("CREATE INDEX IF NOT EXISTS proofs_owner ON proofs (owner)")
             db.execute("CREATE TABLE IF NOT EXISTS forgotten (one INTEGER PRIMARY KEY CHECK (one = 1), until REAL)")
             db.execute("INSERT OR IGNORE INTO forgotten VALUES (1, 0)")
 
+    @contextmanager
+    def _db(self) -> Iterator[sqlite3.Connection]:
+        """One connection for one transaction: committed or rolled back, then closed."""
+        db = sqlite3.connect(self.path, timeout=5)
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     def claim(self, key: str, keep_until: float, owner: str) -> str:
-        with sqlite3.connect(self.path, timeout=5) as db:
+        with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             now = time.time()
             db.execute("UPDATE forgotten SET until = MAX(until, ?)", (now,))
@@ -234,7 +245,7 @@ class SQLiteProofStore:
         return CLAIMED
 
     def release(self, key: str) -> None:
-        with sqlite3.connect(self.path, timeout=5) as db:
+        with self._db() as db:
             db.execute("DELETE FROM proofs WHERE key = ?", (key,))
 
 
@@ -275,7 +286,13 @@ class SingleRequestIssuer:
         wording: Wording = Wording(),
         max_ttl_seconds: Optional[int] = None,
         logger: Optional[logging.Logger] = None,
+        unusable_grant_is_issuer_fault: bool = False,
     ):
+        # A grant the policy returned that cannot be used: with this set, the
+        # endpoints answer as for a callback that raised (the caller can do
+        # nothing about it). Without it, the caller is told the reason, which
+        # is what the SPIFFE endpoints have always done.
+        self._grant_fault = unusable_grant_is_issuer_fault
         self.signing_key, self.policy, self.audit, self.store = signing_key, policy, audit, store
         self._refused, self._busy, self._validate, self._record = refused, busy, validate, record
         self._wording, self._max_ttl = wording, max_ttl_seconds
@@ -290,11 +307,17 @@ class SingleRequestIssuer:
             return self._validate(grant)
         except IssuanceError as exc:
             self._log.warning("Invalid policy grant for %s task %r: %s", owner, task_id, exc)
+            if self._grant_fault:
+                exc._tenuo_callback_failure = True  # type: ignore[attr-defined]
             raise
 
     def check_request(self, holder: Any, task_id: Any) -> None:
         if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
             raise self._refused(f"task_id must contain 1–{MAX_TASK_ID} characters")
+        try:
+            task_id.encode("utf-8")
+        except UnicodeEncodeError:  # A lone surrogate, which JSON can carry and no signed statement can.
+            raise self._refused("task_id must be valid Unicode text") from None
         if not isinstance(holder, PublicKey):
             raise self._refused("holder must be a Tenuo PublicKey")
 
@@ -355,7 +378,8 @@ class SingleRequestIssuer:
 
     def mint(self, identity: Any, owner: str, expires_at: float, holder: bytes, task_id: str, grant: Any) -> Warrant:
         """Mint a validated grant for a proven holder key, ending no later than the credential or the approval."""
-        ends = min(expires_at, getattr(grant, "expires_at", None) or float("inf"))
+        approval = getattr(grant, "expires_at", None)
+        ends = expires_at if approval is None else min(expires_at, approval)
         ttl = min(grant.ttl_seconds, int(ends - time.time()) - 1, self._max_ttl or grant.ttl_seconds)
         if ttl < 1:
             raise self._refused(self._wording.ends_too_soon)

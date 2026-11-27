@@ -141,9 +141,11 @@ approved and unexpired task. It raises when the record itself is unusable (a
 field missing or of the wrong type): that is a fault in your data, and the
 endpoint answers 503 and logs it rather than blaming the caller.
 
-`owner` says whose task it is. The default is a person's task:
-`("issuer", "subject", "tenant_id")`. For a service acting for itself, use
-`owner=("issuer", "client_id")`.
+`owner` says whose task it is. By default it is a person's task: the record's
+`issuer` and `subject` must be the caller's, and its `tenant_id` too when the
+trust has a `tenant_claim`. For a service acting for itself, use
+`owner=("issuer", "client_id")`. An identity that lacks an attribute the owner
+names owns nothing.
 
 Arguments the template does not name stay unauthorized. `MaximumFrom` is a
 limit per call, not a running total: keep totals in your own ledger. The
@@ -373,10 +375,16 @@ was denied or failed can be sent again.
 
 - **Keys.** Tokens signed by a key already fetched are checked locally. A
   token signed by an unknown key sends one caller to fetch, and does not hold
-  up the others. With the provider unreachable, known keys work until
-  `cache_seconds` runs out, and then tokens are refused. A fetched key set
-  replaces the one before it, so a withdrawn key stops working at the next
-  fetch. `OAuthTokens.refresh()` fetches at once.
+  up the others. If that fetch fails the answer is 503, since the key may be
+  a new one. With the provider unreachable, known keys work until
+  `cache_seconds` runs out, and then tokens are refused. When there are no
+  usable keys and a fetch is under way, callers wait for it. A fetched key
+  set replaces the one before it, so a withdrawn key stops working at the
+  next fetch. `OAuthTokens.refresh()` fetches at once.
+- **Key sets.** An entry this adapter has no use for (another algorithm or
+  curve, an encryption key, an RSA key under 2048 bits, no key ID) is passed
+  over, and a token signed by it is not accepted. A key ID listed twice, or
+  private key material, refuses the whole set.
 - **Several processes or hosts.** `SQLiteProofStore` shares proof memory
   between processes on one host and keeps it across restarts. Do not put the
   file on a network filesystem. For several hosts, implement `ProofStore`
@@ -384,7 +392,9 @@ was denied or failed can be sent again.
   Without one, each replica remembers its own proofs.
 - **Callbacks.** Policy and audit run in worker threads and must set their own
   deadlines on what they call. Whatever they raise is the issuer failing: it
-  is logged in full and the caller is told only `Issuer error`.
+  is logged in full and the caller is told only `Issuer error`. The same goes
+  for a grant the policy returns that cannot be used, such as a tool with no
+  argument constraints.
 - **Revocation.** Revoking a token or changing a task does not revoke a
   warrant already issued. Lifetimes are short for that reason.
 - **The token is a bearer credential.** The warrant is bound to the agent's
