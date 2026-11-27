@@ -49,7 +49,6 @@ dependencies = [
 oauth = [
     "cryptography>=42",
     "PyJWT>=2.8",
-    "httpx>=0.27",
 ]
 spiffe = [
     "cryptography>=42",  # X.509-SVID parsing and Ed25519 holder proof validation

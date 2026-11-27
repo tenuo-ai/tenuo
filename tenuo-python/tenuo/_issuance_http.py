@@ -16,8 +16,11 @@ import logging
 import socket
 import ssl
 import threading
+import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Tuple, Type
+from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple, Type
 
 from tenuo import PublicKey, SigningKey, Warrant
 from tenuo._issuance import (
@@ -35,6 +38,27 @@ from tenuo._issuance import (
 logger = logging.getLogger("tenuo.spiffe")
 
 _MAX_BODY_BYTES = 64 * 1024
+# The OAuth 2.0 Token Exchange request shape (RFC 8693), for callers that already speak it.
+_FORM = b"application/x-www-form-urlencoded"
+_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
+_WARRANT_TOKEN_TYPE = "urn:tenuo:params:oauth:token-type:warrant"
+_TASK_DETAIL_TYPE = "tenuo_task"
+_EXCHANGE_FIELDS = frozenset(
+    {"grant_type", "subject_token", "subject_token_type", "requested_token_type", "authorization_details"}
+)
+_TASK_DETAIL_FIELDS = frozenset({"type", "task", "holder", "timestamp", "nonce", "signature"})
+# How each refusal is named in a token-exchange error reply (RFC 6749, section 5.2).
+_EXCHANGE_ERRORS = {
+    400: "invalid_request",
+    401: "invalid_grant",
+    403: "invalid_authorization_details",  # RFC 9396: the task in them was not granted.
+    404: "invalid_request",
+    405: "invalid_request",
+    408: "invalid_request",
+    413: "invalid_request",
+    415: "invalid_request",
+    503: "temporarily_unavailable",
+}
 # Each call runs its exchange in a thread of its own, and a call that reaches its
 # deadline leaves that thread to end by itself: a stalled name lookup cannot be
 # interrupted. No more than this many such threads exist in a process at once,
@@ -68,6 +92,23 @@ _Receive = Callable[[], Awaitable[Mapping[str, Any]]]
 _Send = Callable[[Mapping[str, Any]], Awaitable[None]]
 
 
+def _strict_json(raw: Any) -> Any:
+    """JSON with one meaning: no repeated member names, no NaN or Infinity."""
+
+    def members(pairs: Any) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError("Duplicate JSON member")
+            result[name] = value
+        return result
+
+    def constant(name: str) -> Any:
+        raise ValueError(f"{name} is not JSON")
+
+    return json.loads(raw, object_pairs_hook=members, parse_constant=constant)
+
+
 class _Refusal(Exception):
     def __init__(self, status: int, error: str, message: str):
         super().__init__(message)
@@ -87,6 +128,7 @@ class _Places:
         self.in_progress = 0
         self.per_key: Dict[str, int] = {}
         self.checking = 0
+        self.unverified = 0  # Token-exchange requests whose body is being read before the caller is known.
 
 
 class _Slot:
@@ -124,6 +166,7 @@ class _IssuerApp:
     _what = "issuance"  # For log lines.
     _challenge: Optional[bytes] = None  # WWW-Authenticate value sent with 401.
     _log = logging.getLogger("tenuo.spiffe")  # Each family logs under its own name.
+    _who = "workload"  # What this family calls a caller, in messages.
 
     def __init__(
         self,
@@ -156,9 +199,41 @@ class _IssuerApp:
         """Take the caller's credential from the request, or raise ``_Refusal``. Runs before the body is read."""
         raise NotImplementedError
 
-    async def _checked(self, credential: Any) -> Any:
-        """Verify the credential where that takes real work, before the request is admitted. May raise ``_Refusal``."""
+    # Whether checking a credential is real work (a signature, a key fetch) that belongs off the event loop.
+    _check_in_pool = False
+
+    def _verify(self, credential: Any) -> Any:
+        """Check the credential and return what the rest of the exchange needs. May raise ``_Refusal``."""
         return credential
+
+    async def _checked(self, credential: Any) -> Any:
+        """Check the credential before the request is admitted, so only a caller with a valid one holds a place.
+
+        Where that is real work it runs in a small pool of its own, so policy
+        calls waiting on a slow dependency never hold up telling a valid
+        caller from an invalid one. At most ``max_concurrent`` credentials are
+        waiting or being checked: beyond that the answer is 503. A check that
+        has been handed over is counted until it has run, whether or not its
+        caller is still there.
+        """
+        if not self._check_in_pool:
+            return self._verify(credential)
+        places = self._places
+        if places.checking >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
+        try:
+            work = asyncio.wrap_future(self._check_pool.submit(self._verify, credential))
+        except RuntimeError:
+            raise _Refusal(503, "unavailable", "Issuer is shutting down") from None
+        places.checking += 1
+
+        def checked(done: "asyncio.Future[Any]") -> None:
+            places.checking -= 1
+            if not done.cancelled():
+                done.exception()  # Looked at, so a caller that left does not leave a warning behind.
+
+        work.add_done_callback(checked)
+        return await asyncio.shield(work)
 
     def _limit_key(self, credential: Any) -> Optional[str]:
         """The caller to count requests against, when it is already known from the credential."""
@@ -179,12 +254,16 @@ class _IssuerApp:
         return self._places.per_key
 
     def _new_pool(self) -> ThreadPoolExecutor:
-        return ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-spiffe-http")
+        if self._check_in_pool:
+            self._check_pool = ThreadPoolExecutor(min(4, self._max_workers), thread_name_prefix="tenuo-issuance-check")
+        return ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-issuance-http")
 
     def close(self) -> None:
         """Release the worker threads. Called on ASGI lifespan shutdown."""
         self._closed = True
         self._pool.shutdown(wait=False)
+        if self._check_in_pool:
+            self._check_pool.shutdown(wait=False)
 
     async def __call__(self, scope: _Scope, receive: _Receive, send: _Send) -> None:
         if scope["type"] == "lifespan":
@@ -202,14 +281,28 @@ class _IssuerApp:
                     return
         if scope["type"] != "http":
             return
+        exchange = self._is_exchange(scope)
         try:
-            status, reply = 200, {"warrant": (await self._issue(scope, receive)).to_base64()}
+            warrant = await self._issue(scope, receive)
+            status, reply = 200, {"warrant": warrant.to_base64()}
+            if exchange:
+                remaining = datetime.fromisoformat(warrant.expires_at()).timestamp() - time.time()
+                reply = {
+                    "access_token": warrant.to_base64(),
+                    "issued_token_type": _WARRANT_TOKEN_TYPE,
+                    "token_type": "N_A",  # RFC 8693: not a token to present as a bearer access token.
+                    "expires_in": max(0, int(remaining)),
+                }
         except _Refusal as refusal:
             status, reply = refusal.status, {"error": refusal.error, "message": refusal.message}
             self._log.info("%s refused (%d): %s", self._what, status, refusal.message)
         except Exception:
             self._log.exception("%s failed", self._what)
             status, reply = 503, {"error": "unavailable", "message": "Issuer error"}
+        if exchange and status != 200:
+            # A token endpoint answers 400 for a token or a request it does not accept (RFC 6749, section 5.2).
+            reply = {"error": _EXCHANGE_ERRORS.get(status, "invalid_request"), "error_description": reply["message"]}
+            status = 400 if status in (401, 403) else status
         body = json.dumps(reply, separators=(",", ":")).encode("utf-8")
         headers = [
             (b"content-type", b"application/json"),
@@ -229,16 +322,10 @@ class _IssuerApp:
             raise _Refusal(404, "not_found", "No such endpoint")
         if scope.get("method") != "POST":
             raise _Refusal(405, "method_not_allowed", "Use POST")
+        if self._is_exchange(scope):
+            return await self._exchange(receive)
         credential = await self._checked(self._credential(scope))
-        # A request takes one place before its body is read and keeps it until it
-        # has finished, so one limit covers the requests being read and those
-        # being worked on, and a request over the limit is refused at once.
-        if self._in_progress >= self._max_concurrent:
-            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
-        key = self._limit_key(credential) if self._max_per_key is not None else None
-        if key is not None and self._per_key.get(key, 0) >= (self._max_per_key or 0):
-            raise _Refusal(503, "unavailable", "Too many requests in progress for this workload; retry shortly")
-        slot = _Slot(self, key)
+        slot = self._admit(credential)
         try:
             return await self._serve(credential, receive, slot)
         finally:
@@ -247,32 +334,58 @@ class _IssuerApp:
             if not slot.follows_work:
                 slot.release()
 
-    async def _serve(self, credential: Any, receive: _Receive, slot: _Slot) -> Warrant:
+    def _admit(self, credential: Any) -> _Slot:
+        """Take a place for a request whose caller is known, or refuse it at once.
+
+        The place is kept until the request has finished, so one limit covers
+        the requests being read and those being worked on.
+        """
+        if self._in_progress >= self._max_concurrent:
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
+        key = self._limit_key(credential) if self._max_per_key is not None else None
+        if key is not None and self._per_key.get(key, 0) >= (self._max_per_key or 0):
+            raise _Refusal(503, "unavailable", f"Too many requests in progress for this {self._who}; retry shortly")
+        return _Slot(self, key)
+
+    async def _body(self, receive: _Receive) -> bytes:
         # A deadline for the body, so a slow sender cannot hold its place for long.
         try:
-            body = await asyncio.wait_for(self._read_body(receive), self._body_timeout)
+            return await asyncio.wait_for(self._read_body(receive), self._body_timeout)
         except asyncio.TimeoutError:
             raise _Refusal(408, "timeout", "Request body was not received in time") from None
+
+    @staticmethod
+    def _holder_and_proof(request: Any) -> Tuple[PublicKey, Any, HolderProof]:
+        """The holder key, task and proof from the fields every request shape carries."""
         try:
-            request = self._decode_request(body)
-            if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS:
-                raise ValueError
-            if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
-                raise _Refusal(400, "invalid_request", "Unsupported protocol version")
             holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
             proof = HolderProof(
                 request["timestamp"],
                 base64.b64decode(request["nonce"], validate=True),
                 base64.b64decode(request["signature"], validate=True),
             )
-        except _Refusal:
-            raise
-        except (ValueError, TypeError, RecursionError, binascii.Error):
+        except (ValueError, TypeError, KeyError, RecursionError, binascii.Error):
             raise _Refusal(400, "invalid_request", "Malformed request") from None
         except Exception:  # A holder key the core rejects.
             raise _Refusal(400, "invalid_request", "Invalid holder key") from None
-        task_id = request["task"]
+        return holder, request["task"], proof
 
+    async def _serve(self, credential: Any, receive: _Receive, slot: _Slot) -> Warrant:
+        body = await self._body(receive)
+        try:
+            request = self._decode_request(body)
+            if not isinstance(request, dict) or set(request) != _REQUEST_FIELDS:
+                raise ValueError
+            if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
+                raise _Refusal(400, "invalid_request", "Unsupported protocol version")
+        except _Refusal:
+            raise
+        except (ValueError, TypeError, RecursionError):
+            raise _Refusal(400, "invalid_request", "Malformed request") from None
+        holder, task_id, proof = self._holder_and_proof(request)
+        return await self._work(credential, holder, task_id, proof, slot)
+
+    async def _work(self, credential: Any, holder: PublicKey, task_id: Any, proof: HolderProof, slot: _Slot) -> Warrant:
         def work() -> Warrant:
             try:
                 return self._authorize(credential, holder, task_id, proof)
@@ -289,9 +402,66 @@ class _IssuerApp:
 
         return await self._in_worker(work, slot)
 
+    # -- the token-exchange request shape -----------------------------------
+
+    # Subject token types this endpoint takes in an RFC 8693 request. Empty: JSON requests only.
+    _subject_token_types: FrozenSet[str] = frozenset()
+
+    def _is_exchange(self, scope: _Scope) -> bool:
+        if not self._subject_token_types:
+            return False
+        types = [value for name, value in scope.get("headers", ()) if name.lower() == b"content-type"]
+        return len(types) == 1 and types[0].split(b";")[0].strip().lower() == _FORM
+
+    def _exchange_credential(self, token: str) -> Any:
+        """The credential for a token that arrived in the body, in the form ``_credential`` returns."""
+        raise NotImplementedError
+
+    async def _exchange(self, receive: _Receive) -> Warrant:
+        """One RFC 8693 request: the token is in the body, so the body is read before the caller is known.
+
+        Only a share of the places is open to such requests, so callers who
+        have not shown a token yet cannot keep out those who have.
+        """
+        places = self._places
+        if places.unverified >= max(1, self._max_concurrent // 4):
+            raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
+        places.unverified += 1
+        try:
+            body = await self._body(receive)
+        finally:
+            places.unverified -= 1
+        try:
+            fields = urllib.parse.parse_qs(
+                body.decode("ascii"), keep_blank_values=True, strict_parsing=True, max_num_fields=16
+            )
+            if set(fields) != _EXCHANGE_FIELDS or any(len(values) != 1 for values in fields.values()):
+                raise ValueError
+            request = {name: values[0] for name, values in fields.items()}
+            if request["grant_type"] != _EXCHANGE_GRANT or request["requested_token_type"] != _WARRANT_TOKEN_TYPE:
+                raise ValueError
+            if request["subject_token_type"] not in self._subject_token_types:
+                raise ValueError
+            details = self._decode_request(request["authorization_details"].encode("utf-8"))
+            if not isinstance(details, list) or len(details) != 1 or not isinstance(details[0], dict):
+                raise ValueError
+            detail = details[0]
+            if set(detail) != _TASK_DETAIL_FIELDS or detail["type"] != _TASK_DETAIL_TYPE:
+                raise ValueError
+        except (ValueError, TypeError, RecursionError, UnicodeError):
+            raise _Refusal(400, "invalid_request", "Malformed token-exchange request") from None
+        holder, task_id, proof = self._holder_and_proof(detail)
+        credential = await self._checked(self._exchange_credential(request["subject_token"]))
+        slot = self._admit(credential)
+        try:
+            return await self._work(credential, holder, task_id, proof, slot)
+        finally:
+            if not slot.follows_work:
+                slot.release()
+
     @staticmethod
     def _decode_request(body: bytes) -> Any:
-        return json.loads(body)
+        return _strict_json(body)
 
     @staticmethod
     async def _read_body(receive: _Receive) -> bytes:

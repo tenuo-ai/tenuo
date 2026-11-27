@@ -32,16 +32,18 @@ import jwt
 import uvicorn
 from playwright.sync_api import sync_playwright
 
-from tenuo import Exact, Range, SigningKey
+from tenuo import Exact, Range, SigningKey, Warrant
 from tenuo._issuance_http import _request_body
 from tenuo.mcp import SecureMCPClient
 from tenuo.mcp._compat import call_tool_result_is_error
 from tenuo.oauth import (
-    OAuthAccessTokens,
+    KEYCLOAK,
     OAuthError,
+    OAuthTokens,
     OAuthWarrantIssuer,
     OAuthWarrantIssuerApp,
-    SQLiteReplayStore,
+    SQLiteProofStore,
+    Trust,
     request_warrant_oauth,
     sign_oauth_holder_proof,
 )
@@ -336,13 +338,16 @@ def exercise_issuance(
     directory, http, browser, base, callback, admin, alice, bob, wrong, short, no_scope, container, mail, bob_mail
 ):
     issuer_url = base + "/realms/tenuo-smoke"
-    credentials = OAuthAccessTokens(
-        issuer=issuer_url,
-        audience=AUDIENCE,
-        jwks_url=issuer_url + "/protocol/openid-connect/certs",
-        profile="keycloak",
+    credentials = OAuthTokens(
+        Trust(
+            issuer=issuer_url,
+            audience=AUDIENCE,
+            jwks_url=issuer_url + "/protocol/openid-connect/certs",
+            claims=KEYCLOAK,
+            clients=frozenset({"support", "wrong-audience", "short-support", "no-scope", "mail-support"}),
+            tenant_claim="tenant_id",
+        ),
         allow_loopback_http=True,
-        allowed_clients=frozenset({"support", "wrong-audience", "short-support", "no-scope", "mail-support"}),
         timeout=2,
         refresh_interval=0.1,
     )
@@ -369,7 +374,7 @@ def exercise_issuance(
         credentials=credentials,
         signing_key=root,
         policy=policy_for(records),
-        replay_store=SQLiteReplayStore(str(directory / "proofs.db")),
+        proof_store=SQLiteProofStore(str(directory / "proofs.db")),
         audit=audit.append,
     )
     app = OAuthWarrantIssuerApp(authority)
@@ -418,6 +423,30 @@ def exercise_issuance(
             check(
                 http.post(endpoint, content=body, headers=headers).status_code == 403, "issuance proof replay refused"
             )
+            # The same request as OAuth 2.0 Token Exchange (RFC 8693), with Keycloak's own token as the subject token.
+            fresh = sign_oauth_holder_proof(alice["access_token"], holder, audience=AUDIENCE, task_id="refund-123")
+            detail = {"type": "tenuo_task", **json.loads(_request_body(holder, "refund-123", fresh))}
+            del detail["v"]
+            form = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                "subject_token": alice["access_token"],
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "requested_token_type": "urn:tenuo:params:oauth:token-type:warrant",
+                "authorization_details": json.dumps([detail]),
+            }
+            exchanged = http.post(endpoint, data=form)
+            reply = exchanged.json()
+            check(
+                exchanged.status_code == 200
+                and reply["issued_token_type"] == form["requested_token_type"]
+                and Warrant.from_base64(reply["access_token"]).authorized_holder == holder.public_key,
+                "token exchange returns a holder-bound warrant",
+            )
+            refused = http.post(endpoint, data={**form, "subject_token": alice["id_token"]})
+            check(
+                refused.status_code == 400 and refused.json()["error"] == "invalid_grant",
+                "token exchange refuses an ID token as invalid_grant",
+            )
             # Playwright's sync driver owns an event loop on this thread.
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pool.submit(lambda: asyncio.run(exercise_mcp(directory, root, holder, warrant, delegated_root))).result(
@@ -465,7 +494,7 @@ def exercise_issuance(
             try:
                 request(rotated["access_token"])
                 check(True, "unexpired JWKS cache tolerates provider outage")
-                credentials._loaded -= credentials.cache_seconds + 1
+                credentials._loaded -= credentials._cache_seconds + 1
                 time.sleep(0.11)
                 try:
                     request(rotated["access_token"])

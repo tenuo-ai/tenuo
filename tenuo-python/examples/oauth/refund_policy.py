@@ -17,10 +17,8 @@ REFUND_TEMPLATE = TaskTemplate(
 
 
 def policy_for(records):
-    def policy(caller, task_id):
-        record = records.get((caller.tenant_id, task_id))
-        if record is None:
-            return None
-        return REFUND_TEMPLATE.compile(caller, task_id, record)
+    def policy(identity, task_id):
+        # No record, or a record that is not this caller's approved task: None, which denies.
+        return REFUND_TEMPLATE.compile(identity, task_id, records.get((identity.tenant_id, task_id)))
 
     return policy

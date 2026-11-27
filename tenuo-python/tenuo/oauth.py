@@ -1,8 +1,18 @@
-"""OAuth access-token authentication and task-scoped warrant issuance.
+"""Task-scoped warrants for callers who already have a token from your identity provider.
 
-Supports explicitly configured Keycloak JWT access tokens and RFC 9068 JWTs.
-Opaque and sender-constrained tokens are rejected. This is a resource server,
-not an OAuth authorization server or an AAT token-exchange implementation.
+Use this when agents sign in with OAuth 2.0 or OpenID Connect (through an API
+gateway, an MCP gateway, a CI system) and you want each task to carry only
+the authority that task needs.
+
+The token says who is asking. It carries no Tenuo permissions. A ``Trust``
+names whose tokens you accept: the issuer, the audience, where that provider
+puts its claims, and which claim values are required. Your policy decides
+what an identity may do for a task, and the issuer mints a warrant bound to
+the agent's holder key that ends no later than the token.
+
+This is a resource server. It is not an authorization server, and the
+warrant is not an OAuth access token. Opaque tokens, sender-constrained
+tokens and tokens with an actor chain are refused.
 """
 
 from __future__ import annotations
@@ -10,78 +20,94 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import http.client
 import ipaddress
-import json
-import math
+import logging
 import secrets
-import sqlite3
+import ssl
 import threading
 import time
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Tuple, Union
 from urllib.parse import urlsplit
 
 try:
-    import httpx
     import jwt
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
 except ImportError as exc:
     raise ImportError("Install tenuo[oauth] to use the OAuth adapter") from exc
 
 from tenuo import Exact, PublicKey, Range, SigningKey, Warrant
-from tenuo._issuance_http import _IssuerApp, _Refusal, _request_body
-from tenuo.spiffe import SpiffeHolderProof, _checked_warrant
+from tenuo._issuance import (
+    HolderProof,
+    IssuanceBusy,
+    IssuanceError,
+    MemoryProofStore,
+    ProofStore,
+    SingleRequestIssuer,
+    SQLiteProofStore,
+    Wording,
+    _positive_int,
+    _seconds,
+)
+from tenuo._issuance_http import (
+    _IssuerApp,
+    _post_for_warrant,
+    _Refusal,
+    _request_body,
+    _split_url,
+    _strict_json,
+    _where,
+)
 
 __all__ = [
-    "OAuthError",
-    "OAuthUnavailable",
-    "OAuthCaller",
-    "OAuthAccessTokens",
-    "OAuthHolderProof",
-    "OAuthWarrantIssuer",
-    "OAuthWarrantIssuerApp",
-    "OAuthIssuance",
-    "ReplayStore",
-    "SQLiteReplayStore",
-    "TaskGrant",
-    "TaskTemplate",
+    "GITHUB_ACTIONS",
+    "KEYCLOAK",
+    "RFC9068",
+    "ClaimMap",
     "ExactFrom",
     "MaximumFrom",
-    "sign_oauth_holder_proof",
-    "request_warrant_oauth",
+    "MemoryProofStore",
+    "OAuthError",
+    "OAuthHolderProof",
+    "OAuthIdentity",
+    "OAuthIssuance",
+    "OAuthTokens",
+    "OAuthUnavailable",
+    "OAuthWarrantIssuer",
+    "OAuthWarrantIssuerApp",
+    "ProofStore",
+    "SQLiteProofStore",
+    "TaskGrant",
+    "TaskTemplate",
+    "Trust",
     "arequest_warrant_oauth",
+    "request_warrant_oauth",
+    "sign_oauth_holder_proof",
 ]
+
+logger = logging.getLogger("tenuo.oauth")
 
 _MAX_TOKEN = 16384
 _MAX_JSON = 262144
-_WINDOW = 30
 _CONTEXT = b"tenuo.oauth.holder-binding.v1\0"
-OAuthHolderProof = SpiffeHolderProof
+OAuthHolderProof = HolderProof
 
 
-class OAuthError(ValueError):
-    """Invalid credential, holder proof, or task authorization (no token in errors)."""
+class OAuthError(IssuanceError):
+    """A credential, holder proof or task was refused. Messages never contain the token."""
 
 
-class OAuthUnavailable(OAuthError):
-    """A required issuance dependency is unavailable; authority was not granted."""
-
-
-def _object(pairs: Any) -> Dict[str, Any]:
-    result: Dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise OAuthError("Duplicate JSON member")
-        result[key] = value
-    return result
+class OAuthUnavailable(OAuthError, IssuanceBusy):
+    """Something issuance depends on is unavailable or at its limit. Nothing was granted; try again."""
 
 
 def _json(raw: Any) -> Any:
-    return json.loads(raw, object_pairs_hook=_object, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+    try:
+        return _strict_json(raw)
+    except RecursionError:
+        raise ValueError("JSON nested too deeply") from None
 
 
 def _text(value: Any, name: str, maximum: int = 1024) -> str:
@@ -110,180 +136,316 @@ def _url(value: str, allow_loopback_http: bool) -> None:
         raise ValueError("Endpoint URLs must not contain credentials, query, or fragment")
 
 
+# ---------------------------------------------------------------------------
+# Whose tokens are accepted
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
-class OAuthCaller:
+class OAuthIdentity:
+    """What a verified token said about the caller.
+
+    ``claims`` holds the token's other string claims (a repository, a branch,
+    an environment), for a policy to read. Everything here was signed by the
+    provider; nothing was supplied by the agent.
+    """
+
     issuer: str
     subject: str
-    client_id: str
-    tenant_id: str
+    client_id: Optional[str]
+    tenant_id: Optional[str]
     scopes: FrozenSet[str]
     expires_at: int
+    claims: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        """The name limits are counted against: one user or workload, through one client, at one issuer."""
+        return f"{self.issuer} {self.client_id or ''} {self.subject}"
 
 
-class OAuthAccessTokens:
-    """Validate JWT access tokens against one configured issuer and resource.
+@dataclass(frozen=True)
+class ClaimMap:
+    """How one provider writes its tokens. The first claim listed that is present is used.
 
-    ``jwks_url`` is operator configuration, never read from a token. A successful
-    refresh replaces the whole key set. Expired caches never survive a failed
-    refresh; unknown-key refreshes are throttled. Call ``refresh()`` to apply an
-    operator-requested withdrawal immediately. No automatic discovery or redirects.
+    The presets are the providers this adapter is tested against. For another
+    provider, write its ``ClaimMap`` from one of its tokens.
+    """
+
+    client: Tuple[str, ...] = ("client_id",)
+    scopes: Tuple[str, ...] = ("scope",)  # A space-separated string, or a list of strings.
+    header_type: str = "at+jwt"
+    extra_headers: FrozenSet[str] = frozenset()  # Header names allowed besides alg, kid and typ.
+    constants: Mapping[str, str] = field(default_factory=dict)  # Claims that must have exactly this value.
+    has_clients: bool = True
+    needs_token_id: bool = False
+
+
+RFC9068 = ClaimMap(needs_token_id=True)
+"""JWT access tokens as RFC 9068 defines them (``typ: at+jwt``, ``client_id``, ``jti``)."""
+
+KEYCLOAK = ClaimMap(client=("azp",), header_type="JWT", constants={"typ": "Bearer"})
+"""Keycloak access tokens: the client is in ``azp`` and the payload says ``typ: Bearer``."""
+
+GITHUB_ACTIONS = ClaimMap(client=(), scopes=(), header_type="JWT", extra_headers=frozenset({"x5t"}), has_clients=False)
+"""GitHub Actions OIDC tokens. A workflow run is not an OAuth client and has no scopes:
+say which runs you trust with ``Trust.where`` (``repository``, ``ref``, ``environment``)."""
+
+Condition = Union[str, FrozenSet[str]]
+
+
+@dataclass(frozen=True)
+class Trust:
+    """Whose tokens are accepted, for which audience, and what they must say.
+
+    ``clients`` lists the OAuth clients allowed to ask for warrants. ``where``
+    lists further claims that must match: one exact value, or one of a set. A
+    claim that is missing does not match. ``tenant_claim`` names the claim
+    that holds the caller's tenant, if you have tenants; it must be data an
+    administrator controls, not something a user can edit.
+
+    This is the whole trust decision, in one place an operator can read.
+    """
+
+    issuer: str
+    audience: str
+    jwks_url: str
+    claims: ClaimMap = RFC9068
+    clients: FrozenSet[str] = frozenset()
+    where: Mapping[str, Condition] = field(default_factory=dict)
+    tenant_claim: Optional[str] = None
+    required_scopes: FrozenSet[str] = frozenset()
+    leeway_seconds: int = 5
+
+
+class OAuthTokens:
+    """Checks tokens against one ``Trust``.
+
+    Signing keys come from ``trust.jwks_url``, which is configuration and is
+    never read from a token. A fetched key set replaces the one before it.
+    Keys are used for ``cache_seconds`` after a successful fetch; past that,
+    with the provider unreachable, tokens are refused. A token signed by a
+    key not yet known sends one caller to fetch, at most every
+    ``refresh_interval`` seconds, and never holds up tokens signed by keys
+    already known. No discovery, no redirects, no environment proxies.
     """
 
     def __init__(
         self,
+        trust: Trust,
         *,
-        issuer: str,
-        audience: str,
-        jwks_url: str,
-        allowed_clients: FrozenSet[str],
-        profile: str = "rfc9068",
-        tenant_claim: str = "tenant_id",
-        required_scopes: FrozenSet[str] = frozenset(),
         cache_seconds: float = 300,
         refresh_interval: float = 5,
         timeout: float = 5,
+        ca_file: Optional[str] = None,
         allow_loopback_http: bool = False,
     ):
-        _url(issuer, allow_loopback_http)
-        _url(jwks_url, allow_loopback_http)
-        if profile not in ("keycloak", "rfc9068"):
-            raise ValueError("profile must be keycloak or rfc9068")
-        if not allowed_clients or isinstance(allowed_clients, str):
-            raise ValueError("allowed_clients must name explicitly trusted OAuth clients")
-        for value in (cache_seconds, refresh_interval, timeout):
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError("Cache and timeout settings must be finite and positive")
-        self.issuer, self.audience = issuer, _text(audience, "audience")
-        self.jwks_url, self.profile = jwks_url, profile
-        self.allowed_clients = frozenset(_text(c, "client") for c in allowed_clients)
-        self.required_scopes = frozenset(required_scopes)
-        self.tenant_claim = _text(tenant_claim, "tenant claim")
-        self.cache_seconds, self.refresh_interval = cache_seconds, refresh_interval
+        _url(trust.issuer, allow_loopback_http)
+        _url(trust.jwks_url, allow_loopback_http)
+        shape = trust.claims
+        if isinstance(trust.clients, str) or isinstance(trust.required_scopes, str):
+            raise ValueError("clients and required_scopes are sets of names")
+        if shape.has_clients and not trust.clients:
+            raise ValueError("clients must name the OAuth clients allowed to ask for warrants")
+        if not shape.has_clients and (trust.clients or not trust.where):
+            raise ValueError("This provider has no clients: say which tokens are trusted with where={claim: value}")
+        if not _positive_int(trust.leeway_seconds) or not 0 <= trust.leeway_seconds <= 60:
+            raise ValueError("leeway_seconds must be between 0 and 60")
+        self.trust, self.audience = trust, _text(trust.audience, "audience")
+        self._clients = frozenset(_text(client, "client") for client in trust.clients)
+        self._cache_seconds = _seconds("cache_seconds", cache_seconds)
+        self._refresh_interval = _seconds("refresh_interval", refresh_interval)
+        self._timeout, self._ca_file = _seconds("timeout", timeout), ca_file
         self._keys: Dict[str, Tuple[str, Any]] = {}
         self._loaded = self._attempted = float("-inf")
+        self._fetching = False
         self._lock = threading.Lock()
-        self._http = httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False)
 
     def close(self) -> None:
-        self._http.close()
+        """Nothing is held open between fetches. Kept so callers can treat every source alike."""
 
-    def _load(self) -> None:
-        self._attempted = time.monotonic()
+    # -- keys -------------------------------------------------------------
+
+    def _fetch(self) -> Dict[str, Tuple[str, Any]]:
+        scheme, host, port, path = _split_url(self.trust.jwks_url)
+        deadline = time.monotonic() + self._timeout
+        connection: http.client.HTTPConnection
+        if scheme == "https":
+            context = ssl.create_default_context(cafile=self._ca_file)
+            connection = http.client.HTTPSConnection(host, port, timeout=self._timeout, context=context)
+        else:
+            connection = http.client.HTTPConnection(host, port, timeout=self._timeout)
         try:
-            with self._http.stream("GET", self.jwks_url) as response:
-                response.raise_for_status()
-                raw = bytearray()
-                for chunk in response.iter_bytes():
-                    raw.extend(chunk)
-                    if len(raw) > _MAX_JSON:
-                        raise ValueError("JWKS too large")
-            document = _json(raw)
-            entries = document["keys"]
-            if not isinstance(entries, list) or len(entries) > 100:
-                raise ValueError("Invalid keys")
-            keys: Dict[str, Tuple[str, Any]] = {}
-            seen = set()
-            for entry in entries:
-                kid = _text(entry.get("kid"), "key ID")
-                if kid in seen:
-                    raise ValueError("Duplicate key ID")
-                seen.add(kid)
-                if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
-                    continue
-                if any(k in entry for k in ("d", "p", "q", "k")):
-                    raise ValueError("Private or symmetric key")
-                algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
-                if algorithm not in ("RS256", "ES256"):
-                    continue
-                key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
-                if algorithm == "RS256" and not (isinstance(key, rsa.RSAPublicKey) and key.key_size >= 2048):
-                    raise ValueError("Invalid RSA key")
-                if algorithm == "ES256" and not (
-                    isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP256R1)
-                ):
-                    raise ValueError("Invalid EC key")
-                keys[kid] = (algorithm, key)
-            self._keys, self._loaded = keys, time.monotonic()
-        except Exception as exc:
-            raise OAuthUnavailable("OAuth signing keys unavailable") from exc
+            connection.request("GET", path, headers={"Accept": "application/json"})
+            response = connection.getresponse()
+            if response.status != 200:  # A redirect included: the key location is configuration.
+                raise ValueError(f"HTTP {response.status}")
+            raw = bytearray()
+            while True:
+                chunk = response.read1(65536)
+                if not chunk:
+                    break
+                raw.extend(chunk)
+                if len(raw) > _MAX_JSON or time.monotonic() > deadline:
+                    raise ValueError("Key set too large or too slow")
+        finally:
+            connection.close()
+        entries = _json(bytes(raw))["keys"]
+        if not isinstance(entries, list) or len(entries) > 100:
+            raise ValueError("Invalid keys")
+        keys: Dict[str, Tuple[str, Any]] = {}
+        seen = set()
+        for entry in entries:
+            kid = _text(entry.get("kid"), "key ID")
+            if kid in seen:
+                raise ValueError("Duplicate key ID")
+            seen.add(kid)
+            if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
+                continue
+            if any(name in entry for name in ("d", "p", "q", "k")):
+                raise ValueError("Private or symmetric key")
+            algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
+            if algorithm not in ("RS256", "ES256"):
+                continue
+            key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
+            if algorithm == "RS256" and not (isinstance(key, rsa.RSAPublicKey) and key.key_size >= 2048):
+                raise ValueError("Invalid RSA key")
+            if algorithm == "ES256" and not (
+                isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP256R1)
+            ):
+                raise ValueError("Invalid EC key")
+            keys[kid] = (algorithm, key)
+        return keys
 
     def refresh(self) -> None:
-        with self._lock:
-            self._load()
-
-    def authenticate(self, token: str) -> OAuthCaller:
+        """Fetch the keys now, for example right after the provider withdrew one."""
         try:
-            _text(token, "access token", _MAX_TOKEN)
-            segments = token.split(".")
-            if len(segments) != 3:
+            keys = self._fetch()
+        except Exception as exc:
+            raise OAuthUnavailable("OAuth signing keys unavailable") from exc
+        with self._lock:
+            self._keys, self._loaded = keys, time.monotonic()
+            self._attempted = self._loaded
+
+    def _key(self, kid: str) -> Tuple[str, Any]:
+        with self._lock:
+            now = time.monotonic()
+            fresh = now - self._loaded < self._cache_seconds
+            if fresh and kid in self._keys:
+                return self._keys[kid]
+            fetch = not self._fetching and now - self._attempted >= self._refresh_interval
+            if fetch:
+                self._fetching, self._attempted = True, now
+        if fetch:  # One caller at a time, and never while holding the lock.
+            try:
+                keys = self._fetch()
+            except Exception as exc:
+                with self._lock:
+                    self._fetching = False
+                    usable = time.monotonic() - self._loaded < self._cache_seconds
+                if not usable:
+                    raise OAuthUnavailable("OAuth signing keys unavailable") from exc
+            else:
+                with self._lock:
+                    self._keys, self._loaded, self._fetching = keys, time.monotonic(), False
+        with self._lock:
+            if time.monotonic() - self._loaded >= self._cache_seconds:
+                raise OAuthUnavailable("OAuth signing keys unavailable")
+            if kid not in self._keys:
+                raise OAuthError("Invalid OAuth access token")
+            return self._keys[kid]
+
+    # -- tokens -----------------------------------------------------------
+
+    @staticmethod
+    def _parts(token: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        _text(token, "access token", _MAX_TOKEN)
+        segments = token.split(".")
+        if len(segments) != 3:
+            raise ValueError()
+        decoded = []
+        for position, segment in enumerate(segments):
+            raw = base64.b64decode(segment + "=" * (-len(segment) % 4), altchars=b"-_", validate=True)
+            if base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != segment:
+                raise ValueError()  # One spelling per token.
+            if position < 2:
+                decoded.append(_json(raw))
+        header, payload = decoded
+        if not isinstance(header, dict) or not isinstance(payload, dict):
+            raise ValueError()
+        return header, payload
+
+    def issued(self, token: str) -> bool:
+        """Whether the token says it is from this trust's issuer. Nothing is verified yet: it only picks who checks it."""
+        try:
+            return self._parts(token)[1].get("iss") == self.trust.issuer
+        except Exception:
+            return False
+
+    def authenticate(self, token: str) -> OAuthIdentity:
+        """Verify a token and return who it is for, or raise ``OAuthError``."""
+        trust, shape = self.trust, self.trust.claims
+        try:
+            header, _ = self._parts(token)
+            if set(header) - {"alg", "kid", "typ"} - shape.extra_headers:
                 raise ValueError()
-            decoded = []
-            for segment in segments:
-                raw = base64.b64decode(segment + "=" * (-len(segment) % 4), altchars=b"-_", validate=True)
-                if base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != segment:
-                    raise ValueError()
-                decoded.append(raw)
-            header, payload = _json(decoded[0]), _json(decoded[1])
-            if not isinstance(header, dict) or not isinstance(payload, dict):
+            if header.get("typ") != shape.header_type or header.get("alg") not in ("RS256", "ES256"):
                 raise ValueError()
-            if set(header) - {"alg", "kid", "typ"}:
-                raise ValueError()
-            expected_type = "JWT" if self.profile == "keycloak" else "at+jwt"
-            if header.get("typ") != expected_type or header.get("alg") not in ("RS256", "ES256"):
-                raise ValueError()
-            kid = _text(header.get("kid"), "key ID")
-            with self._lock:
-                now = time.monotonic()
-                expired = now - self._loaded >= self.cache_seconds
-                if expired or kid not in self._keys:
-                    if now - self._attempted >= self.refresh_interval:
-                        self._load()
-                    elif expired:
-                        raise OAuthUnavailable("OAuth signing keys unavailable")
-                algorithm, key = self._keys[kid]
+            algorithm, key = self._key(_text(header.get("kid"), "key ID"))
             if algorithm != header["alg"]:
                 raise ValueError()
             claims = jwt.decode(
                 token,
                 key,
                 algorithms=[algorithm],
-                issuer=self.issuer,
-                audience=self.audience,
+                issuer=trust.issuer,
+                audience=trust.audience,
+                leeway=trust.leeway_seconds,
                 options={"require": ["exp", "iat", "iss", "sub", "aud"]},
             )
-            if self.profile == "rfc9068":
-                _text(claims.get("jti"), "token ID")
-            if "cnf" in claims or "act" in claims or "may_act" in claims:
+            if any(name in claims for name in ("cnf", "act", "may_act")):
                 raise OAuthError("Sender-constrained and actor-chain tokens are not supported")
-            if self.profile == "keycloak" and claims.get("typ") != "Bearer":
+            if shape.needs_token_id:
+                _text(claims.get("jti"), "token ID")
+            for name, constant in shape.constants.items():
+                if claims.get(name) != constant:
+                    raise ValueError()
+            client = next((claims[name] for name in shape.client if name in claims), None)
+            if shape.has_clients and _text(client, "client") not in self._clients:
                 raise ValueError()
-            client = _text(claims.get("azp" if self.profile == "keycloak" else "client_id"), "client")
-            if client not in self.allowed_clients:
-                raise ValueError()
-            expiry = _integer(claims["exp"], "expiry")
-            issued = _integer(claims["iat"], "issued at")
+            for name, wanted in trust.where.items():
+                found = claims.get(name)
+                if not isinstance(found, str) or (found != wanted if isinstance(wanted, str) else found not in wanted):
+                    raise ValueError()
+            expiry, issued = _integer(claims["exp"], "expiry"), _integer(claims["iat"], "issued at")
             if issued >= expiry:
                 raise ValueError()
             if "nbf" in claims:
                 _integer(claims["nbf"], "not before")
-            scope = claims.get("scope", "")
-            if not isinstance(scope, str):
+            listed = next((claims[name] for name in shape.scopes if name in claims), "")
+            if not isinstance(listed, (str, list)):
                 raise ValueError()
-            scopes = frozenset(scope.split())
-            if not self.required_scopes <= scopes:
+            scopes = frozenset(listed.split() if isinstance(listed, str) else [_text(s, "scope") for s in listed])
+            if not frozenset(trust.required_scopes) <= scopes:
                 raise ValueError()
-            return OAuthCaller(
-                self.issuer,
-                _text(claims["sub"], "subject"),
-                client,
-                _text(claims.get(self.tenant_claim), "tenant"),
-                scopes,
-                expiry,
+            return OAuthIdentity(
+                issuer=trust.issuer,
+                subject=_text(claims["sub"], "subject"),
+                client_id=client,
+                tenant_id=_text(claims.get(trust.tenant_claim), "tenant") if trust.tenant_claim else None,
+                scopes=scopes,
+                expires_at=expiry,
+                claims=MappingProxyType({name: value for name, value in claims.items() if isinstance(value, str)}),
             )
         except OAuthError:
             raise
         except Exception as exc:
             raise OAuthError("Invalid OAuth access token") from exc
+
+
+# ---------------------------------------------------------------------------
+# What a task allows
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -303,19 +465,29 @@ class MaximumFrom:
 
 @dataclass(frozen=True)
 class TaskGrant:
+    """What the policy grants: tools with argument constraints, for a time."""
+
     capabilities: Mapping[str, Mapping[str, Any]]
-    expires_at: int
+    expires_at: Optional[int] = None  # When the approval behind it ends, if it has an end.
     ttl_seconds: int = 120
     max_depth: int = 0
 
 
 class TaskTemplate:
-    """Compile a server-owned approved task to concrete constraints.
+    """Turns an approved task record from your own database into argument constraints.
 
-    The loader must return a trusted record, not fields supplied by the agent.
-    Required record fields: task_id, issuer, subject, tenant_id, status,
-    expires_at. All configured argument fields must be present. Unknown tool
-    arguments remain unauthorized. This template is for user-owned tasks.
+    The record must come from a store you trust, never from the agent. It
+    carries ``task_id``, ``status`` (``"approved"``), integer ``expires_at``,
+    one field for each name in ``owner``, and the fields the arguments refer
+    to. ``owner`` says whose task it is, as attributes of the verified
+    identity: the default is a person's task (issuer, subject, tenant). For a
+    service acting for itself use ``("issuer", "client_id")``. Arguments not
+    named here stay unauthorized.
+
+    ``compile`` returns ``None`` when there is no record, or the record is not
+    this caller's approved and unexpired task: return that from your policy to
+    deny. It raises when the record itself is unusable (a field missing or of
+    the wrong type), which is a fault in your data, not in the request.
     """
 
     def __init__(
@@ -323,7 +495,8 @@ class TaskTemplate:
         *,
         tool: str,
         arguments: Mapping[str, Any],
-        required_scopes: FrozenSet[str],
+        required_scopes: FrozenSet[str] = frozenset(),
+        owner: Sequence[str] = ("issuer", "subject", "tenant_id"),
         ttl_seconds: int = 120,
         max_depth: int = 0,
     ):
@@ -335,24 +508,33 @@ class TaskTemplate:
             _text(binding.field, "task field")
             if isinstance(binding, MaximumFrom):
                 _integer(binding.minimum, "minimum", 0, 2**53 - 1)
-        self.arguments = MappingProxyType(dict(arguments))
+        if not owner or any(name not in ("issuer", "subject", "client_id", "tenant_id") for name in owner):
+            raise ValueError("owner names identity attributes: issuer, subject, client_id, tenant_id")
+        if "issuer" not in owner:
+            raise ValueError("owner must include the issuer: a subject or client means nothing without it")
+        self.arguments, self.owner = MappingProxyType(dict(arguments)), tuple(owner)
         self.required_scopes = frozenset(required_scopes)
         self.ttl_seconds = _integer(ttl_seconds, "TTL", 1, 3600)
         self.max_depth = _integer(max_depth, "delegation depth", 0, 16)
 
-    def compile(self, caller: OAuthCaller, task_id: str, record: Mapping[str, Any]) -> TaskGrant:
+    def compile(
+        self, identity: OAuthIdentity, task_id: str, record: Optional[Mapping[str, Any]]
+    ) -> Optional[TaskGrant]:
+        if record is None:
+            return None
+        owned = all(
+            getattr(identity, name) is not None and record.get(name) == getattr(identity, name) for name in self.owner
+        )
         if (
             record.get("task_id") != task_id
-            or record.get("issuer") != caller.issuer
-            or record.get("subject") != caller.subject
-            or record.get("tenant_id") != caller.tenant_id
+            or not owned
             or record.get("status") != "approved"
-            or not self.required_scopes <= caller.scopes
+            or not self.required_scopes <= identity.scopes
         ):
-            raise OAuthError("Task is not authorized for this caller")
+            return None
         expiry = _integer(record.get("expires_at"), "task expiry")
         if expiry <= time.time():
-            raise OAuthError("Task approval expired")
+            return None
         constraints = {}
         for argument, binding in self.arguments.items():
             if binding.field not in record:
@@ -370,48 +552,28 @@ class TaskTemplate:
         )
 
 
-class ReplayStore(Protocol):
-    def claim(self, key: str, expires_at: float) -> bool:
-        """Atomically reserve a proof until expiry; fail closed on store failure."""
-        ...
+def _validated(grant: Any) -> TaskGrant:
+    if not isinstance(grant, TaskGrant):
+        raise OAuthError("Policy must return a TaskGrant or None")
+    if not isinstance(grant.capabilities, Mapping) or not grant.capabilities:
+        raise OAuthError("Grant is empty")
+    for tool, constraints in grant.capabilities.items():
+        _text(tool, "tool")
+        if not isinstance(constraints, Mapping) or not constraints:
+            raise OAuthError("Tools must have explicit argument constraints")
+    _integer(grant.ttl_seconds, "TTL", 1, 3600)
+    _integer(grant.max_depth, "delegation depth", 0, 16)
+    if grant.expires_at is not None:
+        _integer(grant.expires_at, "task expiry")
+    return grant
 
 
-class SQLiteReplayStore:
-    """Durable replay store shared by processes on one host (not network filesystems).
-
-    Use a shared transactional implementation of ReplayStore for multi-host
-    deployments. Entries remain consumed after policy/audit failure; retry with
-    a fresh proof. This store does not make business operations idempotent.
-    """
-
-    def __init__(self, path: str, *, capacity: int = 100000):
-        if path == ":memory:":
-            raise ValueError("Replay store requires a persistent file")
-        self.path = str(Path(path))
-        self.capacity = _integer(capacity, "replay capacity", 1, 10000000)
-        with sqlite3.connect(self.path, timeout=5) as db:
-            db.execute("CREATE TABLE IF NOT EXISTS oauth_proofs (key TEXT PRIMARY KEY, expires REAL NOT NULL)")
-
-    def claim(self, key: str, expires_at: float) -> bool:
-        with sqlite3.connect(self.path, timeout=5) as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("DELETE FROM oauth_proofs WHERE expires < ?", (time.time(),))
-            if db.execute("SELECT 1 FROM oauth_proofs WHERE key = ?", (key,)).fetchone():
-                return False
-            if db.execute("SELECT COUNT(*) FROM oauth_proofs").fetchone()[0] >= self.capacity:
-                raise OAuthUnavailable("Issuance replay store is full")
-            db.execute("INSERT INTO oauth_proofs VALUES (?, ?)", (key, expires_at))
-        return True
+# ---------------------------------------------------------------------------
+# The issuer
+# ---------------------------------------------------------------------------
 
 
 def _proof_bytes(token: str, audience: str, task_id: str, holder: bytes, stamp: int, nonce: bytes) -> bytes:
-    _text(token, "access token", _MAX_TOKEN)
-    _text(audience, "audience")
-    _text(task_id, "task ID")
-    _integer(stamp, "timestamp")
-    if not isinstance(nonce, bytes) or len(nonce) != 16:
-        raise OAuthError("Invalid nonce")
-
     def digest(value: str) -> bytes:
         return hashlib.sha256(value.encode("utf-8")).digest()
 
@@ -419,6 +581,10 @@ def _proof_bytes(token: str, audience: str, task_id: str, holder: bytes, stamp: 
 
 
 def sign_oauth_holder_proof(token: str, holder_key: SigningKey, *, audience: str, task_id: str) -> OAuthHolderProof:
+    """Bind a holder key to one token, one issuer audience and one task. Each call is a new proof."""
+    _text(token, "access token", _MAX_TOKEN)
+    _text(audience, "audience")
+    _text(task_id, "task ID")
     stamp, nonce = int(time.time()), secrets.token_bytes(16)
     message = _proof_bytes(token, audience, task_id, bytes(holder_key.public_key.to_bytes()), stamp, nonce)
     return OAuthHolderProof(stamp, nonce, bytes(holder_key.sign_raw(message)))
@@ -426,7 +592,9 @@ def sign_oauth_holder_proof(token: str, holder_key: SigningKey, *, audience: str
 
 @dataclass(frozen=True)
 class OAuthIssuance:
-    caller: OAuthCaller
+    """Audit record passed to the issuer's ``audit`` callback before a warrant is released."""
+
+    identity: OAuthIdentity
     task_id: str
     holder: str
     warrant_id: str
@@ -434,92 +602,154 @@ class OAuthIssuance:
 
 
 class OAuthWarrantIssuer:
-    """Issue only after credential, holder proof, and application policy checks.
+    """Verified token and holder proof in, task-scoped warrant out.
 
-    audit is required and runs before a warrant is released. Callbacks run in
-    bounded HTTP worker threads and must impose their own dependency deadlines.
-    No refresh tokens are accepted or stored. No OAuth revocation propagation is
-    implied: existing warrants remain valid until their expiry or verifier-side revocation.
+    ``credentials`` is one ``OAuthTokens`` or several, one per issuer you
+    trust. ``policy(identity, task_id)`` returns a ``TaskGrant`` or ``None``.
+    ``audit`` is required and runs before a warrant is released: if it raises,
+    no warrant is issued. Both run in the endpoint's worker threads and must
+    set their own deadlines on what they call.
+
+    Holder proofs are remembered in this process unless you pass a
+    ``proof_store``: use ``SQLiteProofStore`` for several processes on one
+    host. A warrant ends no later than the token, the task approval and
+    ``max_ttl_seconds``. Revoking a token or changing a task afterwards does
+    not revoke a warrant already issued.
     """
 
     def __init__(
         self,
         *,
-        credentials: OAuthAccessTokens,
+        credentials: Union[OAuthTokens, Sequence[OAuthTokens]],
         signing_key: SigningKey,
-        policy: Callable[[OAuthCaller, str], Optional[TaskGrant]],
-        replay_store: ReplayStore,
+        policy: Callable[[OAuthIdentity, str], Optional[TaskGrant]],
         audit: Callable[[OAuthIssuance], None],
+        proof_store: Optional[ProofStore] = None,
         max_ttl_seconds: int = 120,
     ):
-        self.credentials, self.signing_key = credentials, signing_key
-        self.policy, self.replay_store, self.audit = policy, replay_store, audit
-        if not callable(policy) or not callable(audit):
-            raise ValueError("policy and audit callbacks are required")
-        self.max_ttl = _integer(max_ttl_seconds, "maximum TTL", 1, 3600)
+        self.credentials = (credentials,) if isinstance(credentials, OAuthTokens) else tuple(credentials)
+        if not self.credentials or not callable(policy) or not callable(audit):
+            raise ValueError("credentials, policy and audit are required")
+        if len({source.trust.issuer for source in self.credentials}) != len(self.credentials):
+            raise ValueError("Each issuer may be trusted once")
+        self.policy, self.audit = policy, audit
+        self._single = SingleRequestIssuer(
+            signing_key=signing_key,
+            # Looked up at each call: the callbacks may be replaced on a running issuer.
+            policy=lambda identity, task_id: self.policy(identity, task_id),
+            audit=lambda record: self.audit(record),
+            store=proof_store or MemoryProofStore(),
+            refused=OAuthError,
+            busy=OAuthUnavailable,
+            validate=_validated,
+            record=lambda identity, task_id, holder, warrant, grant: OAuthIssuance(
+                identity, task_id, holder, warrant.id, warrant.expires_at()
+            ),
+            wording=Wording(
+                denied="Task is not authorized for this caller",
+                ends_too_soon="The token or the task approval ends too soon to issue a warrant",
+                outlives="Warrant would outlive its grant",
+                who="caller",
+            ),
+            max_ttl_seconds=_integer(max_ttl_seconds, "maximum TTL", 1, 3600),
+            logger=logger,
+        )
+
+    def close(self) -> None:
+        for source in self.credentials:
+            source.close()
+
+    def _source(self, token: str) -> OAuthTokens:
+        """The one trust whose issuer the token names. Its claim is not trusted here, only used to choose."""
+        if len(self.credentials) == 1:
+            return self.credentials[0]
+        for source in self.credentials:
+            if source.issued(token):
+                return source
+        raise OAuthError("Invalid OAuth access token")
+
+    def authenticate(self, token: str) -> OAuthIdentity:
+        """Verify a token against the trust for its issuer."""
+        return self._source(token).authenticate(token)
 
     def issue(self, token: str, holder: PublicKey, task_id: str, proof: OAuthHolderProof) -> Warrant:
-        caller = self.credentials.authenticate(token)
-        return self._issue_authenticated(caller, token, holder, task_id, proof)
+        """Verify the token and the holder proof, ask the policy, and mint."""
+        source = self._source(token)
+        return self._issue(source, source.authenticate(token), token, holder, task_id, proof)
 
-    def _issue_authenticated(
-        self, caller: OAuthCaller, token: str, holder: PublicKey, task_id: str, proof: OAuthHolderProof
+    def _issue(
+        self,
+        source: OAuthTokens,
+        identity: OAuthIdentity,
+        token: str,
+        holder: PublicKey,
+        task_id: str,
+        proof: OAuthHolderProof,
     ) -> Warrant:
-        message = _proof_bytes(
-            token, self.credentials.audience, task_id, bytes(holder.to_bytes()), proof.timestamp, proof.nonce
+        audience = source.audience
+        return self._single.issue(
+            identity,
+            owner=identity.key,
+            expires_at=identity.expires_at,
+            holder=holder,
+            task_id=task_id,
+            proof=proof,
+            statement=lambda key, stamp, nonce: _proof_bytes(token, audience, task_id, key, stamp, nonce),
         )
-        if abs(time.time() - proof.timestamp) > _WINDOW:
-            raise OAuthError("Holder proof expired")
-        try:
-            ed25519.Ed25519PublicKey.from_public_bytes(bytes(holder.to_bytes())).verify(proof.signature, message)
-        except (InvalidSignature, ValueError, TypeError) as exc:
-            raise OAuthError("Invalid holder proof") from exc
-        # Reservation is based on the signed message, not signature bytes.
-        if not self.replay_store.claim(hashlib.sha256(message).hexdigest(), proof.timestamp + _WINDOW + 1):
-            raise OAuthError("Holder proof already used")
-        grant = self.policy(caller, task_id)
-        if grant is None:
-            raise OAuthError("Task is not authorized for this caller")
-        expiry = min(caller.expires_at, _integer(grant.expires_at, "task expiry"))
-        ttl = min(self.max_ttl, _integer(grant.ttl_seconds, "TTL", 1, 3600), int(expiry - time.time()) - 1)
-        depth = _integer(grant.max_depth, "delegation depth", 0, 16)
-        if ttl < 1 or not grant.capabilities:
-            raise OAuthError("Grant is empty or expires too soon")
-        builder = Warrant.mint_builder().holder(holder).ttl(ttl).max_depth(depth)
-        for tool, constraints in grant.capabilities.items():
-            if not constraints:
-                raise OAuthError("Tools must have explicit argument constraints")
-            builder.capability(_text(tool, "tool"), dict(constraints))
-        warrant = builder.mint(self.signing_key)
-        if datetime.fromisoformat(warrant.expires_at()).timestamp() > expiry:
-            raise OAuthError("Warrant would outlive its grant")
-        self.audit(OAuthIssuance(caller, task_id, bytes(holder.to_bytes()).hex(), warrant.id, warrant.expires_at()))
-        return warrant
 
 
 class OAuthWarrantIssuerApp(_IssuerApp):
-    """Bounded ASGI POST /warrants endpoint. Terminate HTTPS at the ASGI server or trusted ingress."""
+    """ASGI application that issues warrants to callers with a token from a trusted provider.
+
+    Run it with any ASGI server behind HTTPS, or mount it in an existing app.
+    Two request shapes are accepted on ``POST <path>``.
+
+    The compact one::
+
+        Authorization: Bearer <token>
+        Content-Type: application/json
+
+        {"v": 1, "holder": "<base64 Ed25519 public key>", "task": "<task ID>",
+         "timestamp": <unix seconds>, "nonce": "<base64, 16 bytes>",
+         "signature": "<base64 holder proof>"}
+
+    answered with ``200 {"warrant": "<base64>"}``.
+
+    OAuth 2.0 Token Exchange (RFC 8693), form-encoded, for callers and
+    gateways that already speak it: ``grant_type`` (token-exchange),
+    ``subject_token``, ``subject_token_type`` (access_token or jwt),
+    ``requested_token_type=urn:tenuo:params:oauth:token-type:warrant`` and
+    ``authorization_details`` holding one object of type ``tenuo_task`` with
+    the same ``task``, ``holder``, ``timestamp``, ``nonce`` and ``signature``.
+    It is answered as a token response whose ``access_token`` is the warrant.
+
+    In the compact shape the token is checked before the body is read, so only
+    a caller with a valid one holds a place. At most ``max_per_identity``
+    requests from one identity are in progress at once.
+    """
 
     _what = "OAuth issuance"
     _challenge = b"Bearer"
+    _log = logger
+    _who = "caller"
+    _check_in_pool = True  # Signature checks and a key fetch are not work for the event loop.
+    _subject_token_types = frozenset(
+        {"urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"}
+    )
 
-    def __init__(self, issuer: OAuthWarrantIssuer, **kwargs: Any):
-        super().__init__(issuer, **kwargs)  # type: ignore[arg-type]
-        self.oauth_issuer = issuer
-
-    @staticmethod
-    def _decode_request(body: bytes) -> Any:
-        request = _json(body)
-        if not isinstance(request, dict) or type(request.get("v")) is not int:
-            raise ValueError("Invalid request version")
-        return request
+    def __init__(self, issuer: OAuthWarrantIssuer, *, max_per_identity: int = 16, **options: Any):
+        if not _positive_int(max_per_identity) or max_per_identity < 1:
+            raise ValueError("max_per_identity must be a positive integer")
+        super().__init__(issuer, **options)
+        self._issuer: OAuthWarrantIssuer = issuer
+        self._max_per_key = max_per_identity
 
     def _credential(self, scope: Mapping[str, Any]) -> str:
         headers = scope.get("headers", ())
-        types = [v for k, v in headers if k.lower() == b"content-type"]
+        types = [value for name, value in headers if name.lower() == b"content-type"]
         if len(types) != 1 or types[0].split(b";")[0].strip().lower() != b"application/json":
             raise _Refusal(415, "invalid_request", "Use application/json")
-        values = [v for k, v in headers if k.lower() == b"authorization"]
+        values = [value for name, value in headers if name.lower() == b"authorization"]
         scheme, _, value = (values[0] if len(values) == 1 else b"").partition(b" ")
         if scheme.lower() != b"bearer" or not value or len(value) > _MAX_TOKEN:
             raise _Refusal(401, "invalid_token", "Send one Bearer access token")
@@ -528,19 +758,33 @@ class OAuthWarrantIssuerApp(_IssuerApp):
         except UnicodeError:
             raise _Refusal(401, "invalid_token", "Invalid access token") from None
 
-    def _authorize(self, credential: str, holder: PublicKey, task_id: Any, proof: OAuthHolderProof) -> Warrant:
+    def _exchange_credential(self, token: str) -> str:
+        if not token or len(token) > _MAX_TOKEN:
+            raise _Refusal(401, "invalid_token", "Invalid access token")
+        return token
+
+    def _verify(self, credential: str) -> Tuple[str, OAuthIdentity]:
         try:
-            caller = self.oauth_issuer.credentials.authenticate(credential)
+            return credential, self._issuer.authenticate(credential)
         except OAuthUnavailable:
             raise _Refusal(503, "unavailable", "Credential validation temporarily unavailable") from None
         except OAuthError:
             raise _Refusal(401, "invalid_token", "Access token not accepted") from None
-        try:
-            return self.oauth_issuer._issue_authenticated(caller, credential, holder, task_id, proof)
-        except OAuthUnavailable:
-            raise _Refusal(503, "unavailable", "Issuance temporarily unavailable") from None
-        except OAuthError as exc:
-            raise _Refusal(403, "refused", str(exc)) from exc
+
+    def _limit_key(self, credential: Tuple[str, OAuthIdentity]) -> str:
+        return credential[1].key
+
+    def _authorize(
+        self, credential: Tuple[str, OAuthIdentity], holder: PublicKey, task_id: Any, proof: OAuthHolderProof
+    ) -> Warrant:
+        # Checked again: the body may have taken seconds to arrive, and the keys can change meanwhile.
+        token, identity = self._verify(credential[0])
+        return self._issuer._issue(self._issuer._source(token), identity, token, holder, task_id, proof)
+
+
+# ---------------------------------------------------------------------------
+# The agent's side
+# ---------------------------------------------------------------------------
 
 
 def request_warrant_oauth(
@@ -552,31 +796,43 @@ def request_warrant_oauth(
     holder_key: SigningKey,
     task_id: str,
     timeout: float = 10,
+    ca_file: Optional[str] = None,
     allow_loopback_http: bool = False,
 ) -> Warrant:
-    """Request and verify a warrant; never follow credential-bearing redirects."""
+    """Ask an ``OAuthWarrantIssuerApp`` for a warrant and check what comes back.
+
+    ``audience`` is the issuer's configured audience. The token is sent over
+    verified HTTPS only (``ca_file`` for a private CA), or to a loopback
+    address with ``allow_loopback_http=True``. Redirects are not followed.
+    ``timeout`` bounds the whole call. The warrant must be signed by
+    ``issuer_key`` and bound to ``holder_key``. Every failure is an
+    ``OAuthError``. Keep the token and the holder key out of model prompts and logs.
+    """
     _url(url, allow_loopback_http)
+    scheme, host, port, path = _split_url(url)
+    timeout = _seconds("timeout", timeout)
     proof = sign_oauth_holder_proof(token, holder_key, audience=audience, task_id=task_id)
-    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
-        with client.stream(
-            "POST",
-            url,
-            content=_request_body(holder_key, task_id, proof),
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        ) as response:
-            if response.status_code != 200:
-                raise OAuthError(f"Warrant issuance refused ({response.status_code})")
-            raw = bytearray()
-            for chunk in response.iter_bytes():
-                raw.extend(chunk)
-                if len(raw) > _MAX_JSON:
-                    raise OAuthError("Issuer response too large")
-    try:
-        warrant = _checked_warrant(_json(raw)["warrant"], [issuer_key], holder_key)
-    except Exception as exc:
-        raise OAuthError("Invalid warrant response") from exc
-    return warrant
+
+    def connect() -> http.client.HTTPConnection:
+        if scheme == "https":
+            return http.client.HTTPSConnection(
+                host, port, timeout=timeout, context=ssl.create_default_context(cafile=ca_file)
+            )
+        return http.client.HTTPConnection(host, port, timeout=timeout)
+
+    return _post_for_warrant(
+        connect,
+        _where(host, port),
+        path,
+        _request_body(holder_key, task_id, proof),
+        {"Authorization": f"Bearer {token}"},
+        [issuer_key],
+        holder_key,
+        timeout=timeout,
+        error=OAuthError,
+    )
 
 
 async def arequest_warrant_oauth(url: str, **kwargs: Any) -> Warrant:
+    """Async wrapper for :func:`request_warrant_oauth` (runs in a worker thread)."""
     return await asyncio.to_thread(request_warrant_oauth, url, **kwargs)

@@ -2679,7 +2679,7 @@ def test_endpoint_checks_tokens_off_the_event_loop_and_bounds_that_work(jwt_issu
         assert (third, checking, afterwards) == (503, 2, 0)
         assert served == [200, 200]  # Once their tokens were checked, both were admitted and served.
         # The first check of each token ran in the token pool, the second with the policy. None ran on the loop.
-        assert all(name.startswith("tenuo-spiffe-token") for name in threads[:2])
+        assert all(name.startswith("tenuo-issuance-check") for name in threads[:2])
         assert len(threads) == 4 and loop_thread not in threads
     finally:
         release.set()

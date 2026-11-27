@@ -20,8 +20,7 @@ EMAIL_TEMPLATE = TaskTemplate(
 
 
 def policy_for(records):
-    def policy(caller, task_id):
-        record = records.get((caller.tenant_id, task_id))
-        return None if record is None else EMAIL_TEMPLATE.compile(caller, task_id, record)
+    def policy(identity, task_id):
+        return EMAIL_TEMPLATE.compile(identity, task_id, records.get((identity.tenant_id, task_id)))
 
     return policy

@@ -16,7 +16,7 @@ from aiosmtpd.controller import Controller
 from tenuo import SigningKey
 from tenuo.mcp import SecureMCPClient
 from tenuo.mcp._compat import call_tool_result_is_error
-from tenuo.oauth import OAuthError, OAuthWarrantIssuer, OAuthWarrantIssuerApp, SQLiteReplayStore, request_warrant_oauth
+from tenuo.oauth import OAuthError, OAuthWarrantIssuer, OAuthWarrantIssuerApp, SQLiteProofStore, request_warrant_oauth
 from tenuo_core import sign_meta
 
 from email_policy import policy_for
@@ -44,14 +44,14 @@ class Inbox:
 
 
 def exercise_email(directory, credentials, root, holder, token, refund_token, bob_token, issuer_server):
-    caller = credentials.authenticate(token)
+    identity = credentials.authenticate(token)
     records = {}
     for task in ("email-123", "email-ambiguous"):
-        records[(caller.tenant_id, task)] = dict(
+        records[(identity.tenant_id, task)] = dict(
             task_id=task,
-            issuer=caller.issuer,
-            subject=caller.subject,
-            tenant_id=caller.tenant_id,
+            issuer=identity.issuer,
+            subject=identity.subject,
+            tenant_id=identity.tenant_id,
             status="approved",
             expires_at=int(time.time()) + 300,
             recipient="customer@example.test",
@@ -64,7 +64,7 @@ def exercise_email(directory, credentials, root, holder, token, refund_token, bo
         credentials=credentials,
         signing_key=root,
         policy=policy_for(records),
-        replay_store=SQLiteReplayStore(str(directory / "mail-proofs.db")),
+        proof_store=SQLiteProofStore(str(directory / "mail-proofs.db")),
         audit=audit.append,
     )
     app = OAuthWarrantIssuerApp(authority)

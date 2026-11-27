@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'tenuo-python/tenuo/oauth.py'
+      - 'tenuo-python/tenuo/_issuance.py'
       - 'tenuo-python/tenuo/_issuance_http.py'
       - 'tenuo-python/tenuo/spiffe.py'
       - 'tenuo-python/tenuo/mcp/**'
@@ -34,7 +35,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Build this checkout and install test dependencies
-        run: python -m pip install './tenuo-python[oauth,fastmcp]' pytest pytest-asyncio uvicorn playwright aiosmtpd
+        run: python -m pip install './tenuo-python[oauth,fastmcp]' pytest pytest-asyncio uvicorn httpx playwright aiosmtpd
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: matrix.provider == 'oidc-provider'
         with:

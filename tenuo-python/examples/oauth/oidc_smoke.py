@@ -23,11 +23,13 @@ import jwt
 from playwright.sync_api import sync_playwright
 from tenuo import SigningKey
 from tenuo.oauth import (
-    OAuthAccessTokens,
+    RFC9068,
     OAuthError,
+    OAuthTokens,
     OAuthWarrantIssuer,
     OAuthWarrantIssuerApp,
-    SQLiteReplayStore,
+    SQLiteProofStore,
+    Trust,
     request_warrant_oauth,
 )
 
@@ -124,12 +126,15 @@ def login(
 
 
 def exercise(directory, http, discovery, tokens):
-    credentials = OAuthAccessTokens(
-        issuer=discovery["issuer"],
-        audience="tenuo-authority",
-        jwks_url=discovery["jwks_uri"],
-        allowed_clients=frozenset({"support", "mail-support", "no-tenant", "opaque"}),
-        profile="rfc9068",
+    credentials = OAuthTokens(
+        Trust(
+            issuer=discovery["issuer"],
+            audience="tenuo-authority",
+            jwks_url=discovery["jwks_uri"],
+            claims=RFC9068,
+            clients=frozenset({"support", "mail-support", "no-tenant", "opaque"}),
+            tenant_claim="tenant_id",
+        ),
         allow_loopback_http=True,
     )
     root, holder = SigningKey.generate(), SigningKey.generate()
@@ -190,7 +195,7 @@ def exercise(directory, http, discovery, tokens):
                 credentials=credentials,
                 signing_key=root,
                 policy=policy_for(records),
-                replay_store=SQLiteReplayStore(str(directory / "proofs.db")),
+                proof_store=SQLiteProofStore(str(directory / "proofs.db")),
                 audit=audit.append,
             )
         )
