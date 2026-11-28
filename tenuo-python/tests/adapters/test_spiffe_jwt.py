@@ -349,6 +349,35 @@ def test_rotation_that_adds_an_unsupported_key_still_retires_the_old_one(authori
         validator.authenticate(retired.token())
 
 
+def test_an_rsa_key_with_a_huge_exponent_is_skipped(authority, tmp_path, caplog):
+    """Such a key makes every check against it slow. It is passed over like any other key the adapter cannot use."""
+    costly = JWTAuthority(kind="RSA")
+    exponent = 2**33 + 1
+    encoded = base64.urlsafe_b64encode(exponent.to_bytes(5, "big")).rstrip(b"=").decode()
+    path = tmp_path / "bundle.json"
+    path.write_bytes(jwks(authority, extra=[{**costly.jwk, "e": encoded}]))
+    with caplog.at_level("WARNING", logger="tenuo.spiffe"):
+        validator = SpiffeJWT(trust_domain=DOMAIN, audience=AUDIENCE, bundle_file=str(path))
+    assert "too large" in caplog.text
+    assert validator.authenticate(authority.token()).spiffe_id == AGENT
+    with pytest.raises(SpiffeError, match="not in the trust bundle"):
+        validator.authenticate(costly.token())
+
+
+def test_the_largest_rsa_modulus_taken_is_8192_bits(authority):
+    """At the limit a key is used. One bit over, it is skipped, and the keys next to it are not lost."""
+    from tenuo.spiffe_jwt import _jwks_keys
+
+    def b64(number):
+        return base64.urlsafe_b64encode(number.to_bytes((number.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+
+    template = JWTAuthority(kind="RSA").jwk
+    at_the_limit = {**template, "kid": "limit", "n": b64(2**8191 + 1)}  # A stand-in for a modulus of 8192 bits.
+    over_it = {**template, "kid": "over", "n": b64(2**8192 + 1)}
+    keys = _jwks_keys(jwks(authority, extra=[at_the_limit, over_it]), DOMAIN)
+    assert set(keys) == {authority.kid, "limit"} and keys["limit"].key_size == 8192
+
+
 def test_one_token_has_one_spelling(validator, authority):
     """Padding or junk after a valid token must not validate as a second identity."""
     token = authority.token()
@@ -1123,6 +1152,27 @@ def test_jwt_policy_denials_and_invalid_grants(jwt_issuer, authority):
         issue(issuer, authority.token(), SigningKey.generate())
 
 
+@pytest.mark.parametrize("task", ["t\x00", "t\r\n2026 INFO all is well", "t\x1b[2K", "t\u2028", "t\x7f", "", "t" * 257])
+def test_the_signer_and_the_issuer_refuse_the_same_task_ids(jwt_issuer, authority, task):
+    """A proof the issuer will always refuse is not signed, and the client does not send it."""
+    issuer, *_ = jwt_issuer
+    holder, token = SigningKey.generate(), authority.token()
+    with pytest.raises(SpiffeError, match="task_id must"):
+        sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id=task)
+    with pytest.raises(SpiffeError, match="task_id must"):
+        request_warrant_jwt(
+            "http://127.0.0.1:9/warrants",
+            token=token,
+            audience=AUDIENCE,
+            issuer_key=SigningKey.generate().public_key,
+            holder_key=holder,
+            task_id=task,
+        )
+    proof = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    with pytest.raises(SpiffeError, match="task_id must"):
+        issuer.issue_jwt(token, holder.public_key, task, proof)
+
+
 def test_issuer_modes_are_explicit(validator, authority):
     root = SigningKey.generate()
     with pytest.raises(ValueError, match="tls .* jwt"):
@@ -1417,13 +1467,16 @@ def test_endpoint_counts_reading_and_working_requests_against_one_limit(jwt_issu
 def test_endpoint_refuses_absurd_numbers_without_failing(app, authority):
     application, *_ = app
     holder, token = SigningKey.generate(), authority.token()
-    for timestamp in (10**400, -1, 1.5, "soon", None, True):
+    for timestamp in (10**400, -1, 2**39, 1.5, "soon", None, True):
         status, _, reply = call_app(
             application,
             headers=[("Authorization", f"Bearer {token}")],
             body=request_body(token, holder, timestamp=timestamp),
         )
-        assert status == 403 and "too old or from the future" in reply["message"]
+        if type(timestamp) is int and timestamp < 10**64:  # A whole number of seconds, at the wrong time.
+            assert status == 403 and "too old or from the future" in reply["message"]
+        else:  # Not a whole number of seconds at all, or too long to be one: malformed.
+            assert (status, reply["message"]) == (400, "Malformed request")
     for nonce in ("", "AAAA", 5, None):
         status, _, _ = call_app(
             application, headers=[("Authorization", f"Bearer {token}")], body=request_body(token, holder, nonce=nonce)

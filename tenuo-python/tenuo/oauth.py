@@ -52,7 +52,9 @@ from tenuo._issuance import (
     SQLiteProofStore,
     Wording,
     _positive_int,
+    _rsa_within_bounds,
     _seconds,
+    _task_id_fault,
 )
 from tenuo._issuance_http import (
     _IssuerApp,
@@ -119,9 +121,9 @@ class OAuthUnavailable(OAuthError, IssuanceBusy):
 class _NotAccepted(Exception):
     """Why a token is not accepted, in words for the operator. ``unavailable`` when it could not be checked at all."""
 
-    def __init__(self, reason: str, *, unavailable: bool = False, message: str = "Invalid OAuth access token"):
+    def __init__(self, reason: str, *, unavailable: bool = False):
         super().__init__(reason)
-        self.reason, self.unavailable, self.message = reason, unavailable, message
+        self.reason, self.unavailable = reason, unavailable
 
 
 def _shown(value: Any) -> str:
@@ -152,20 +154,19 @@ def _json(raw: Any) -> Any:
 
 
 def _text(value: Any, name: str, maximum: int = 1024) -> str:
-    if not isinstance(value, str) or not value or len(value) > maximum:
+    if not _is_text(value, maximum):
         raise OAuthError(f"Invalid {name}")
-    if any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value):  # Control characters and lone surrogates.
-        raise OAuthError(f"Invalid {name}")
-    return value
+    return str(value)
 
 
 def _is_text(value: Any, maximum: int = 1024) -> bool:
-    """Whether a claim is text this adapter will carry: not empty, not long, no control characters or lone surrogates."""
-    return (
-        isinstance(value, str)
-        and 0 < len(value) <= maximum
-        and not any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value)
-    )
+    """Whether a value is text this adapter will carry: not empty, not long, and printable.
+
+    Printable rules out control characters of every kind (DEL and the C1 range
+    included), line and paragraph separators, and lone surrogates. Such text
+    goes to policies, audit records and logs as it is.
+    """
+    return isinstance(value, str) and 0 < len(value) <= maximum and value.isprintable()
 
 
 def _integer(value: Any, name: str, minimum: int = 0, maximum: int = 2**40) -> int:
@@ -230,6 +231,8 @@ class ClaimMap:
     header_type: str = "at+jwt"
     extra_headers: FrozenSet[str] = frozenset()  # Header names allowed besides alg, kid and typ.
     constants: Mapping[str, str] = field(default_factory=dict)  # Claims that must have exactly this value.
+    present: FrozenSet[str] = frozenset()  # Claims that must be there, whatever their value.
+    absent: FrozenSet[str] = frozenset()  # Claims that must not be there.
     has_clients: bool = True
     needs_token_id: bool = False
 
@@ -244,11 +247,19 @@ GITHUB_ACTIONS = ClaimMap(client=(), scopes=(), header_type="JWT", extra_headers
 """GitHub Actions OIDC tokens. A workflow run is not an OAuth client and has no scopes:
 say which runs you trust with ``Trust.where`` (``repository``, ``ref``, ``environment``)."""
 
-ENTRA_ID = ClaimMap(client=("azp",), scopes=("roles",), header_type="JWT", constants={"ver": "2.0"})
+ENTRA_ID = ClaimMap(
+    client=("azp",),
+    scopes=("roles",),
+    header_type="JWT",
+    constants={"ver": "2.0"},
+    present=frozenset({"azpacr"}),  # How the client authenticated: on access tokens, not on ID tokens.
+    absent=frozenset({"scp"}),  # Delegated permissions: a token for a signed-in user, which this preset is not for.
+)
 """Microsoft Entra ID version 2.0 access tokens for an application acting as itself
 (client credentials). The client is in ``azp`` and its permissions are application
 roles, read here as scopes. Set ``requestedAccessTokenVersion`` to 2 on the API's
-registration: version 1.0 tokens are refused. The audience is the API's client ID."""
+registration: version 1.0 tokens are refused. The audience is the API's client ID.
+A token issued for a signed-in user is refused."""
 
 Condition = Union[str, FrozenSet[str]]
 
@@ -392,7 +403,7 @@ class OAuthTokens:
                     response.close()  # Otherwise a refused answer keeps the socket until it is collected.
                 connection.close()
         entries = _json(bytes(raw))["keys"]
-        if not isinstance(entries, list) or len(entries) > 100 or any(not isinstance(e, dict) for e in entries):
+        if not isinstance(entries, list) or len(entries) > 100:
             raise _FetchRefused("Invalid keys")
         keys: Dict[str, Tuple[str, Any]] = {}
         seen = set()
@@ -400,6 +411,8 @@ class OAuthTokens:
             # Two things refuse the whole set, whatever else the entry says: private
             # key material, and one key ID twice. An entry this adapter has no use
             # for is passed over, and a token signed by it is simply not accepted.
+            if not isinstance(entry, dict):
+                continue
             if any(name in entry for name in ("d", "p", "q", "k")):
                 raise _FetchRefused("Private or symmetric key")
             kid = entry.get("kid")
@@ -409,14 +422,18 @@ class OAuthTokens:
                 seen.add(kid)
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
-            algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
-            if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not _is_text(kid):
+            kty, algorithm = entry.get("kty"), entry.get("alg")
+            if not algorithm and isinstance(kty, str):
+                algorithm = {"RSA": "RS256", "EC": "ES256"}.get(kty)
+            if not isinstance(algorithm, str) or algorithm not in ("RS256", "ES256"):
+                continue
+            if not isinstance(kid, str) or not _is_text(kid):
                 continue
             try:
                 key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
             except Exception:
                 continue
-            if algorithm == "RS256" and not (isinstance(key, rsa.RSAPublicKey) and key.key_size >= 2048):
+            if algorithm == "RS256" and not (isinstance(key, rsa.RSAPublicKey) and _rsa_within_bounds(key)):
                 continue
             if algorithm == "ES256" and not (
                 isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP256R1)
@@ -594,7 +611,7 @@ class OAuthTokens:
                 logger.info("Token could not be checked for %s: %s", self.trust.issuer, reason)
                 raise OAuthUnavailable("OAuth signing keys unavailable", reason) from refused.__cause__
             logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
-            raise OAuthError(refused.message, reason) from None
+            raise OAuthError("Invalid OAuth access token", reason) from None
         except OAuthError:
             raise
         except Exception as exc:
@@ -660,13 +677,18 @@ class OAuthTokens:
             raise _NotAccepted(f"the token could not be verified ({type(exc).__name__})") from None
         if any(name in claims for name in ("cnf", "act", "may_act")):
             raise _NotAccepted(
-                "the token is sender-constrained (cnf) or has an actor chain (act, may_act), which is not supported",
-                message="Sender-constrained and actor-chain tokens are not supported",
+                "the token is sender-constrained (cnf) or has an actor chain (act, may_act), which is not supported"
             )
         if shape.needs_token_id and not _is_text(claims.get("jti")):
             raise _NotAccepted("the token has no jti claim, which this claim map requires")
         if "jti" in claims and not _is_text(claims["jti"]):  # The same answer whatever the JWT library's version.
             raise _NotAccepted("the jti claim is not usable text")
+        for name in shape.present:
+            if name not in claims:
+                raise _NotAccepted(f"the token has no {name!r} claim, which this claim map requires")
+        for name in shape.absent:
+            if name in claims:
+                raise _NotAccepted(f"the token has a {name!r} claim, which this claim map does not accept")
         for name, constant in shape.constants.items():
             if claims.get(name) != constant:
                 hint = "; this looks like an ID token, not an access token" if claims.get(name) == "ID" else ""
@@ -900,7 +922,9 @@ def sign_oauth_holder_proof(token: str, holder_key: SigningKey, *, audience: str
     """Bind a holder key to one token, one issuer audience and one task. Each call is a new proof."""
     _text(token, "access token", _MAX_TOKEN)
     _text(audience, "audience")
-    _text(task_id, "task ID")
+    fault = _task_id_fault(task_id)  # The rule the issuer applies.
+    if fault is not None:
+        raise OAuthError(fault)
     stamp, nonce = int(time.time()), secrets.token_bytes(16)
     message = _proof_bytes(token, audience, task_id, bytes(holder_key.public_key.to_bytes()), stamp, nonce)
     return OAuthHolderProof(stamp, nonce, bytes(holder_key.sign_raw(message)))
