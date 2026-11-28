@@ -20,7 +20,7 @@ From the repository root, using Python 3.9+:
 
 ```bash
 python -m venv /tmp/tenuo-spiffe-demo-venv
-/tmp/tenuo-spiffe-demo-venv/bin/pip install 'tenuo==0.3.8' 'cryptography>=42'
+/tmp/tenuo-spiffe-demo-venv/bin/pip install 'tenuo==0.3.9' 'cryptography>=42'
 PYTHONPATH=tenuo-python /tmp/tenuo-spiffe-demo-venv/bin/python tenuo-python/examples/spiffe/demo.py
 ```
 
