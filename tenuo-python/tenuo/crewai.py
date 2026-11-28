@@ -2708,7 +2708,10 @@ class _GuardedCrewImpl:
 
     def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
         """Create a hook that routes to the appropriate per-agent guard."""
+        from contextvars import copy_context
+
         guards = self._guards
+        kickoff_context = copy_context()
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
@@ -2734,7 +2737,10 @@ class _GuardedCrewImpl:
 
             # Delegate to the agent's guard hook (never raises; CrewAI would
             # treat an escaped exception as "allow").
-            return guard.authorize_hook(context, agent_role=role)
+            # CrewAI may invoke the hook from a worker without ContextVars.
+            # Each call gets its own copy so concurrent workers can safely
+            # use the kickoff's chain, Runtime, and authorization settings.
+            return kickoff_context.copy().run(guard.authorize_hook, context, agent_role=role)
 
         return guarded_crew_hook
 

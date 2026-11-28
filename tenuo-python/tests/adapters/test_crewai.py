@@ -1793,6 +1793,51 @@ class TestGuardedCrewIssuerChain:
             assert call() is None
         assert isinstance(call(), DenialResult)
 
+    def test_combined_hook_preserves_scope_in_worker_threads(self, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from types import SimpleNamespace
+        from tenuo import HolderIdentity, Runtime, SigningKey, Warrant, config
+        from tenuo.crewai import GuardedCrew, WarrantDelegator
+        from tenuo.decorators import chain_scope
+
+        monkeypatch.setattr(config, "get_config", lambda: config.TenuoConfig())
+        root, parent_key, issuer_key = [SigningKey.generate() for _ in range(3)]
+        parent = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(parent_key.public_key).mint(root))
+        issuer = WarrantDelegator().delegate(
+            parent_warrant=parent, parent_key=parent_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+        agent = SimpleNamespace(role="researcher")
+        crew = (GuardedCrew(agents=[agent], tasks=[])
+                .with_issuer(issuer, issuer_key)
+                .policy({"researcher": ["search"]})
+                .constraints({"researcher": {"search": {"query": Pattern("arxiv:*")}}})
+                .on_denial("skip").build())
+        crew._protect_agents()
+        runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[root.public_key])
+        with runtime.bind(), chain_scope([parent, issuer]):
+            hook = crew._create_combined_hook()
+        barrier = Barrier(2)
+        def call(query):
+            assert chain_scope() is None
+            barrier.wait(timeout=5)
+            return hook(SimpleNamespace(agent=agent, tool_name="search", tool_input={"query": query}))
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            allowed = pool.submit(call, "arxiv:2401.00001")
+            denied = pool.submit(call, "evil.com")
+            assert allowed.result(timeout=10) is None
+            assert denied.result(timeout=10) is False
+        # Another kickoff outside the scope must not inherit the previous one.
+        unscoped_hook = crew._create_combined_hook()
+        assert unscoped_hook(SimpleNamespace(
+            agent=agent, tool_name="search", tool_input={"query": "arxiv:2401.00001"}
+        )) is False
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
