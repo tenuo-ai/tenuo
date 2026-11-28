@@ -107,6 +107,10 @@ class OAuthUnavailable(OAuthError, IssuanceBusy):
     """Something issuance depends on is unavailable or at its limit. Nothing was granted; try again."""
 
 
+class _FetchRefused(ValueError):
+    """A key set this adapter will not use, for a reason it states itself."""
+
+
 def _json(raw: Any) -> Any:
     try:
         return _strict_json(raw)
@@ -320,11 +324,11 @@ class OAuthTokens:
             with ending:
                 held["socket"] = connection.sock
             if time.monotonic() > deadline:
-                raise ValueError("Key endpoint too slow")
+                raise _FetchRefused("Key endpoint too slow")
             connection.request("GET", path, headers={"Accept": "application/json"})
             response = connection.getresponse()
             if response.status != 200:  # A redirect included: the key location is configuration.
-                raise ValueError(f"HTTP {response.status}")
+                raise _FetchRefused(f"HTTP {response.status}")
             raw = bytearray()
             while True:
                 chunk = response.read1(65536)
@@ -332,9 +336,9 @@ class OAuthTokens:
                     break
                 raw.extend(chunk)
                 if len(raw) > _MAX_JSON or time.monotonic() > deadline:
-                    raise ValueError("Key set too large or too slow")
+                    raise _FetchRefused("Key set too large or too slow")
             if time.monotonic() > deadline:
-                raise ValueError("Key endpoint too slow")
+                raise _FetchRefused("Key endpoint too slow")
         finally:
             timer.cancel()
             with ending:
@@ -344,7 +348,7 @@ class OAuthTokens:
                 connection.close()
         entries = _json(bytes(raw))["keys"]
         if not isinstance(entries, list) or len(entries) > 100 or any(not isinstance(e, dict) for e in entries):
-            raise ValueError("Invalid keys")
+            raise _FetchRefused("Invalid keys")
         keys: Dict[str, Tuple[str, Any]] = {}
         seen = set()
         for entry in entries:
@@ -352,11 +356,11 @@ class OAuthTokens:
             # key material, and one key ID twice. An entry this adapter has no use
             # for is passed over, and a token signed by it is simply not accepted.
             if any(name in entry for name in ("d", "p", "q", "k")):
-                raise ValueError("Private or symmetric key")
+                raise _FetchRefused("Private or symmetric key")
             kid = entry.get("kid")
             if isinstance(kid, str):
                 if kid in seen:
-                    raise ValueError("Duplicate key ID")
+                    raise _FetchRefused("Duplicate key ID")
                 seen.add(kid)
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
@@ -401,7 +405,10 @@ class OAuthTokens:
                     self._keys, self._loaded, self._in_use = keys, time.monotonic(), number
                 if number >= self._in_use:
                     if failure is not None and not self._failed:
-                        logger.warning("Could not fetch signing keys from %s: %r", self.trust.jwks_url, failure)
+                        # Our own reasons are fixed text. Anything else is named by its type only:
+                        # an error raised while reading someone else's document may quote from it.
+                        reason = str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
+                        logger.warning("Could not fetch signing keys from %s: %s", self.trust.jwks_url, reason)
                     self._failed = failure is not None
         return failure
 
