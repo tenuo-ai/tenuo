@@ -2716,11 +2716,9 @@ class _GuardedCrewImpl:
         guards = self._guards
         # Carry policy into CrewAI workers, not per-call outputs such as the
         # idempotency key shared by hooks and the downstream tool handler.
-        policy_context = (
-            (_config_context, get_config()),
-            (_chain_context, list(chain_scope() or [])),
-            (_runtime_context, get_runtime()),
-        )
+        kickoff_config = get_config()
+        kickoff_chain = list(chain_scope() or [])
+        kickoff_runtime = get_runtime()
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
@@ -2746,7 +2744,9 @@ class _GuardedCrewImpl:
                 _set_current_idempotency_key(None)
                 return False
 
-            tokens = [(var, var.set(value)) for var, value in policy_context]
+            config_token = _config_context.set(kickoff_config)
+            chain_token = _chain_context.set(kickoff_chain)
+            runtime_token = _runtime_context.set(kickoff_runtime)
             try:
                 result = guard.authorize_hook(context, agent_role=role)
                 if result is False:
@@ -2757,8 +2757,9 @@ class _GuardedCrewImpl:
                 logger.exception("GuardedCrew hook failed; blocking tool call")
                 return False
             finally:
-                for var, token in reversed(tokens):
-                    var.reset(token)
+                _runtime_context.reset(runtime_token)
+                _chain_context.reset(chain_token)
+                _config_context.reset(config_token)
 
         return guarded_crew_hook
 
