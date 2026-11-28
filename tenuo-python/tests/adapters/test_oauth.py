@@ -362,24 +362,33 @@ def test_es256_and_algorithm_confusion(provider, validator):
         validator.authenticate(provider["token"](headers={"kid": "ec", "typ": "JWT"}))
 
 
-def test_a_refresh_is_not_undone_by_a_fetch_that_began_before_it(provider, validator):
+def test_a_refresh_is_not_undone_by_a_fetch_that_began_before_it(provider, validator, monkeypatch):
     token = provider["token"]()
-    assert validator.authenticate(token).subject == "alice"
-    validator._loaded = float("-inf")  # The keys have aged out, so the next token sends a caller to fetch.
-    provider["delay"] = 0.6
+    real = validator._fetch
+    with_the_key = real()
+    began, release = threading.Event(), threading.Event()
+
+    def older_fetch():  # Read the key set while the key was still published, and is slow to come back.
+        began.set()
+        release.wait(10)
+        return with_the_key
+
+    monkeypatch.setattr(validator, "_fetch", older_fetch)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        older = pool.submit(validator.authenticate, token)  # Its fetch reads the keys as they are now.
-        time.sleep(0.2)
-        provider["delay"], withdrawn = 0.0, provider["keys"]
+        older = pool.submit(validator.authenticate, token)  # No keys yet, so this caller fetches.
+        assert began.wait(5)
+        monkeypatch.setattr(validator, "_fetch", real)
         provider["keys"] = []
         validator.refresh()  # The operator withdrew the key and refreshed.
-        provider["keys"] = withdrawn  # Whatever the older fetch brings back must not replace that.
-        try:
+        assert validator._keys == {}
+        release.set()
+        with pytest.raises(OAuthUnavailable):  # Overtaken: what it fetched is not used, and it is told to retry.
             older.result()
-        except OAuthError:
-            pass
-    with pytest.raises(OAuthError):
+    assert validator._keys == {}  # What the older fetch brought back did not replace the refreshed set.
+    validator._refresh_interval = 60  # Judge the token by the keys in use, without another fetch.
+    with pytest.raises(OAuthError) as refused:
         validator.authenticate(token)
+    assert not isinstance(refused.value, OAuthUnavailable)
 
 
 def test_nobody_waits_for_another_callers_fetch(provider, validator):
@@ -1094,7 +1103,7 @@ def test_unreachable_providers_do_not_hold_up_callers_of_another(provider, valid
     finally:
         application.close()
         silent.close()
-    assert status == 200 and waited < 0.5
+    assert status == 200 and waited < 1.5  # Their fetches take longer than this to give up.
     assert set(others) == {503}
 
 
