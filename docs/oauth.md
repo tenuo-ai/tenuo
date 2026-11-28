@@ -24,11 +24,18 @@ else is read from it. What a caller may do comes from your approved task.
 ## Install and try it
 
 ```sh
-pip install 'tenuo[oauth]'
+pip install 'tenuo[oauth]' uvicorn
+python tenuo-python/examples/oauth/quickstart.py
 ```
 
-Python 3.9 or later. Three examples run against real software, and CI runs all
-of them on every change to this adapter:
+Python 3.9 or later. [`quickstart.py`](../tenuo-python/examples/oauth/quickstart.py)
+is one file with no Docker and no identity provider: it signs its own tokens
+in place of yours, runs the issuer, and shows an approved refund going through
+and three others being refused. Its four parts are the four things you write,
+so it is also the file to copy from. The steps below explain each part.
+
+These run against real software, and CI runs all of them on every change to
+this adapter:
 
 | Example | What it shows |
 |---|---|
@@ -70,7 +77,9 @@ people = OAuthTokens(
 - `required_scopes` are scopes every caller must hold.
 
 The key location is configuration. It is never read from a token, there is no
-discovery, and redirects are not followed.
+discovery, and redirects are not followed. Both URLs must be `https`. For a
+provider on your own machine while you try things out, pass
+`OAuthTokens(trust, allow_loopback_http=True)`.
 
 ### Providers
 
@@ -140,7 +149,26 @@ def policy(identity, task_id):
 ```
 
 The record carries `task_id`, `status` (`"approved"`), an integer
-`expires_at`, the owner fields, and the fields the arguments refer to.
+`expires_at`, the owner fields, and the fields the arguments refer to. For the
+template above and a person's task:
+
+```python
+{
+    "task_id": "refund-123",
+    "issuer": "https://identity.example.com/realms/company",  # Owner: must be the caller's issuer,
+    "subject": "f3c1...",                                     # the caller's `sub`,
+    "tenant_id": "acme",                                      # and tenant, since the trust has a tenant_claim.
+    "status": "approved",
+    "expires_at": int(time.time()) + 600,  # Unix seconds, in the future. The warrant ends no later than this.
+    "payment_id": "payment-789",
+    "currency": "USD",
+    "max_amount_cents": 5000,
+}
+```
+
+For a service acting for itself (`owner=("issuer", "client_id")`), the owner
+fields are `issuer` and `client_id` instead.
+
 `compile` returns `None` when there is no record, or it is not this caller's
 approved and unexpired task. It raises when the record itself is unusable (a
 field missing or of the wrong type): that is a fault in your data, and the
@@ -153,7 +181,10 @@ trust has a `tenant_claim`. For a service acting for itself, use
 names owns nothing.
 
 Arguments the template does not name stay unauthorized. `MaximumFrom` is a
-limit per call, not a running total: keep totals in your own ledger. The
+limit per call, not a running total: keep totals in your own ledger. It
+becomes a numeric range from 1 up to the record's value; `MaximumFrom(field,
+minimum=0)` changes the lower end. A range does not require a whole number
+(1.5 is inside 1 to 5000), so a tool that needs one must check that itself. The
 template does not read tool schemas, so test allowed and refused arguments
 whenever a tool's schema changes.
 
@@ -192,11 +223,32 @@ issuer = OAuthWarrantIssuer(
 app = OAuthWarrantIssuerApp(issuer)
 ```
 
-`app` is an ASGI application: run it with any ASGI server behind HTTPS, or
-mount it in an existing one. Load `issuer_signing_key` from wherever you keep
-secrets. `audit` is required and runs before a warrant is released: if it
-raises, no warrant is issued. It receives the verified identity, the task, the
-holder key, and the warrant's ID and expiry, never the token.
+`app` is an ASGI application: run it with any ASGI server behind HTTPS
+(`uvicorn issuer:app`), or mount it in an existing one.
+
+`issuer_signing_key` is the issuer's own Ed25519 key. Make it once, keep the
+private half with your other secrets, and give the public half to the agents
+and tools that should accept this issuer's warrants:
+
+```python
+from tenuo import PublicKey, SigningKey
+
+key = SigningKey.generate()
+private_hex = bytes(key.secret_key_bytes()).hex()  # Store as a secret. Load with SigningKey.from_bytes(bytes.fromhex(...)).
+public_hex = bytes(key.public_key_bytes()).hex()  # Not a secret. Load with PublicKey.from_bytes(bytes.fromhex(...)).
+```
+
+`audit` is required and runs before a warrant is released: if it raises, no
+warrant is issued. It is called with one record and never sees the token:
+
+```python
+def write_audit_record(issuance):
+    issuance.identity     # The verified OAuthIdentity: issuer, subject, client_id, tenant_id, scopes, claims.
+    issuance.task_id      # The task the warrant is for.
+    issuance.holder       # The agent's holder key, in hex.
+    issuance.warrant_id   # For example "tnu_wrt_01a2...".
+    issuance.expires_at   # When the warrant ends, as an ISO 8601 string.
+```
 
 To trust several providers at once, pass a list
 (`credentials=[people, services, ci_runs]`). A token is judged by the trust
@@ -217,9 +269,15 @@ warrant = request_warrant_oauth(
 )
 ```
 
-The helper signs a fresh holder proof, sends the request over verified HTTPS,
-and returns the warrant only if it is signed by `issuer_key` and bound to
-`holder_key`. `timeout` bounds the whole call. `arequest_warrant_oauth` does
+`trusted_issuer_public_key` is the public half of the issuer's key, as a
+`PublicKey`. `agent_holder_key` is a `SigningKey` the agent makes for itself
+(`SigningKey.generate()`) and never shares: the warrant is bound to it, and
+every call is signed with it.
+
+The helper signs a fresh holder proof, sends the request over verified HTTPS
+(`allow_loopback_http=True` permits plain HTTP to an issuer on your own
+machine), and returns the warrant only if it is signed by `issuer_key` and
+bound to `holder_key`. `timeout` bounds the whole call. `arequest_warrant_oauth` does
 the same from async code. Keep the token and the holder key out of model
 prompts and logs.
 
@@ -232,6 +290,25 @@ A warrant is an ordinary Tenuo warrant, so every enforcement point works:
   [Proxy configurations](enforcement.md#proxy-configurations) for Istio and nginx.
 - **In an MCP server.** See the [browser-to-MCP example](../tenuo-python/examples/oauth/README.md).
 - **In process**, with `Authorizer` or any framework adapter.
+
+In process, the agent signs each call and the tool checks it:
+
+```python
+import time
+
+from tenuo import Authorizer
+
+# The agent: sign this call, with the argument names the template uses.
+arguments = {"operation_id": "refund-123", "payment_id": "payment-789", "currency": "USD", "amount_cents": 4000}
+signature = warrant.sign(agent_holder_key, "refund", arguments, int(time.time()))
+
+# The tool: it holds the issuer's public key and nothing else.
+authorizer = Authorizer(trusted_roots=[trusted_issuer_public_key])
+authorizer.authorize(warrant, "refund", arguments, signature)  # Raises unless this exact call is allowed.
+```
+
+To send a warrant to a tool in another process, pass `warrant.to_base64()`
+and the signature, and rebuild it there with `Warrant.from_base64(...)`.
 
 ## Behind an OAuth gateway
 
@@ -349,7 +426,9 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
    "timestamp":<unix seconds>,"nonce":"<base64>","signature":"<base64>"}]
 ```
 
-(Values are form-encoded on the wire.) The answer is a token response:
+(Values are form-encoded on the wire. `holder`, `nonce` and `signature` are
+standard base64 with padding, as in the compact shape.) The answer is a token
+response:
 
 ```json
 {"access_token": "<the warrant>",
@@ -359,10 +438,13 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 ```
 
 `token_type` is `N_A` because a warrant is not a bearer token: presenting it
-takes a signature from the holder key. Errors use the token-endpoint form,
-`{"error": ..., "error_description": ...}`: `invalid_grant` for a token that
-is not accepted, `invalid_authorization_details` for a task that is not
-granted or a proof that is refused, `invalid_request` for a malformed request.
+takes a signature from the holder key. Turn `access_token` into a warrant with
+`Warrant.from_base64(...)`. Errors use the token-endpoint form,
+`{"error": ..., "error_description": ...}`, with HTTP status 400:
+`invalid_grant` for a token that is not accepted,
+`invalid_authorization_details` for a task that is not granted or a proof
+that is refused, `invalid_request` for a malformed request. (503 with
+`temporarily_unavailable` means try again.)
 
 What this is not: the issuer is not an authorization server. It accepts
 exactly the five parameters above and refuses any other (`scope`, `audience`,
@@ -410,6 +492,49 @@ was denied or failed can be sent again.
 | 403 | Task not granted, or holder proof refused |
 | 408, 413, 415 | Body too slow, too large (64 KiB), or not `application/json` |
 | 503 | A limit was reached, signing keys are unavailable, or a policy or audit callback failed |
+
+## When a request is refused
+
+The caller is told little on purpose: the same words for every token that is
+not accepted, so the endpoint does not help someone probe it. The issuer's log
+(logger `tenuo.oauth`, level INFO) says which check failed. It can include the
+token's audience, client and scope names. It never includes the token.
+
+| The caller sees | Look for in the issuer's log | Usual cause |
+|---|---|---|
+| 401 `Access token not accepted` | `Token not accepted for <issuer>: ...` | See the list below |
+| 403 `Task is not authorized for this caller` | `Task '<id>' is not granted to ...: ...` | No record, another owner, not approved, a missing scope, or an expired approval |
+| 403 `This holder proof was already used` | | The same signed request was sent twice; sign a new one |
+| 503 `Credential validation temporarily unavailable` | `Token could not be checked for <issuer>: ...` | The keys are being fetched or have aged out (send the request again), or they could not be fetched: the provider is down, or `Trust.jwks_url` is wrong, which never recovers by itself |
+| 503 `Issuer error` | A traceback | Your policy or audit function raised, or returned a grant that cannot be used |
+
+What the log says for a 401, and what to do:
+
+- `audience: the token is for ... and Trust.audience is ...`: the provider is
+  not putting this issuer's audience in the token. Add it there (in Keycloak,
+  an audience mapper on the client).
+- `client ... is not in Trust.clients`: add the client, or the token came from
+  an application you did not mean to trust.
+- `the header's typ is ... and this trust's claim map expects ...`: the wrong
+  preset for this provider.
+- `claim 'typ' is 'ID' ... this looks like an ID token`: send the access
+  token, not the ID token.
+- `the token is signed with key ID ..., which is not among the N usable keys
+  last fetched from ...`: `jwks_url` points at another realm or tenant. If the
+  provider has just started using a new key, the next fetch picks it up.
+- `scopes: the token has ... and Trust.required_scopes also needs ...`
+- `not a JWT ...`: the provider issues opaque tokens for this client.
+
+To check one token without the endpoint:
+
+```python
+from tenuo.oauth import OAuthError
+
+try:
+    print(people.authenticate(token))
+except OAuthError as refused:
+    print(refused.reason)
+```
 
 ## Limits and defaults
 

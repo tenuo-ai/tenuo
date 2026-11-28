@@ -472,6 +472,9 @@ class _IssuerApp:
             fields = urllib.parse.parse_qs(
                 body.decode("ascii"), keep_blank_values=True, strict_parsing=True, max_num_fields=16
             )
+            unknown = sorted(name for name in set(fields) - _EXCHANGE_FIELDS if name.isidentifier() and len(name) <= 40)
+            if unknown:  # Named, since a client library may add it without being asked.
+                raise _Refusal(400, "invalid_request", f"Unsupported token-exchange parameter: {unknown[0]}")
             if set(fields) != _EXCHANGE_FIELDS or any(len(values) != 1 for values in fields.values()):
                 raise ValueError
             request = {name: values[0] for name, values in fields.items()}
@@ -485,6 +488,8 @@ class _IssuerApp:
             detail = details[0]
             if set(detail) != _TASK_DETAIL_FIELDS or detail["type"] != _TASK_DETAIL_TYPE:
                 raise ValueError
+        except _Refusal:
+            raise
         except (ValueError, TypeError, RecursionError, UnicodeError):
             raise _Refusal(400, "invalid_request", "Malformed token-exchange request") from None
         return request, detail
