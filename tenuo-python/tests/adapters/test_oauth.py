@@ -1588,6 +1588,7 @@ def test_the_quickstart_runs_as_printed():
         "refunded 4000 cents on payment-789",
         "REFUSED at the tool: Constraint 'amount_cents' not satisfied",
         "REFUSED at the tool: Constraint 'payment_id' not satisfied",
+        "REFUSED at the tool: amount_cents must be a whole number of cents",
         "Issuer refused (HTTP 403): Task is not authorized for this caller",
         "client 'reporting-agent' is not in Trust.clients",
         "All as expected.",

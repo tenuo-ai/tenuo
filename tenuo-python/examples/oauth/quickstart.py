@@ -158,6 +158,10 @@ def refund(payment_id, amount_cents, *, warrant, signature):
     """Refund a payment, if the warrant allows exactly this call."""
     arguments = {"payment_id": payment_id, "amount_cents": amount_cents}  # The names the template uses.
     authorizer.authorize(warrant, "refund", arguments, signature)  # Raises unless allowed.
+    # The warrant's limit is a numeric range, and 1.5 is inside 1 to 5000. What an amount must look
+    # like beyond that is the tool's own rule, as it was before warrants.
+    if type(amount_cents) is not int:
+        raise ValueError("amount_cents must be a whole number of cents")
     REFUNDS_MADE.append((payment_id, amount_cents))  # Reached only by an allowed call.
     return f"refunded {amount_cents} cents on {payment_id}"
 
@@ -203,6 +207,8 @@ def run_agent(issuer_url):
     too_much, another_payment = call(warrant, "payment-789", 9000), call(warrant, "payment-000", 4000)
     print("  ", too_much)
     print("  ", another_payment)
+    fraction = call(warrant, "payment-789", 1.5)  # Inside the warrant's range. The tool's own rule refuses it.
+    print("  ", fraction)
 
     print("4. A task nobody approved gets no warrant:")
     try:
@@ -219,7 +225,13 @@ def run_agent(issuer_url):
     # Each call above was made once. The warrant limits what a call may be, not how many times it is made:
     # until it expires the approved refund would be allowed again, so a payments service still needs its own
     # rule for doing an operation once (an operation ID, for example).
-    return "refunded" in approved and "REFUSED" in too_much and "REFUSED" in another_payment and len(REFUNDS_MADE) == 1
+    return (
+        "refunded" in approved
+        and "REFUSED" in too_much
+        and "REFUSED" in another_payment
+        and "whole number" in fraction
+        and REFUNDS_MADE == [("payment-789", 4000)]
+    )
 
 
 def main():
