@@ -424,7 +424,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `grant(allow, to=None, ttl=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 
 | `verify(public_key)` | `bool` | Verify signature against issuer |
-| `sign(keypair, tool, args)` | `bytes` | Sign action (Proof-of-Possession) |
+| `sign(keypair, tool, args, timestamp)` | `bytes` | Sign one call (Proof-of-Possession). `timestamp` is Unix seconds, usually `int(time.time())` |
 | `to_base64()` | `str` | Serialize to base64 |
 | `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
 | `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |

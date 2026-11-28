@@ -182,6 +182,19 @@ def allowed(root, warrant, holder, tool, args):
         {"may_act": {"sub": "someone"}},
         {"exp": True},
         {"iat": 1.5},
+        {"iat": []},  # Claims of the wrong JSON type are a refusal like any other, with a reason.
+        {"iat": {"a": 1}},
+        {"exp": []},
+        {"exp": "soon"},
+        {"nbf": []},
+        {"nbf": {}},
+        {"aud": {"a": 1}},
+        {"aud": 7},
+        {"sub": []},
+        {"sub": 7},
+        {"azp": []},
+        {"scope": None},
+        {"jti": []},
         {"scope": {"refunds:write": True}},
         {"scope": 5},
         {"scope": ["refunds:write", 5]},
@@ -190,8 +203,71 @@ def allowed(root, warrant, holder, tool, args):
     ],
 )
 def test_reject_invalid_credentials(provider, validator, changes):
-    with pytest.raises(OAuthError):
+    with pytest.raises(OAuthError) as refused:
         validator.authenticate(provider["token"](**changes))
+    assert refused.value.reason and not isinstance(refused.value, OAuthUnavailable)
+
+
+@pytest.mark.parametrize(
+    "changes,options,says",
+    [
+        ({"aud": "account"}, {}, "audience: the token is for 'account' and Trust.audience is 'authority'"),
+        ({"azp": "other-app"}, {}, "client 'other-app' is not in Trust.clients"),
+        ({}, {"claims": RFC9068}, "the header's typ is 'JWT' and this trust's claim map expects 'at+jwt'"),
+        ({"typ": "ID"}, {}, "this looks like an ID token, not an access token"),
+        ({"scope": "mail:send"}, {"required_scopes": frozenset({"refunds:write"})}, "Trust.required_scopes also needs"),
+        ({"tenant_id": ...}, {"tenant_claim": "tenant_id"}, "no 'tenant_id' claim to read the tenant from"),
+        ({"exp": 1}, {}, "the token has expired"),
+        ({"iss": "https://elsewhere.example"}, {}, "issuer: the token says 'https://elsewhere.example'"),
+        (
+            {"repository": "someone/fork"},
+            {"where": {"repository": "acme/backend"}},
+            "Trust.where expects 'acme/backend'",
+        ),
+        ({"cnf": {"jkt": "x"}}, {}, "sender-constrained"),
+        ({"headers": {"kid": "rotated", "typ": "JWT"}}, {}, "which is not among the 1 usable keys"),
+    ],
+)
+def test_the_operator_is_told_which_check_failed_and_the_caller_is_not(provider, caplog, changes, options, says):
+    instance = tokens(provider, **options)
+    token = provider["token"](**changes)
+    with caplog.at_level("INFO", logger="tenuo.oauth"):
+        with pytest.raises(OAuthError) as refused:
+            instance.authenticate(token)
+    assert says in refused.value.reason
+    assert says in caplog.text and token not in caplog.text and token not in refused.value.reason
+    assert says not in str(refused.value)  # What a caller is shown stays the same for every refusal.
+
+
+def test_a_wrong_key_url_is_named_in_the_log_and_not_called_a_bad_token(provider, caplog):
+    instance = tokens(provider)
+    provider["status"] = 404
+    with caplog.at_level("INFO", logger="tenuo.oauth"):
+        with pytest.raises(OAuthUnavailable) as refused:
+            instance.authenticate(provider["token"]())
+    assert "could not fetch signing keys from" in refused.value.reason and "HTTP 404" in refused.value.reason
+    assert "check Trust.jwks_url" in caplog.text
+    # An availability problem is not logged as a verdict on the token.
+    assert "Token could not be checked for" in caplog.text and "Token not accepted" not in caplog.text
+
+
+def test_an_unavailable_reason_names_the_cause_that_applies(provider, validator, monkeypatch):
+    token = provider["token"]()
+    assert validator.authenticate(token).subject == "alice"
+    validator._refresh_interval = 60
+    # The keys aged out and the next fetch is not due: nothing failed, so no failure is reported.
+    validator._loaded = float("-inf")
+    with pytest.raises(OAuthUnavailable) as refused:
+        validator.authenticate(token)
+    assert "aged out" in refused.value.reason and "could not fetch" not in refused.value.reason
+    # A fetch that hangs is reported as that, not as whatever failed some time before.
+    validator._refresh_interval, validator._timeout, validator._attempted = 0.01, 0.2, float("-inf")
+    release = threading.Event()
+    monkeypatch.setattr(validator, "_fetch", lambda: release.wait(10) and {})
+    with pytest.raises(OAuthUnavailable) as refused:
+        validator.authenticate(token)
+    release.set()
+    assert "the fetch did not end in time" in refused.value.reason
 
 
 def test_identity_is_what_the_token_said(provider, validator):
@@ -330,6 +406,17 @@ def test_an_unusable_key_set_is_refused_whole(provider, validator, keys):
     provider["keys"] = keys(provider["keys"][0])
     with pytest.raises(OAuthUnavailable):
         validator.authenticate(provider["token"]())
+
+
+@pytest.mark.parametrize("kid", ["one\n", "o\x00ne", "\ud800", "k" * 2000])
+def test_a_key_id_must_be_plain_text_even_if_the_provider_publishes_it(provider, validator, kid):
+    provider["keys"] = [{**provider["keys"][0], "kid": kid}, provider["keys"][0]]
+    assert validator.authenticate(provider["token"]()).subject == "alice"  # The well-named key still works.
+    assert kid not in validator._keys
+    token = provider["token"](headers={"kid": kid, "typ": "JWT"})
+    with pytest.raises(OAuthError) as refused:
+        validator.authenticate(token)
+    assert refused.value.reason == "the header has no usable key ID (kid)"
 
 
 def test_duplicate_jwt_claims_and_unsigned_token(provider, validator):
@@ -583,6 +670,28 @@ def test_template_denies_untrusted_or_invalid_task(provider, setup, field, value
     assert audits == []
 
 
+@pytest.mark.parametrize(
+    "change,says",
+    [
+        (None, "there is no record for it"),
+        ({"subject": "bob"}, "the record's 'subject' is not this caller's"),
+        ({"tenant_id": "other"}, "the record's 'tenant_id' is not this caller's"),
+        ({"status": "pending"}, "the record's status is not 'approved'"),
+        ({"expires_at": 1}, "the approval has expired"),
+        ({"task_id": "t2"}, "the record's task_id is not the one asked for"),
+    ],
+)
+def test_the_operator_is_told_why_a_task_was_not_granted(provider, setup, caplog, change, says):
+    issuer, _, _, task, _, template, _ = setup
+    identity = issuer.authenticate(provider["token"]())
+    with caplog.at_level("INFO", logger="tenuo.oauth"):
+        assert template.compile(identity, "t1", None if change is None else {**task, **change}) is None
+    assert "Task 't1' is not granted" in caplog.text and says in caplog.text
+    with caplog.at_level("INFO", logger="tenuo.oauth"):
+        assert template.compile(replace(identity, scopes=frozenset()), "t1", task) is None
+    assert "lacks the scope ['refunds:write']" in caplog.text
+
+
 def test_a_task_may_belong_to_a_service_instead_of_a_person(provider, setup):
     issuer, holder, _, task, *_ = setup
     identity = issuer.authenticate(provider["token"](sub="service-account-support"))
@@ -618,8 +727,8 @@ def test_missing_fields_scope_and_expiry_cap(provider, setup):
     assert template.compile(identity, "t2", task) is None
     missing = dict(task)
     del missing["payment"]
-    with pytest.raises(OAuthError):  # A fault in the record, not a denial.
-        template.compile(identity, "t1", missing)
+    with pytest.raises(OAuthError, match="no 'payment' field, which argument 'payment_id' is bound to"):
+        template.compile(identity, "t1", missing)  # A fault in the record, not a denial: it names the field.
     task["expires_at"] = int(time.time()) + 8
     warrant = ask(issuer, provider["token"](), holder)
     assert datetime.fromisoformat(warrant.expires_at()).timestamp() <= task["expires_at"]
@@ -1277,6 +1386,7 @@ def test_token_exchange_refusals_use_token_endpoint_errors(provider, setup, app)
         ({"requested_token_type": ACCESS_TOKEN}, None),
         ({"subject_token_type": "urn:ietf:params:oauth:token-type:id_token"}, None),
         ({"scope": "refunds:write"}, None),  # Nothing is accepted and then ignored.
+        ({"audience": "payments-api"}, None),
         ({"actor_token": "x"}, None),
         ({"subject_token": ...}, None),
         ({"authorization_details": "{}"}, None),
@@ -1314,6 +1424,17 @@ def test_token_exchange_with_an_authorization_header_needs_the_same_token_in_bot
         app, headers=[("Authorization", f"Bearer {token}"), *FORM], body=exchange(token, holder)
     )
     assert status == 200 and reply["access_token"]
+
+
+def test_token_exchange_names_a_parameter_it_does_not_support(provider, setup, app):
+    _, holder, *_ = setup
+    for name in ("scope", "audience", "client_id"):
+        body = exchange(provider["token"](), holder, **{name: "x"})
+        status, _, reply, _ = call_app(app, headers=FORM, body=body)
+        assert (status, reply["error"]) == (400, "invalid_request")
+        assert reply["error_description"] == f"Unsupported token-exchange parameter: {name}"
+    status, _, reply, _ = call_app(app, headers=FORM, body=exchange(provider["token"](), holder, **{"<b>" * 30: "x"}))
+    assert reply["error_description"] == "Malformed token-exchange request"  # Not echoed.
 
 
 def test_token_exchange_duplicate_fields_and_bad_encoding(provider, setup, app):
@@ -1465,3 +1586,33 @@ def test_client_and_endpoint_over_http(provider, setup, app):
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_the_quickstart_runs_as_printed():
+    """The one-file example the guide starts from, with a stand-in provider and no Docker."""
+    pytest.importorskip("uvicorn")
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    done = subprocess.run(
+        [sys.executable, str(root / "examples" / "oauth" / "quickstart.py")],
+        env={**os.environ, "PYTHONPATH": str(root)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    for line in (
+        "refunded 4000 cents on payment-789",
+        "REFUSED at the tool: Constraint 'amount_cents' not satisfied",
+        "REFUSED at the tool: Constraint 'payment_id' not satisfied",
+        "REFUSED at the tool: amount_cents must be a whole number of cents",
+        "Issuer refused (HTTP 403): Task is not authorized for this caller",
+        "client 'reporting-agent' is not in Trust.clients",
+        "All as expected.",
+    ):
+        assert line in done.stdout, line
+    assert done.stdout.count("refunded 4000 cents") == 1  # The approved refund is made once.

@@ -100,11 +100,34 @@ OAuthHolderProof = HolderProof
 
 
 class OAuthError(IssuanceError):
-    """A credential, holder proof or task was refused. Messages never contain the token."""
+    """A credential, holder proof or task was refused. Messages never contain the token.
+
+    For a token that was not accepted, ``reason`` says which check failed. It
+    is for whoever runs the issuer: it is logged there (logger ``tenuo.oauth``)
+    and is never sent to the caller.
+    """
+
+    def __init__(self, message: str, reason: Optional[str] = None):
+        super().__init__(message)
+        self.reason = reason
 
 
 class OAuthUnavailable(OAuthError, IssuanceBusy):
     """Something issuance depends on is unavailable or at its limit. Nothing was granted; try again."""
+
+
+class _NotAccepted(Exception):
+    """Why a token is not accepted, in words for the operator. ``unavailable`` when it could not be checked at all."""
+
+    def __init__(self, reason: str, *, unavailable: bool = False, message: str = "Invalid OAuth access token"):
+        super().__init__(reason)
+        self.reason, self.unavailable, self.message = reason, unavailable, message
+
+
+def _shown(value: Any) -> str:
+    """A value taken from a token, safe to put in a log line: quoted, escaped and cut short."""
+    text = repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
 
 
 class _FetchRefused(ValueError):
@@ -134,6 +157,15 @@ def _text(value: Any, name: str, maximum: int = 1024) -> str:
     if any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value):  # Control characters and lone surrogates.
         raise OAuthError(f"Invalid {name}")
     return value
+
+
+def _is_text(value: Any, maximum: int = 1024) -> bool:
+    """Whether a claim is text this adapter will carry: not empty, not long, no control characters or lone surrogates."""
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= maximum
+        and not any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value)
+    )
 
 
 def _integer(value: Any, name: str, minimum: int = 0, maximum: int = 2**40) -> int:
@@ -294,6 +326,7 @@ class OAuthTokens:
         self._loaded = self._attempted = float("-inf")
         self._under_way = 0  # Fetches in progress, from any caller.
         self._failed = False  # Whether the latest fetch to finish failed.
+        self._why = "no fetch has been made yet"  # How the latest failed fetch failed.
         self._begun = self._in_use = 0  # Fetches begun, and which of them the keys in use came from.
         self._lock = threading.Lock()
 
@@ -377,7 +410,7 @@ class OAuthTokens:
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
             algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
-            if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not kid or len(kid) > 1024:
+            if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not _is_text(kid):
                 continue
             try:
                 key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
@@ -426,11 +459,16 @@ class OAuthTokens:
                 # A set fetched later is never replaced by an earlier one.
                 self._keys, self._loaded, self._in_use = keys, time.monotonic(), fetch.number
             if fetch.number >= self._in_use:
-                if failure is not None and not self._failed:
-                    # Our own reasons are fixed text. Anything else is named by its type only:
-                    # an error raised while reading someone else's document may quote from it.
-                    reason = str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
-                    logger.warning("Could not fetch signing keys from %s: %s", self.trust.jwks_url, reason)
+                if failure is not None:
+                    reason = self._said(failure)
+                    self._why = reason
+                    if not self._failed:
+                        logger.warning(
+                            "Could not fetch signing keys from %s: %s. Tokens signed by keys not already fetched "
+                            "are answered 'unavailable' until a fetch succeeds.",
+                            self.trust.jwks_url,
+                            reason,
+                        )
                 self._failed = failure is not None
         fetch.failure = failure
         fetch.done.set()
@@ -442,10 +480,20 @@ class OAuthTokens:
         A fetch still going then is left to end by itself and counts as failed.
         """
         if fetch is None:
-            return OAuthUnavailable("No thread for the key fetch")
+            return _FetchRefused("no thread could be started for the fetch")
         if not fetch.done.wait(self._timeout + 1):
-            return OAuthUnavailable("The key fetch did not end in time")
+            return _FetchRefused("the fetch did not end in time")
         return fetch.failure
+
+    @staticmethod
+    def _said(failure: BaseException) -> str:
+        """How a fetch failed, in words safe to log.
+
+        Our own reasons are fixed text. Anything else is named by its type
+        only: an error raised while reading someone else's document may quote
+        from it.
+        """
+        return str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
 
     def refresh(self) -> None:
         """Fetch the keys now, for example at start-up or right after the provider withdrew one."""
@@ -466,19 +514,43 @@ class OAuthTokens:
                     self._launch()  # Fetch again well before the keys age out. Nobody waits for it.
                 return self._keys[kid]
             if not due:
-                if not usable or self._under_way or self._failed:
-                    # No keys to judge by, or a key that may be new and has not been fetched yet.
-                    raise OAuthUnavailable("OAuth signing keys unavailable")
-                raise OAuthError("Invalid OAuth access token")
+                # Each of these says what is known, and no more: the cause that is named is the one that applies.
+                if self._under_way:
+                    raise _NotAccepted("the signing keys are being fetched; send the request again", unavailable=True)
+                if self._failed:
+                    # No keys to judge by, or a key that may be new and could not be fetched.
+                    raise _NotAccepted(self._no_keys(self._why), unavailable=True)
+                if not usable:
+                    raise _NotAccepted(
+                        "the signing keys have aged out and the next fetch is not due yet; send the request again",
+                        unavailable=True,
+                    )
+                raise _NotAccepted(self._unknown(kid))
             fetch = self._launch()
         failure = self._wait(fetch)  # This caller only, and never while holding the lock.
         with self._lock:
             if time.monotonic() - self._loaded < self._cache_seconds and kid in self._keys:
                 return self._keys[kid]
-            if failure is not None or fetch is None or fetch.number != self._in_use:
-                # The fetch failed, or another one overtook it: this token cannot be judged yet.
-                raise OAuthUnavailable("OAuth signing keys unavailable") from failure
-            raise OAuthError("Invalid OAuth access token")
+            if failure is not None:  # This token cannot be judged yet.
+                raise _NotAccepted(self._no_keys(self._said(failure)), unavailable=True) from failure
+            if fetch is None or fetch.number != self._in_use:
+                raise _NotAccepted(
+                    "the signing keys were fetched again while this token was being checked; send the request again",
+                    unavailable=True,
+                )
+            raise _NotAccepted(self._unknown(kid))
+
+    def _no_keys(self, why: str) -> str:
+        return (
+            f"could not fetch signing keys from {self.trust.jwks_url} ({why}); "
+            "if this does not clear, check Trust.jwks_url"
+        )
+
+    def _unknown(self, kid: str) -> str:
+        return (
+            f"the token is signed with key ID {_shown(kid)}, which is not among the {len(self._keys)} usable keys "
+            f"last fetched from {self.trust.jwks_url}; is this the right provider and jwks_url?"
+        )
 
     # -- tokens -----------------------------------------------------------
 
@@ -508,17 +580,56 @@ class OAuthTokens:
             return False
 
     def authenticate(self, token: str) -> OAuthIdentity:
-        """Verify a token and return who it is for, or raise ``OAuthError``."""
+        """Verify a token and return who it is for, or raise ``OAuthError``.
+
+        The error's message is the same for every token that is not accepted.
+        Its ``reason`` names the check that failed and is logged here at INFO
+        for the operator. Neither contains the token.
+        """
+        try:
+            return self._identity(token)
+        except _NotAccepted as refused:
+            reason = refused.reason
+            if refused.unavailable:  # Nothing is known about the token itself.
+                logger.info("Token could not be checked for %s: %s", self.trust.issuer, reason)
+                raise OAuthUnavailable("OAuth signing keys unavailable", reason) from refused.__cause__
+            logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
+            raise OAuthError(refused.message, reason) from None
+        except OAuthError:
+            raise
+        except Exception as exc:
+            # Nothing above should get here. If something does, the token is refused, not let through or left unanswered.
+            reason = f"the token could not be checked ({type(exc).__name__})"
+            logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
+            raise OAuthError("Invalid OAuth access token", reason) from exc
+
+    def _identity(self, token: str) -> OAuthIdentity:
         trust, shape = self.trust, self.trust.claims
         try:
-            header, _ = self._parts(token)
-            if set(header) - {"alg", "kid", "typ"} - shape.extra_headers:
-                raise ValueError()
-            if header.get("typ") != shape.header_type or header.get("alg") not in ("RS256", "ES256"):
-                raise ValueError()
-            algorithm, key = self._key(_text(header.get("kid"), "key ID"))
-            if algorithm != header["alg"]:
-                raise ValueError()
+            header, payload = self._parts(token)
+        except Exception:
+            raise _NotAccepted(
+                "not a JWT (three base64url parts with a JSON header and payload); an opaque token cannot be checked"
+            ) from None
+        extra = set(header) - {"alg", "kid", "typ"} - shape.extra_headers
+        if extra:
+            raise _NotAccepted(
+                f"the header has fields this claim map does not allow: {_shown(sorted(map(str, extra)))}"
+            )
+        if header.get("typ") != shape.header_type:
+            raise _NotAccepted(
+                f"the header's typ is {_shown(header.get('typ'))} and this trust's claim map expects "
+                f"{shape.header_type!r}; is Trust.claims the right preset for this provider?"
+            )
+        if header.get("alg") not in ("RS256", "ES256"):
+            raise _NotAccepted(f"the algorithm is {_shown(header.get('alg'))}; RS256 and ES256 are accepted")
+        kid = header.get("kid")
+        if not isinstance(kid, str) or not _is_text(kid):  # Text, with no control characters or lone surrogates.
+            raise _NotAccepted("the header has no usable key ID (kid)")
+        algorithm, key = self._key(kid)
+        if algorithm != header["alg"]:
+            raise _NotAccepted(f"key {_shown(kid)} is published for {algorithm}, and the token says {header['alg']}")
+        try:
             claims = jwt.decode(
                 token,
                 key,
@@ -528,46 +639,83 @@ class OAuthTokens:
                 leeway=trust.leeway_seconds,
                 options={"require": ["exp", "iat", "iss", "sub", "aud"]},
             )
-            if any(name in claims for name in ("cnf", "act", "may_act")):
-                raise OAuthError("Sender-constrained and actor-chain tokens are not supported")
-            if shape.needs_token_id:
-                _text(claims.get("jti"), "token ID")
-            for name, constant in shape.constants.items():
-                if claims.get(name) != constant:
-                    raise ValueError()
-            client = next((claims[name] for name in shape.client if name in claims), None)
-            if client is not None or shape.has_clients:
-                _text(client, "client")
-            if shape.has_clients and client not in self._clients:
-                raise ValueError()
-            for name, wanted in trust.where.items():
-                found = claims.get(name)
-                if not isinstance(found, str) or (found != wanted if isinstance(wanted, str) else found not in wanted):
-                    raise ValueError()
-            expiry, issued = _integer(claims["exp"], "expiry"), _integer(claims["iat"], "issued at")
-            if issued >= expiry:
-                raise ValueError()
-            if "nbf" in claims:
-                _integer(claims["nbf"], "not before")
-            listed = next((claims[name] for name in shape.scopes if name in claims), "")
-            if not isinstance(listed, (str, list)):
-                raise ValueError()
-            scopes = frozenset(listed.split() if isinstance(listed, str) else [_text(s, "scope") for s in listed])
-            if not frozenset(trust.required_scopes) <= scopes:
-                raise ValueError()
-            return OAuthIdentity(
-                issuer=trust.issuer,
-                subject=_text(claims["sub"], "subject"),
-                client_id=client,
-                tenant_id=_text(claims.get(trust.tenant_claim), "tenant") if trust.tenant_claim else None,
-                scopes=scopes,
-                expires_at=expiry,
-                claims=MappingProxyType({name: value for name, value in claims.items() if isinstance(value, str)}),
+        except jwt.ExpiredSignatureError:
+            raise _NotAccepted("the token has expired") from None
+        except jwt.ImmatureSignatureError:
+            raise _NotAccepted("the token is not valid yet (nbf or iat is in the future); check the clocks") from None
+        except jwt.InvalidAudienceError:
+            raise _NotAccepted(
+                f"audience: the token is for {_shown(payload.get('aud'))} and Trust.audience is {trust.audience!r}; "
+                "the provider must put this issuer's audience in the token"
+            ) from None
+        except jwt.InvalidIssuerError:
+            raise _NotAccepted(
+                f"issuer: the token says {_shown(payload.get('iss'))} and Trust.issuer is {trust.issuer!r}"
+            ) from None
+        except jwt.MissingRequiredClaimError as exc:
+            raise _NotAccepted(f"the token has no {exc.claim!r} claim") from None
+        except jwt.InvalidSignatureError:
+            raise _NotAccepted("the signature does not verify with the provider's key") from None
+        except Exception as exc:  # PyJWT's own errors, and whatever a claim of the wrong JSON type makes it raise.
+            raise _NotAccepted(f"the token could not be verified ({type(exc).__name__})") from None
+        if any(name in claims for name in ("cnf", "act", "may_act")):
+            raise _NotAccepted(
+                "the token is sender-constrained (cnf) or has an actor chain (act, may_act), which is not supported",
+                message="Sender-constrained and actor-chain tokens are not supported",
             )
-        except OAuthError:
-            raise
-        except Exception as exc:
-            raise OAuthError("Invalid OAuth access token") from exc
+        if shape.needs_token_id and not _is_text(claims.get("jti")):
+            raise _NotAccepted("the token has no jti claim, which this claim map requires")
+        if "jti" in claims and not _is_text(claims["jti"]):  # The same answer whatever the JWT library's version.
+            raise _NotAccepted("the jti claim is not usable text")
+        for name, constant in shape.constants.items():
+            if claims.get(name) != constant:
+                hint = "; this looks like an ID token, not an access token" if claims.get(name) == "ID" else ""
+                raise _NotAccepted(
+                    f"claim {name!r} is {_shown(claims.get(name))} and this claim map expects {constant!r}{hint}"
+                )
+        client = next((claims[name] for name in shape.client if name in claims), None)
+        if (client is not None or shape.has_clients) and not _is_text(client):
+            raise _NotAccepted(f"the token has no client claim ({' or '.join(shape.client)})")
+        if shape.has_clients and client not in self._clients:
+            raise _NotAccepted(f"client {_shown(client)} is not in Trust.clients")
+        for name, wanted in trust.where.items():
+            found = claims.get(name)
+            if not isinstance(found, str) or (found != wanted if isinstance(wanted, str) else found not in wanted):
+                expected = repr(wanted) if isinstance(wanted, str) else f"one of {sorted(wanted)}"
+                raise _NotAccepted(f"claim {name!r} is {_shown(found)} and Trust.where expects {expected}")
+        expiry, issued = claims["exp"], claims["iat"]
+        if type(expiry) is not int or type(issued) is not int or not 0 <= issued < expiry <= 2**40:
+            raise _NotAccepted("exp and iat must be whole numbers of seconds, with iat before exp")
+        if "nbf" in claims and (type(claims["nbf"]) is not int or not 0 <= claims["nbf"] <= 2**40):
+            raise _NotAccepted("nbf must be a whole number of seconds")
+        listed = next((claims[name] for name in shape.scopes if name in claims), "")
+        if isinstance(listed, str):
+            scopes = frozenset(listed.split())
+        elif isinstance(listed, list) and all(_is_text(scope) for scope in listed):
+            scopes = frozenset(listed)
+        else:
+            raise _NotAccepted("the scope claim is neither a string nor a list of strings")
+        missing = frozenset(trust.required_scopes) - scopes
+        if missing:
+            raise _NotAccepted(
+                f"scopes: the token has {_shown(sorted(scopes))} and Trust.required_scopes also needs {sorted(missing)}"
+            )
+        if not _is_text(claims["sub"]):
+            raise _NotAccepted("the sub claim is not usable text")
+        tenant = None
+        if trust.tenant_claim:
+            tenant = claims.get(trust.tenant_claim)
+            if not _is_text(tenant):
+                raise _NotAccepted(f"the token has no {trust.tenant_claim!r} claim to read the tenant from")
+        return OAuthIdentity(
+            issuer=trust.issuer,
+            subject=claims["sub"],
+            client_id=client,
+            tenant_id=tenant,
+            scopes=scopes,
+            expires_at=expiry,
+            claims=MappingProxyType({name: value for name, value in claims.items() if isinstance(value, str)}),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -584,7 +732,12 @@ class ExactFrom:
 
 @dataclass(frozen=True)
 class MaximumFrom:
-    """An integer per-call limit. This is not cumulative accounting."""
+    """A per-call upper limit, taken from an integer field. This is not cumulative accounting.
+
+    The warrant carries a numeric range from ``minimum`` to the field's value.
+    A range does not require a whole number (1.5 is inside 1 to 5000): a tool
+    that needs one must check that itself.
+    """
 
     field: str
     minimum: int = 1
@@ -653,26 +806,18 @@ class TaskTemplate:
     def compile(
         self, identity: OAuthIdentity, task_id: str, record: Optional[Mapping[str, Any]]
     ) -> Optional[TaskGrant]:
-        if record is None:
+        why = self._not_granted(identity, task_id, record)
+        if why is not None or record is None:
+            # For the operator. The caller is told only that the task is not authorized.
+            logger.info("Task %r is not granted to %s: %s", task_id, identity.key, why)
             return None
-        owner = self.owner or (("issuer", "subject") + (("tenant_id",) if identity.tenant_id is not None else ()))
-        owned = all(
-            getattr(identity, name) is not None and record.get(name) == getattr(identity, name) for name in owner
-        )
-        if (
-            record.get("task_id") != task_id
-            or not owned
-            or record.get("status") != "approved"
-            or not self.required_scopes <= identity.scopes
-        ):
-            return None
-        expiry = _integer(record.get("expires_at"), "task expiry")
-        if expiry <= time.time():
-            return None
+        expiry = record["expires_at"]
         constraints = {}
         for argument, binding in self.arguments.items():
             if binding.field not in record:
-                raise OAuthError("Task is missing an authorization field")
+                raise OAuthError(
+                    f"The task record has no {binding.field!r} field, which argument {argument!r} is bound to"
+                )
             value = record[binding.field]
             if isinstance(binding, MaximumFrom):
                 value = _integer(value, "task limit", binding.minimum, 2**53 - 1)
@@ -684,6 +829,27 @@ class TaskTemplate:
         return TaskGrant(
             MappingProxyType({self.tool: MappingProxyType(constraints)}), expiry, self.ttl_seconds, self.max_depth
         )
+
+    def _not_granted(self, identity: OAuthIdentity, task_id: str, record: Optional[Mapping[str, Any]]) -> Optional[str]:
+        """Why this record is not this caller's approved, unexpired task, or None if it is."""
+        if record is None:
+            return "there is no record for it"
+        if record.get("task_id") != task_id:
+            return "the record's task_id is not the one asked for"
+        owner = self.owner or (("issuer", "subject") + (("tenant_id",) if identity.tenant_id is not None else ()))
+        for name in owner:
+            if getattr(identity, name) is None:
+                return f"the template's owner includes {name!r}, and this caller's token carries none"
+            if record.get(name) != getattr(identity, name):
+                return f"the record's {name!r} is not this caller's (owner is {owner})"
+        if record.get("status") != "approved":
+            return "the record's status is not 'approved'"
+        missing = self.required_scopes - identity.scopes
+        if missing:
+            return f"the caller's token lacks the scope {sorted(missing)}"
+        if _integer(record.get("expires_at"), "task expiry") <= time.time():
+            return "the approval has expired"
+        return None
 
 
 def _validated(grant: Any) -> TaskGrant:
@@ -819,7 +985,9 @@ class OAuthWarrantIssuer:
         for source in self.credentials:
             if source.issued(token):
                 return source
-        raise OAuthError("Invalid OAuth access token")
+        reason = "the token names an issuer that none of this issuer's trusts is for (or it is not a JWT)"
+        logger.info("Token not accepted: %s", reason)
+        raise OAuthError("Invalid OAuth access token", reason)
 
     def authenticate(self, token: str) -> OAuthIdentity:
         """Verify a token against the trust for its issuer."""
