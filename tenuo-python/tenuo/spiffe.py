@@ -1717,6 +1717,7 @@ class _ServerConnection:
         self._reader, self._writer = reader, writer
         self._buffer = bytearray()
         self._received = 0
+        self.place: Optional["_Place"] = None  # The server's place this connection holds, set by the server.
 
     async def _flush(self) -> None:
         data = self._outgoing.read()
@@ -1775,13 +1776,32 @@ class _ServerConnection:
         self._writer.close()
 
 
+class _Place:
+    """One of the server's connection places, and who holds it."""
+
+    __slots__ = ("writer", "held", "identity")
+
+    def __init__(self, writer: asyncio.StreamWriter):
+        self.writer, self.held = writer, True
+        self.identity: Optional[str] = None  # The SPIFFE ID, once the peer has completed the handshake.
+
+
 class SpiffeIssuerServer:
     """Asyncio mTLS endpoint for :class:`SpiffeWarrantIssuer`.
 
     One exchange per connection, newline-delimited JSON frames of at most
     64 KiB, and a deadline (``timeout``) that covers the TLS handshake and the
     exchange. ``max_connections`` counts every accepted socket, including ones
-    that have not completed a handshake. Credentials are reloaded from disk
+    that have not completed a handshake.
+
+    When every place is taken, a new connection takes the place of the peer
+    that has waited longest without completing its handshake: a peer that has
+    shown nothing cannot keep out one that may be about to. If every place is
+    held by a peer that has shown a certificate, the new connection is closed.
+    One SPIFFE ID holds at most ``max_per_identity`` places (a quarter of
+    ``max_connections`` by default), so one workload cannot take them all.
+
+    Credentials are reloaded from disk
     every ``reload_interval`` seconds. Policy and audit callbacks run in up to
     ``max_workers`` threads, with at most ``max_connections`` submitted or
     queued at once; a callback that has been submitted when the deadline
@@ -1804,10 +1824,15 @@ class SpiffeIssuerServer:
         timeout: float = 10.0,
         reload_interval: float = 30.0,
         max_workers: int = 32,
+        max_per_identity: Optional[int] = None,
     ):
         for name, value in (("max_connections", max_connections), ("max_workers", max_workers)):
             if not _positive_int(value) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if max_per_identity is None:
+            max_per_identity = max(1, max_connections // 4)
+        if not _positive_int(max_per_identity) or not 1 <= max_per_identity <= max_connections:
+            raise ValueError("max_per_identity must be a positive integer, at most max_connections")
         timeout, reload_interval = _seconds("timeout", timeout), _seconds("reload_interval", reload_interval)
         if issuer.tls is None:
             raise ValueError("SpiffeIssuerServer needs an issuer built with tls=; for JWT-SVIDs use SpiffeJWTIssuerApp")
@@ -1818,7 +1843,11 @@ class SpiffeIssuerServer:
         self._max_workers = max_workers
         self._timeout = timeout
         self._reload_interval = reload_interval
+        self._max_per_identity = max_per_identity
         self._active = 0
+        # Places held by peers that have not completed the handshake, oldest first.
+        self._unproven: Dict[int, _Place] = {}
+        self._by_identity: Dict[str, int] = {}  # Places held, for each SPIFFE ID that has completed one.
         self._tasks: Set["asyncio.Task[Any]"] = set()
         self._server: Optional[asyncio.AbstractServer] = None
         self._reloader: Optional["asyncio.Future[None]"] = None
@@ -1940,15 +1969,50 @@ class SpiffeIssuerServer:
             work.add_done_callback(_consume_result)
             raise
 
+    def _make_room(self) -> bool:
+        """At the limit, give a newcomer the place of the peer that has waited longest without a handshake.
+
+        An honest agent completes its handshake in milliseconds, so the peers
+        that have waited longest are the ones that connected and went quiet.
+        Returns False when every place is held by a peer that has shown a
+        certificate: those keep their places until they finish or time out.
+        """
+        for key in self._unproven:
+            place = self._unproven.pop(key)
+            place.held = False
+            self._active -= 1
+            # Its handler ends with a connection error and tidies up after itself.
+            transport = place.writer.transport
+            if transport is not None:
+                transport.abort()
+            return True
+        return False
+
+    def _release(self, place: "_Place") -> None:
+        self._unproven.pop(id(place), None)
+        if place.identity is not None:
+            remaining = self._by_identity.get(place.identity, 0) - 1
+            if remaining > 0:
+                self._by_identity[place.identity] = remaining
+            else:
+                self._by_identity.pop(place.identity, None)
+            place.identity = None
+        if place.held:
+            place.held = False
+            self._active -= 1
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if self._active >= self._max_connections:
+        if self._active >= self._max_connections and not self._make_room():
             writer.close()
             return
         self._active += 1
+        place = _Place(writer)
+        self._unproven[id(place)] = place
         task = asyncio.current_task()
         if task is not None:
             self._tasks.add(task)
         connection = _ServerConnection(reader, writer, self._tls.context)
+        connection.place = place
         try:
             await asyncio.wait_for(self._exchange(connection), self._timeout)
         except asyncio.TimeoutError:
@@ -1962,13 +2026,22 @@ class SpiffeIssuerServer:
             except Exception:
                 pass
         finally:
-            self._active -= 1
+            self._release(place)
             if task is not None:
                 self._tasks.discard(task)
             await connection.close()
 
     async def _exchange(self, connection: _ServerConnection) -> None:
         await connection.handshake()
+        place = connection.place
+        if place is not None:
+            if not place.held:
+                # It gave up its place while the handshake was under way. Records that had
+                # already arrived can still complete one, and nothing more is done for it.
+                raise ConnectionError("The connection gave up its place to a newer one")
+            # The peer has shown a certificate from a trusted authority. Its place is
+            # no longer one a newcomer can take.
+            self._unproven.pop(id(place), None)
         tls = self._tls
         challenge: Optional[bytes] = None
         guard = threading.Lock()
@@ -1988,6 +2061,12 @@ class SpiffeIssuerServer:
 
         try:
             identity = tls.authenticate(connection.tls)
+            if place is not None:
+                held = self._by_identity.get(identity.spiffe_id, 0)
+                if held >= self._max_per_identity:
+                    raise SpiffeError("Too many connections open for this workload; retry shortly")
+                self._by_identity[identity.spiffe_id] = held + 1
+                place.identity = identity.spiffe_id
             request = _parse_frame(await connection.readline(), frozenset({"v", "holder", "task"}))
             if type(request["v"]) is not int or request["v"] != _PROTOCOL_VERSION:  # Not true, not 1.0.
                 raise SpiffeError("Unsupported protocol version")

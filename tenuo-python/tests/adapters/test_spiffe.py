@@ -1110,30 +1110,144 @@ def test_server_reload_loop_survives_bad_files(ca):
     assert server_tls.identity != before
 
 
-def test_connection_limit_counts_sockets_before_handshake(served):
+def test_a_peer_that_has_shown_nothing_gives_up_its_place_to_a_newcomer(served):
+    """Sockets count from accept. At the limit, the one that has waited longest without a handshake makes room."""
     issuer, client_tls, root, holder = served
     options = dict(issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id="task-123")
+    peak = []
 
-    def scenario(address):
-        idle = [socket.create_connection(address, timeout=5) for _ in range(2)]  # No TLS, no bytes.
+    def scenario(server):
+        address = server.address
+        idle = [socket.create_connection(address, timeout=5) for _ in range(2)]  # No TLS, no bytes: every place.
         try:
             time.sleep(0.2)
-            with pytest.raises(SpiffeError):
-                request_warrant(client_tls, address, **options)
-            # The deadline closes idle sockets that never start a handshake.
+            peak.append(server._active)
+            assert request_warrant(client_tls, address, **options).id  # Served at once, not turned away.
+            peak.append(server._active)
+            # The older idle socket was the one that made room; the other still has its place.
             start = time.monotonic()
-            assert idle[0].recv(1) == b""
-            assert time.monotonic() - start < 4
+            idle[0].settimeout(3)
+            assert idle[0].recv(1) == b"" and time.monotonic() - start < 0.5
+            idle[1].settimeout(0.2)
+            with pytest.raises(socket.timeout):
+                idle[1].recv(1)
+            # The deadline still closes a socket that never starts a handshake.
+            idle[1].settimeout(4)
+            assert idle[1].recv(1) == b""
         finally:
             for raw in idle:
                 raw.close()
-        time.sleep(0.2)
-        return request_warrant(client_tls, address, **options)
+
+    async def main():
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0, max_connections=2, timeout=1.0) as server:
+            await asyncio.to_thread(scenario, server)
+            await asyncio.sleep(0.2)
+            return server._active, dict(server._unproven), dict(server._by_identity)
+
+    assert asyncio.run(main()) == (0, {}, {})  # Every place given back, however it was lost.
+    assert max(peak) <= 2
+
+
+def test_a_connection_that_gave_up_its_place_does_no_work_if_its_handshake_then_completes(served, monkeypatch):
+    """Records already received can complete a handshake after the place is gone. Nothing more is done for that peer."""
+    import tenuo.spiffe as spiffe_module
+    from tenuo.spiffe import _encode, _frame
+
+    issuer, client_tls, root, holder = served
+    asked, written = [], issuer._policy
+
+    def policy(identity, task_id):
+        asked.append(task_id)
+        return written(identity, task_id)
+
+    issuer._policy = policy
+    audits = []
+    issuer._audit = audits.append
+    real = spiffe_module._ServerConnection.handshake
+    state = {}
+
+    async def handshake(self):
+        await real(self)
+        if not state.get("first_parked"):
+            # The first peer's handshake is complete, and its request is already in the buffer.
+            state["first_parked"] = True
+            state["parked"].set()
+            await state["gate"].wait()
+
+    monkeypatch.setattr(spiffe_module._ServerConnection, "handshake", handshake)
+
+    def first_peer(address, outcome):
+        with socket.create_connection(address, timeout=5) as raw:
+            with client_tls.context.wrap_socket(raw) as connection:
+                key = SigningKey.generate()
+                connection.sendall(
+                    _frame({"v": 1, "holder": _encode(bytes(key.public_key.to_bytes())), "task": "task-123"})
+                )
+                connection.settimeout(5)
+                try:
+                    outcome.append(connection.recv(65536))
+                except OSError as exc:
+                    outcome.append(type(exc).__name__)
+
+    async def main():
+        state.update(parked=asyncio.Event(), gate=asyncio.Event())
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0, max_connections=1, timeout=5.0) as server:
+            outcome = []
+            first = asyncio.ensure_future(asyncio.to_thread(first_peer, server.address, outcome))
+            await asyncio.wait_for(state["parked"].wait(), 5)
+            await asyncio.sleep(0.1)  # Let its request frame arrive behind the handshake.
+            options = dict(issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id="task-123")
+            # A newcomer takes the one place. The first peer is still counted as not having shown anything.
+            warrant = await asyncio.to_thread(request_warrant, client_tls, server.address, **options)
+            assert asked == ["task-123"] and len(audits) == 1
+            state["gate"].set()  # Now the first peer's handshake "completes".
+            await first
+            await asyncio.sleep(0.2)
+            return warrant, outcome, server._active, dict(server._unproven), dict(server._by_identity)
+
+    warrant, outcome, active, unproven, by_identity = asyncio.run(main())
+    assert warrant.id
+    assert (
+        asked == ["task-123"] and len(audits) == 1
+    )  # No policy call and no audit record for the peer without a place.
+    assert outcome and b"challenge" not in (outcome[0] if isinstance(outcome[0], bytes) else b"")
+    assert (active, unproven, by_identity) == (0, {}, {})
+
+
+def test_one_workload_cannot_hold_every_place(ca):
+    """A workload that completes the handshake and then stalls holds a share of the places, not all of them."""
+    server_tls = _tls(ca.files("issuer", SERVER), True)
+    stalling = _tls(ca.files("stalling", f"spiffe://{DOMAIN}/stalling"), False)
+    other = _tls(ca.files("other", f"spiffe://{DOMAIN}/other"), False)
+    root = SigningKey.generate()
+    issuer = SpiffeWarrantIssuer(tls=server_tls, signing_key=root, policy=lambda *_: SpiffeGrant(REFUND))
+
+    def scenario(address):
+        held = []
+        try:
+            for _ in range(2):  # Its share: handshake completed, then silence.
+                raw = socket.create_connection(address, timeout=5)
+                held.append(stalling.context.wrap_socket(raw))
+            time.sleep(0.2)
+            options = dict(issuer_id=SERVER, issuer_key=root.public_key, task_id="t")
+            with pytest.raises(SpiffeError, match="Too many connections open for this workload"):
+                request_warrant(stalling, address, holder_key=SigningKey.generate(), **options)
+            for _ in range(3):  # Another workload is served, again and again.
+                assert request_warrant(other, address, holder_key=SigningKey.generate(), **options).id
+        finally:
+            for connection in held:
+                connection.close()
+        time.sleep(0.3)
+        return request_warrant(stalling, address, holder_key=SigningKey.generate(), **options)
 
     async def body(address):
         return await asyncio.to_thread(scenario, address)
 
-    assert run_server(issuer, body, max_connections=2, timeout=1.0).id
+    assert run_server(issuer, body, max_connections=8, max_per_identity=2, timeout=5.0).id  # Its places came back.
+    for bad in (0, 9, True, 1.5):
+        with pytest.raises(ValueError, match="max_per_identity"):
+            SpiffeIssuerServer(issuer, host="127.0.0.1", port=0, max_connections=8, max_per_identity=bad)
+    assert SpiffeIssuerServer(issuer, host="127.0.0.1", port=0)._max_per_identity == 64  # A quarter of 256.
 
 
 def test_constraint_values_checked_before_challenge(exchange, caplog):
