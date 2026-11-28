@@ -2311,3 +2311,19 @@ class TestWarrantStackStateHelpers:
         task, child = chain
         with pytest.raises(ConfigurationError, match="both a multi-warrant stack"):
             _get_warrant_chain({"warrant": encode_warrant_stack([task, child]), "warrant_chain": [task]})
+
+
+@pytest.mark.parametrize("container", [list, tuple])
+@pytest.mark.parametrize("oversized_index", [0, 1])
+@pytest.mark.parametrize("helper_name", ["_get_bound_warrant", "_get_warrant_chain"])
+def test_chain_list_tokens_keep_predecode_limit(monkeypatch, container, oversized_index, helper_name):
+    import tenuo.langgraph as adapter
+    from tenuo.exceptions import ConfigurationError
+
+    entries = ["small-token", "small-token"]
+    entries[oversized_index] = " " * (adapter._MAX_WARRANT_B64 + 1)
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("oversized token reached the shared decoder")
+    monkeypatch.setattr(adapter, "split_presented_warrant", unexpected_decode)
+    with pytest.raises(ConfigurationError, match="safety limit"):
+        getattr(adapter, helper_name)({"warrant": container(entries)})

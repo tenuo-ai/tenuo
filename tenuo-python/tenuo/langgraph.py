@@ -783,6 +783,17 @@ def _get_key_id_from_config(config: Optional[Dict[str, Any]]) -> str:
 _MAX_WARRANT_B64 = 64 * 1024
 
 
+def _check_warrant_token_sizes(warrant: Any) -> None:
+    """Keep the pre-decode limit for both direct and chain-list tokens."""
+    entries = warrant if isinstance(warrant, (list, tuple)) else [warrant]
+    for index, entry in enumerate(entries):
+        if isinstance(entry, str) and len(entry) > _MAX_WARRANT_B64:
+            raise ConfigurationError(
+                f"Warrant token at index {index} is {len(entry)} bytes, exceeding the "
+                f"{_MAX_WARRANT_B64} byte safety limit. Possible corruption or attack."
+            )
+
+
 def _get_warrant_chain(
     state: Dict[str, Any],
     fallback: Optional[List[Any]] = None,
@@ -851,11 +862,9 @@ def _stack_parents(warrant: Any) -> Optional[List[Any]]:
     Returns ``None`` for a single warrant. Decode errors are left to
     ``_get_bound_warrant``, which reports them.
     """
-    if isinstance(warrant, str):
-        if len(warrant) > _MAX_WARRANT_B64:
-            return None
-    elif not isinstance(warrant, (list, tuple)):
+    if not isinstance(warrant, (str, list, tuple)):
         return None
+    _check_warrant_token_sizes(warrant)
     try:
         _, parents = split_presented_warrant(warrant)
     except Exception:
@@ -898,12 +907,7 @@ def _get_bound_warrant(
     # Auto-inflate from a string token (single warrant or WarrantStack) or a
     # root-first list, for serialization safety. The leaf is bound here; any
     # parents in a stack are read by _get_warrant_chain.
-    if isinstance(warrant, str):
-        if len(warrant) > _MAX_WARRANT_B64:
-            raise ConfigurationError(
-                f"Warrant string is {len(warrant)} bytes, exceeding the "
-                f"{_MAX_WARRANT_B64} byte safety limit. Possible corruption or attack."
-            )
+    _check_warrant_token_sizes(warrant)
     if isinstance(warrant, (str, list, tuple)):
         try:
             warrant, _ = split_presented_warrant(warrant)
