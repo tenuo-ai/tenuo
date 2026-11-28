@@ -236,8 +236,8 @@ class _IssuerApp:
         work.add_done_callback(checked)
         return await asyncio.shield(work)
 
-    def _started(self) -> None:
-        """Called when the server starts the application (ASGI lifespan). Must not block."""
+    async def _started(self) -> None:
+        """Called when the server starts the application (ASGI lifespan). The server takes requests once it returns."""
 
     def _limit_key(self, credential: Any) -> Optional[str]:
         """The caller to count requests against, when it is already known from the credential."""
@@ -278,7 +278,7 @@ class _IssuerApp:
                         # Work the earlier run left behind may never report back (its event
                         # loop is gone), so this run counts its requests afresh.
                         self._pool, self._places, self._closed = self._new_pool(), _Places(), False
-                    self._started()
+                    await self._started()
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
                     self.close()

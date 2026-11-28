@@ -1060,28 +1060,42 @@ def test_an_unreachable_provider_does_not_hold_up_callers_of_another(provider, v
     assert set(others) == {503}
 
 
-def test_keys_are_fetched_when_the_server_starts_the_application(provider, setup, app):
-    async def start():
+def test_keys_are_fetched_before_the_server_takes_requests(provider, setup, app):
+    """A server sends requests only after start-up completes, so the first one finds the keys there."""
+    _, holder, *_ = setup
+    provider["delay"] = 0.3
+    token = provider["token"]()
+    seen = {}
+
+    async def run():
         events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
-        started = asyncio.Event()
+        go_on = asyncio.Event()
 
         async def receive():
             if len(events) == 1:
-                await started.wait()
+                await go_on.wait()
             return events.pop(0)
 
         async def send(message):
             if message["type"] == "lifespan.startup.complete":
-                for _ in range(200):
-                    if provider["calls"]:
-                        break
-                    await asyncio.sleep(0.01)
-                started.set()
+                seen["calls_at_start"] = provider["calls"]
+                go_on.set()
 
         await app({"type": "lifespan"}, receive, send)
 
-    asyncio.run(start())
-    assert provider["calls"] == 1  # Before any request arrived.
+    asyncio.run(run())
+    assert seen["calls_at_start"] == 1
+
+    # A provider that cannot be reached delays the start by its deadline at most, and does not stop it.
+    provider["status"], provider["delay"] = 503, 0.0
+    application = OAuthWarrantIssuerApp(setup[0])
+    setup[0].credentials[0]._loaded = float("-inf")
+    try:
+        asyncio.run(application._started())
+        status, _, reply, _ = call_app(application, headers=bearer(token), body=compact(token, holder))
+        assert (status, reply["error"]) == (503, "unavailable")
+    finally:
+        application.close()
 
 
 def test_one_identity_cannot_take_every_place(provider, setup):

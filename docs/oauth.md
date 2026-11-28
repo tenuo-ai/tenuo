@@ -397,8 +397,9 @@ was denied or failed can be sent again.
   401 only when a fetch succeeded and the key was not in it. So a provider
   that does not answer costs one request at a time, and callers of your
   other providers are not held up. The bundled endpoint fetches every
-  provider's keys when the server starts it; if you call the issuer directly,
-  call `OAuthTokens.refresh()` at start-up.
+  provider's keys before the server takes requests (ASGI lifespan start-up).
+  If you mount it without lifespan events or call the issuer directly, call
+  `OAuthTokens.refresh()` at start-up.
 - **Withdrawing a key.** A fetched key set replaces the one before it, so a
   withdrawn key stops working at the next fetch. `OAuthTokens.refresh()`
   fetches at once, and a fetch that began before it cannot bring the key

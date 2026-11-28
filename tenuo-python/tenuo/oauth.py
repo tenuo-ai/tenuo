@@ -853,17 +853,27 @@ class OAuthWarrantIssuerApp(_IssuerApp):
         self._issuer: OAuthWarrantIssuer = issuer
         self._max_per_key = max_per_identity
 
-    def _started(self) -> None:
-        """Fetch each provider's keys as the server starts, so the first callers need not."""
+    async def _started(self) -> None:
+        """Fetch each provider's keys before the server takes requests, so the first callers find them there.
 
-        def warm() -> None:
-            for source in self._issuer.credentials:
-                try:
-                    source.refresh()
-                except OAuthError:
-                    pass  # Logged where it failed. The first caller that needs the keys tries again.
+        Each fetch has its own deadline. A provider that cannot be reached
+        does not stop the start: it is logged where it failed, and the first
+        caller that needs its keys tries again.
+        """
 
-        threading.Thread(target=warm, daemon=True, name="tenuo-oauth-keys").start()
+        def warm(source: OAuthTokens) -> None:
+            try:
+                source.refresh()
+            except OAuthError:
+                pass
+
+        loop = asyncio.get_running_loop()
+        sources = self._issuer.credentials
+        fetches = [loop.run_in_executor(None, warm, source) for source in sources]
+        try:
+            await asyncio.wait_for(asyncio.gather(*fetches), 2 * max(source._timeout for source in sources) + 1)
+        except asyncio.TimeoutError:
+            pass
 
     def _credential(self, scope: Mapping[str, Any]) -> str:
         headers = scope.get("headers", ())
