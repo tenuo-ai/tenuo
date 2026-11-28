@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Token budgets: `CloudLeases` asks again when Cloud does not answer
+  (Python).** A lease request or a return that gets no answer is sent again
+  within `timeout`, and a lease whose answer was lost is the lease the next
+  request receives, so a dropped connection no longer leaves a lease charged
+  and unused. Leases are now taken through
+  `POST /v1/triggers/{id}/acquire`: upgrade Tenuo Cloud before the SDK. A
+  server without that route answers 404, grants nothing, and calls are
+  refused with `lease_unavailable`. See
+  [token budgets](docs/token-budgets.md#how-a-period-budget-is-handed-out).
+
 - **Token budgets: a usage report no call could have is not counted
   (Python).** A reply that reports zero tokens, or more than
   `tenuo.budget.MAX_CALL_TOKENS` (a billion) for one call, is treated like a

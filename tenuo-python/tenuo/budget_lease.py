@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import atexit
 import base64
+import http.client
 import json
 import logging
 import os
@@ -44,8 +45,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import weakref
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
@@ -122,43 +123,62 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class _Rejected(LeaseUnavailable):
+# Seconds to wait before sending an unanswered request again: once for the
+# second sending, once for the third. All of it ends within the source's timeout.
+_RESEND_AFTER: Tuple[float, ...] = (0.1, 0.4)
+
+
+class _Refused(LeaseUnavailable):
     """The control plane answered this request and granted nothing for it."""
 
 
-class _AcquisitionOver(LeaseUnavailable):
+class _Over(LeaseUnavailable):
     """The control plane will never grant a lease under this acquisition ID again."""
+
+
+@dataclass
+class _Acquisition:
+    """One request for a lease. It can be sent many times and is granted at most once."""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # Fixed when first sent: the control plane refuses the ID with any other.
+    event_data: Optional[Dict[str, Any]] = None
 
 
 _CLOUD_SOURCES: "weakref.WeakSet[CloudLeases]" = weakref.WeakSet()
 
 
 class CloudLeases:
-    """Leases from Tenuo Cloud: each one is a fire of a trigger that has a ``token_budget``.
+    """Leases from Tenuo Cloud: each one is an acquisition on a trigger that has a ``token_budget``.
+
+    Both requests this class makes can be repeated without being counted twice.
+    An acquisition carries an ID, and Cloud grants one lease under it however
+    often it is asked; a return is the same signed report each time. So a
+    request that gets no answer is sent again, and a lease whose answer was
+    lost is the lease the next request receives.
+
+    This holds for as long as the process lives. One that dies loses the
+    acquisition it was waiting on, as it loses a lease it holds.
+
+    Needs a Cloud server that has ``POST /v1/triggers/{id}/acquire``. An older
+    one answers 404 and grants nothing.
 
     Args:
-        trigger_id: The trigger to fire.
+        trigger_id: The trigger whose budget the leases come from.
         signing_key: The agent's key, which signs each return. ``install()``
             supplies its own ``signing_key`` when this is left out.
         url: The control plane. Defaults to ``TENUO_CONTROL_PLANE_URL``.
         api_key: Defaults to ``TENUO_API_KEY``.
-        event_data: Sent with every fire, for triggers that bind from it.
-        timeout: Seconds to wait on the control plane's socket.
-        acquisition_id: Optional durable operation ID for recovering an unfinished
-            initial acquisition after a restart. Automatic renewals have no
-            durable checkpoint hook and are only retry-safe within this process. Reuse it only for that acquisition, never
-            across independent workers. Cloud must support acquisition idempotency.
-        on_acquired: Called with the acquisition ID once its lease has been
-            accepted, before any call can spend from it. Delete a saved
-            ``acquisition_id`` here, so a restart does not recover a lease that
-            has been spent from. If it raises, the lease is not handed out and
-            the next attempt recovers it and calls this again.
+        event_data: Sent with every acquisition, for triggers that bind from
+            it. Read when an acquisition is first sent: a change applies to the
+            next one.
+        timeout: Seconds to wait for the control plane's answer to a request,
+            sending it again included.
     """
 
     def __init__(self, trigger_id: str, *, signing_key: Any = None, url: Optional[str] = None,
                  api_key: Optional[str] = None, event_data: Optional[Mapping[str, Any]] = None,
-                 timeout: float = 10.0, acquisition_id: Optional[str] = None,
-                 on_acquired: Optional[Callable[[str], None]] = None) -> None:
+                 timeout: float = 10.0) -> None:
         self.trigger_id = trigger_id
         self.signing_key = signing_key
         self.url = (url or os.environ.get("TENUO_CONTROL_PLANE_URL") or "").rstrip("/")
@@ -169,29 +189,21 @@ class CloudLeases:
         self.event_data = dict(event_data or {})
         self.timeout = timeout
         self._opener = urllib.request.build_opener(_NoRedirects)
-        if acquisition_id is not None and (not acquisition_id or len(acquisition_id) > 128 or
-                any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for c in acquisition_id)):
-            raise ValueError("acquisition_id must be 1-128 ASCII letters, digits, underscores or hyphens")
-        self._pending_acquisition_id: Optional[str] = acquisition_id or uuid.uuid4().hex
-        self._pending_event_data: Optional[Dict[str, Any]] = None
-        # True while the control plane may hold a lease under the pending ID: a
-        # request went out and no answer said that nothing was granted. An ID
-        # the caller supplies is one it believes may already have been sent.
-        self._pending_uncertain = acquisition_id is not None
-        self.on_acquired = on_acquired
-        self._acquire_lock = threading.Lock()
-        self._acquire_pid = os.getpid()
-        self._protocol_error: Optional[str] = None
+        # The acquisition no answer has settled yet: a lease may be out under
+        # its ID, so the next request asks under the same one.
+        self._acquisition: Optional[_Acquisition] = None
+        self._acquiring = threading.Lock()  # one acquisition at a time
+        self._pid = os.getpid()
         _CLOUD_SOURCES.add(self)
 
-    def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    def _send(self, path: str, data: bytes, timeout: float) -> Tuple[int, Dict[str, Any]]:
         # urllib, not httpx: this request must not pass through the meter it serves.
         request = urllib.request.Request(
-            self.url + path, method="POST", data=json.dumps(body).encode(),
+            self.url + path, method="POST", data=data,
             headers={"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"},
         )
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
+            with self._opener.open(request, timeout=timeout) as response:
                 status, raw = response.status, response.read(_MAX_REPLY)
         except urllib.error.HTTPError as e:
             status, raw = e.code, e.read(_MAX_REPLY)
@@ -201,72 +213,78 @@ class CloudLeases:
             parsed = {}
         return status, parsed if isinstance(parsed, dict) else {}
 
-    @property
-    def pending_acquisition_id(self) -> Optional[str]:
-        """ID retained after an uncertain response. Only the initial acquisition
-        can be checkpointed before sending; automatic renewals do not expose
-        a pre-send persistence hook."""
-        return self._pending_acquisition_id
+    def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
+        """POST and give the answer, sending again while there is none and time remains.
 
-    def _forget_pending(self) -> None:
-        self._pending_acquisition_id = None
-        self._pending_event_data = None
-        self._pending_uncertain = False
+        No answer is a connection that failed or a 5xx. The last outcome is the
+        one reported: the answer, or the error that stood in for it.
+        """
+        data = json.dumps(body).encode()
+        deadline = time.monotonic() + self.timeout
+        pauses = iter(_RESEND_AFTER)
+
+        def wait_to_resend() -> bool:
+            pause = next(pauses, None)
+            if pause is None or time.monotonic() + pause >= deadline:
+                return False
+            time.sleep(pause)
+            return True
+
+        while True:
+            try:
+                status, reply = self._send(path, data, deadline - time.monotonic())
+            except (OSError, http.client.HTTPException):
+                if not wait_to_resend():
+                    raise
+                continue
+            if status < 500 or not wait_to_resend():
+                return status, reply
 
     def _reset_in_child(self) -> None:
-        self._acquire_lock = threading.Lock()
-        self._forget_pending()
-        self._acquire_pid = os.getpid()
+        """Called in a forked child before anything else touches this object."""
+        self._acquiring = threading.Lock()  # a lock copied while held would never open
+        self._acquisition, self._pid = None, os.getpid()
 
     def acquire(self) -> Lease:
-        # The at-fork callback resets sources before child threads can run.
-        if self._acquire_pid != os.getpid():
-            self._reset_in_child()
-        with self._acquire_lock:
-            if self._protocol_error:
-                raise LeaseUnavailable(self._protocol_error)
+        with self._acquiring:
+            if self._pid != os.getpid():
+                # In a forked child, the parent's acquisition is the parent's to finish.
+                self._acquisition, self._pid = None, os.getpid()
             try:
-                return self._attempt()
-            except _AcquisitionOver:
+                return self._acquire()
+            except _Over:
                 # That ID is finished and a new one can be granted at once, so
                 # the caller is not made to wait out a failure that is not one.
-                return self._attempt()
-
-    def _attempt(self) -> Lease:
-        """One request under the pending acquisition ID, or under a new one when there is none."""
-        if self._pending_acquisition_id is None:
-            self._pending_acquisition_id = uuid.uuid4().hex
-        acquisition_id = self._pending_acquisition_id
-        uncertain = self._pending_uncertain
-        try:
-            if self._pending_event_data is None:
-                self._pending_event_data = json.loads(json.dumps(self.event_data))
-            self._pending_uncertain = True  # until an answer says nothing was granted
-            lease = self._acquire()
-            if self.on_acquired is not None:
-                self.on_acquired(acquisition_id)
-        except _AcquisitionOver:
-            self._forget_pending()
-            raise
-        except _Rejected:
-            if not uncertain:
-                # Nothing is held under this ID, so the next attempt may carry
-                # the event data as it is then.
-                self._pending_event_data = None
-                self._pending_uncertain = False
-            raise
-        except LeaseUnavailable:
-            raise
-        except Exception as e:
-            # Preserve the ID and exact event data on an ambiguous failure.
-            raise LeaseUnavailable(f"no lease from the control plane: {type(e).__name__}: {e}") from e
-        self._forget_pending()
-        return lease
+                return self._acquire()
 
     def _acquire(self) -> Lease:
+        """Ask for a lease under the acquisition in hand, or under a new one."""
+        acquisition = self._acquisition = self._acquisition or _Acquisition()
+        try:
+            if acquisition.event_data is None:
+                acquisition.event_data = json.loads(json.dumps(self.event_data))
+            lease = self._ask(acquisition)
+        except _Over:
+            self._acquisition = None
+            raise
+        except _Refused:
+            # Nothing was granted for that request, so the next one carries the
+            # event data of its own time. The ID stays: an earlier request
+            # under it may have been granted without the answer arriving.
+            acquisition.event_data = None
+            raise
+        except LeaseUnavailable:
+            raise  # an answer that settles nothing: the acquisition is asked for again as it is
+        except Exception as e:
+            raise LeaseUnavailable(f"no lease from the control plane: {type(e).__name__}: {e}") from e
+        self._acquisition = None
+        return lease
+
+    def _ask(self, acquisition: _Acquisition) -> Lease:
         from tenuo import Warrant
 
-        status, body = self._post(f"/v1/triggers/{self.trigger_id}/acquire", {"event_data": self._pending_event_data, "acquisition_id": self._pending_acquisition_id})
+        status, body = self._post(f"/v1/triggers/{self.trigger_id}/acquire",
+                                  {"event_data": acquisition.event_data, "acquisition_id": acquisition.id})
         error: Dict[str, Any] = body["error"] if isinstance(body.get("error"), dict) else {}
         code = str(error.get("code") or "")
         if (status, code) in ((410, "acquisition_closed"), (409, "acquisition_conflict")):
@@ -275,14 +293,15 @@ class CloudLeases:
             # since. What it granted stays accounted for; a new ID is needed.
             if code == "acquisition_conflict":
                 logger.warning("Acquisition %s for trigger %s cannot be recovered; taking a new lease (%s)",
-                               self._pending_acquisition_id, self.trigger_id, error.get("message") or code)
-            raise _AcquisitionOver(str(error.get("message") or "the previous acquisition is closed"))
+                               acquisition.id, self.trigger_id, error.get("message") or code)
+            raise _Over(str(error.get("message") or "the previous acquisition is closed"))
         if status == 409 and code == "token_budget_exhausted":
-            raise _Rejected(str(error.get("message") or "the token budget for this period is spent"),
-                            exhausted=True, retry_at=_unix(error.get("retry_at")))
+            raise _Refused(str(error.get("message") or "the token budget for this period is spent"),
+                           exhausted=True, retry_at=_unix(error.get("retry_at")))
         if status != 200 or not body.get("warrant"):
             if status == 404:
-                why = f"trigger {self.trigger_id} was not found; check the trigger id and upgrade Cloud if it lacks the acquisition endpoint"
+                why = (f"trigger {self.trigger_id} was not found; check the trigger id, "
+                       "and upgrade Cloud if it has no acquire route")
             elif status == 401:
                 why = "the control plane did not accept the API key (TENUO_API_KEY)"
             elif status == 403:
@@ -295,10 +314,9 @@ class CloudLeases:
             # A 4xx with the control plane's own error code is a refusal of this
             # request. Anything else leaves open whether a lease was granted.
             refused = 400 <= status < 500 and bool(code)
-            raise (_Rejected if refused else LeaseUnavailable)(f"{why} ({detail})")
-        if body.get("acquisition_id") != self._pending_acquisition_id:
-            self._protocol_error = "the control plane did not confirm acquisition idempotency; upgrade Cloud before using this SDK"
-            raise LeaseUnavailable(self._protocol_error)
+            raise (_Refused if refused else LeaseUnavailable)(f"{why} ({detail})")
+        if body.get("acquisition_id") != acquisition.id:
+            raise LeaseUnavailable("the control plane's reply does not name this acquisition, so it is not taken as its lease")
         info = body.get("lease")
         if not isinstance(info, dict):
             raise LeaseUnavailable(f"trigger {self.trigger_id} has no token_budget, so its warrants are not leases")

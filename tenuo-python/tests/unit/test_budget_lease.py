@@ -18,6 +18,7 @@ from tenuo.budget import TokenMeter, llm_capability
 from tenuo.budget_http import install, uninstall
 import tenuo.budget
 import tenuo.budget_http
+import tenuo.budget_lease
 from tenuo.budget_lease import CloudLeases, Lease, LeasedBudget, LeaseUnavailable, lease_return_message
 
 MODEL = "gpt-4o-mini"
@@ -1016,7 +1017,8 @@ class TestCloudLeases:
     @pytest.fixture
     def cloud(self, keys):
         state = SimpleNamespace(requests=[], exhausted=False, raw=None, granted=2500, redirect=False, reply=None, drop_once=False, legacy=False,
-                                by_id={})  # acquisition ID -> the reply every request under it gets
+                                script=[],  # replies for the next requests, in order
+                                by_id={})   # acquisition ID -> the reply every request under it gets
         warrant = (Warrant.mint_builder().capability("llm.chat", llm_capability(total_tokens=2500, models=[MODEL]))
                    .holder(keys.agent.public_key).ttl(600).mint(keys.issuer))
 
@@ -1045,7 +1047,9 @@ class TestCloudLeases:
                     self.end_headers()
                     self.wfile.write(data)
                     return
-                if self.path.endswith("/acquire") and body.get("acquisition_id") in state.by_id:
+                if state.script:
+                    status, payload = state.script.pop(0)
+                elif self.path.endswith("/acquire") and body.get("acquisition_id") in state.by_id:
                     status, payload = state.by_id[body["acquisition_id"]]
                 elif self.path.endswith("/acquire") and state.reply is not None:
                     status, payload = state.reply
@@ -1154,77 +1158,130 @@ class TestCloudLeases:
         with pytest.raises(ValueError):
             CloudLeases("trg_budget")
 
-    def test_lost_response_recovers_same_acquisition_then_rotates(self, cloud):
+    # -- a request that gets no answer --------------------------------------------
+
+    @pytest.fixture
+    def one_sending(self, monkeypatch):
+        """Each request is sent once, so a test decides what every call sees."""
+        monkeypatch.setattr(tenuo.budget_lease, "_RESEND_AFTER", ())
+
+    def test_a_lost_answer_is_asked_for_again_under_the_same_id(self, cloud):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
-        pending = source.pending_acquisition_id
+        cloud.drop_once = True
+        assert source.acquire().granted_tokens == 2500  # the caller never sees the lost answer
+        assert len(cloud.requests) == 2 and cloud.requests[0][2] == cloud.requests[1][2]
+        source.acquire()
+        assert cloud.requests[2][2]["acquisition_id"] != cloud.requests[0][2]["acquisition_id"]
+
+    def test_a_server_error_is_asked_again(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
+        cloud.script = [(503, {}), (502, {})]
+        assert source.acquire().granted_tokens == 2500
+        assert len(cloud.requests) == 3 and len({body["acquisition_id"] for _, _, body in cloud.requests}) == 1
+
+    def test_a_return_that_gets_no_answer_is_sent_again(self, cloud, keys):
+        source = CloudLeases("trg_budget", signing_key=keys.agent, url=cloud.url, api_key="tc_test")
+        lease = source.acquire()
+        cloud.script = [(503, {})]
+        source.release(lease.warrant_id, [{"model": MODEL, "input_tokens": 10, "output_tokens": 20}])
+        assert len(cloud.requests) == 3 and cloud.requests[1] == cloud.requests[2]
+
+    def test_asking_again_ends_with_the_timeout(self, cloud, monkeypatch):
+        # The second pause would pass the deadline, so there is no third sending.
+        monkeypatch.setattr(tenuo.budget_lease, "_RESEND_AFTER", (0.0, 60.0))
+        cloud.reply = (503, {})
+        with pytest.raises(LeaseUnavailable, match="HTTP 503"):
+            CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", timeout=5).acquire()
+        assert len(cloud.requests) == 2
+
+    @pytest.mark.parametrize("reply", [(403, {"error": {"code": "forbidden"}}), (404, {}), (200, {})],
+                             ids=["refused", "not-found", "no-warrant"])
+    def test_an_answer_is_not_asked_for_again(self, cloud, reply):
+        cloud.reply = reply
+        with pytest.raises(LeaseUnavailable):
+            CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
+        assert len(cloud.requests) == 1
+
+    # -- an acquisition across calls ----------------------------------------------
+
+    def test_an_unanswered_acquisition_is_the_one_the_next_call_asks_for(self, cloud, one_sending):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
         cloud.drop_once = True
         with pytest.raises(LeaseUnavailable):
             source.acquire()
-        assert source.pending_acquisition_id == pending
-        source.event_data["team"] = "b"
+        source.event_data["team"] = "b"  # the acquisition already sent keeps what it was sent with
         source.acquire()
         assert cloud.requests[0][2] == cloud.requests[1][2]
-        assert source.pending_acquisition_id is None
         source.acquire()
-        assert cloud.requests[2][2]["acquisition_id"] != pending
+        assert cloud.requests[2][2]["acquisition_id"] != cloud.requests[0][2]["acquisition_id"]
         assert cloud.requests[2][2]["event_data"] == {"team": "b"}
 
-    @pytest.mark.parametrize("reply", [(503, {}), (200, {})])
-    def test_uncertain_response_preserves_id(self, cloud, reply):
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="checkpoint")
+    @pytest.mark.parametrize("reply", [
+        (503, {}), (200, {}),
+        (200, {"warrant": "AAAA", "acquisition_id": "another", "lease": {"granted_tokens": 2500}}),
+    ], ids=["server-error", "no-warrant", "another-acquisition"])
+    def test_an_answer_that_settles_nothing_keeps_the_acquisition(self, cloud, one_sending, reply):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
         cloud.reply = reply
         with pytest.raises(LeaseUnavailable):
             source.acquire()
-        assert source.pending_acquisition_id == "checkpoint"
+        source.event_data["team"] = "b"
         cloud.reply = None
         source.acquire()
         assert cloud.requests[0][2] == cloud.requests[1][2]
+
+    def test_a_reply_for_another_acquisition_is_not_taken(self, cloud):
+        cloud.reply = (200, {"warrant": cloud.warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
+                             "acquisition_id": "another", "lease": {"unit": "usd", "granted_tokens": 2500}})
+        with pytest.raises(LeaseUnavailable, match="does not name this acquisition"):
+            CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
 
     @pytest.mark.parametrize("reply", [(410, {"error": {"code": "acquisition_closed"}}),
                                        (409, {"error": {"code": "acquisition_conflict"}})],
                              ids=["closed", "conflict"])
-    def test_an_id_that_is_over_gives_way_to_a_new_one_in_the_same_call(self, cloud, reply):
-        cloud.by_id["old"] = reply  # as the control plane does: for that ID, every time
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"}, acquisition_id="old")
-        source.event_data["team"] = "b"
-        lease = source.acquire()
-        assert lease.granted_tokens == 2500 and source.pending_acquisition_id is None
-        old, new = (body for _, _, body in cloud.requests)
-        assert old["acquisition_id"] == "old" and new["acquisition_id"] != "old"
-        assert new["event_data"] == {"team": "b"}
-
-    def test_an_id_that_is_over_is_tried_anew_only_once(self, cloud):
-        cloud.reply = (410, {"error": {"code": "acquisition_closed"}})
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="old")
+    def test_an_acquisition_that_is_over_gives_way_to_a_new_one_in_the_same_call(self, cloud, one_sending, reply):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
+        cloud.drop_once = True
         with pytest.raises(LeaseUnavailable):
             source.acquire()
-        assert len(cloud.requests) == 2
-        cloud.reply = None
+        lost = cloud.requests[0][2]["acquisition_id"]
+        cloud.by_id[lost] = reply  # as the control plane does: for that ID, every time
+        source.event_data["team"] = "b"
+        assert source.acquire().granted_tokens == 2500
+        again, new = cloud.requests[1][2], cloud.requests[2][2]
+        assert again == cloud.requests[0][2] and new["acquisition_id"] != lost and new["event_data"] == {"team": "b"}
         source.acquire()
         assert len({body["acquisition_id"] for _, _, body in cloud.requests}) == 3
 
-    def test_a_closed_acquisition_does_not_lock_the_budget_out(self, cloud, keys):
-        cloud.by_id["old"] = (410, {"error": {"code": "acquisition_closed"}})
-        budget = LeasedBudget(CloudLeases("trg_budget", signing_key=keys.agent, url=cloud.url, api_key="tc_test",
-                                          acquisition_id="old"))
+    def test_a_new_acquisition_is_tried_once_per_call(self, cloud):
+        cloud.reply = (410, {"error": {"code": "acquisition_closed"}})
+        with pytest.raises(LeaseUnavailable):
+            CloudLeases("trg_budget", url=cloud.url, api_key="tc_test").acquire()
+        assert len({body["acquisition_id"] for _, _, body in cloud.requests}) == len(cloud.requests) == 2
+
+    def test_a_closed_acquisition_does_not_lock_the_budget_out(self, cloud, keys, one_sending):
+        budget = LeasedBudget(CloudLeases("trg_budget", signing_key=keys.agent, url=cloud.url, api_key="tc_test"))
+        cloud.drop_once = True
+        with pytest.raises(LeaseUnavailable):
+            budget.source.acquire()
+        cloud.by_id[cloud.requests[0][2]["acquisition_id"]] = (410, {"error": {"code": "acquisition_closed"}})
         assert str(budget.warrant().id) == str(cloud.warrant.id)
 
     @pytest.mark.parametrize("reply", [(400, {"error": {"code": "invalid_request", "message": "team is required"}}),
                                        (409, {"error": {"code": "token_budget_exhausted", "message": "all leased out"}})],
                              ids=["invalid", "exhausted"])
-    def test_after_a_refusal_the_next_attempt_carries_the_event_data_of_then(self, cloud, reply):
+    def test_after_a_refusal_the_next_request_carries_the_event_data_of_then(self, cloud, reply):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
-        pending = source.pending_acquisition_id
         cloud.reply = reply
         with pytest.raises(LeaseUnavailable):
             source.acquire()
-        assert source.pending_acquisition_id == pending  # a saved ID stays the one in use
         source.event_data["team"] = "b"
         cloud.reply = None
         source.acquire()
-        assert cloud.requests[1][2] == {"event_data": {"team": "b"}, "acquisition_id": pending}
+        # Under the same ID: had an earlier request been granted, this is how its lease is found.
+        assert cloud.requests[1][2] == {"event_data": {"team": "b"}, "acquisition_id": cloud.requests[0][2]["acquisition_id"]}
 
-    def test_a_refusal_after_a_lost_response_keeps_the_event_data_first_sent(self, cloud):
+    def test_a_lease_whose_answer_was_lost_is_still_found_after_a_refusal(self, cloud, one_sending):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
         cloud.drop_once = True
         with pytest.raises(LeaseUnavailable):
@@ -1232,80 +1289,68 @@ class TestCloudLeases:
         cloud.reply = (403, {"error": {"code": "forbidden", "message": "not allowed"}})
         with pytest.raises(LeaseUnavailable):
             source.acquire()
-        source.event_data["team"] = "b"
         cloud.reply = None
         source.acquire()
         assert cloud.requests[0][2] == cloud.requests[1][2] == cloud.requests[2][2]
 
-    def test_on_acquired_runs_before_the_lease_is_handed_out(self, cloud):
-        seen = []
-
-        def forget_checkpoint(acquisition_id):
-            seen.append(acquisition_id)
-            if len(seen) == 1:
-                raise OSError("disk full")
-
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="checkpoint",
-                             on_acquired=forget_checkpoint)
-        with pytest.raises(LeaseUnavailable, match="disk full"):
-            source.acquire()
-        assert source.pending_acquisition_id == "checkpoint"
-        source.acquire()
-        assert seen == ["checkpoint", "checkpoint"] and source.pending_acquisition_id is None
-        assert cloud.requests[0][2] == cloud.requests[1][2]
-        source.acquire()
-        assert seen[2] == cloud.requests[2][2]["acquisition_id"] != "checkpoint"
-
-    @pytest.mark.parametrize("metadata", [{"granted_tokens": 2500}, {"granted_tokens": "invalid"}, None])
-    def test_old_server_fails_closed_without_repeated_allocations(self, cloud, metadata):
+    def test_a_server_without_the_acquire_route_grants_nothing(self, cloud):
+        cloud.legacy = True
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
-        cloud.reply = (200, {"warrant": cloud.warrant.to_base64(), "expires_at": "2030-01-01T00:10:00Z",
-                             "lease": metadata})
         for _ in range(2):
             with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
                 source.acquire()
-        assert len(cloud.requests) == 1
+        assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/acquire"] * 2
+        assert cloud.requests[0][2] == cloud.requests[1][2]
 
-    def test_fork_does_not_recover_parent_acquisition(self, cloud):
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", acquisition_id="parent")
-        source._acquire_pid = -1  # exercise the same fork transition without forking the HTTP server
-        source._acquire_lock.acquire()
+    # -- a forked child -----------------------------------------------------------
+
+    def test_a_process_that_is_not_the_one_that_asked_starts_its_own_acquisition(self, cloud, one_sending):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
+        cloud.drop_once = True
+        with pytest.raises(LeaseUnavailable):
+            source.acquire()
+        source._pid = -1  # as in a child whose fork did not run the at-fork hook
         source.acquire()
-        assert cloud.requests[-1][2]["acquisition_id"] != "parent"
+        assert cloud.requests[1][2]["acquisition_id"] != cloud.requests[0][2]["acquisition_id"]
 
     @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
     @pytest.mark.filterwarnings("ignore:This process:DeprecationWarning")
-    def test_concurrent_child_acquisitions_reset_before_threads_run(self):
+    def test_a_forked_child_does_not_inherit_the_acquisition_or_its_lock(self):
         import signal
 
-        source = CloudLeases("trg_budget", url="http://localhost", api_key="test", acquisition_id="parent")
-        inherited_lock = source._acquire_lock
-        inherited_lock.acquire()
+        source = CloudLeases("trg_budget", url="http://localhost", api_key="test")
+        source._acquisition = parents = tenuo.budget_lease._Acquisition()
+        inherited_lock = source._acquiring
+        inherited_lock.acquire()  # as if a parent thread were in the middle of an acquisition
         read, write = os.pipe()
         pid = os.fork()
         if pid == 0:
             os.close(read)
             try:
                 signal.alarm(5)
-                # The reset must already be complete before the first acquire.
-                ready = (source._acquire_pid == os.getpid() and source._acquire_lock is not inherited_lock
-                         and source.pending_acquisition_id is None)
+                # The reset is complete before the child's first acquire.
+                ready = (source._pid == os.getpid() and source._acquiring is not inherited_lock
+                         and source._acquisition is None)
                 ids = []
-                def acquire_stub():
-                    ids.append(source.pending_acquisition_id)
+
+                def ask(acquisition):
+                    ids.append(acquisition.id)
                     return object()
-                source._acquire = acquire_stub
+
+                source._ask = ask
                 start = threading.Barrier(3)
+
                 def worker():
                     start.wait()
                     source.acquire()
+
                 threads = [threading.Thread(target=worker) for _ in range(2)]
                 for thread in threads:
                     thread.start()
                 start.wait()
                 for thread in threads:
                     thread.join()
-                ok = ready and len(set(ids)) == 2 and "parent" not in ids
+                ok = ready and len(set(ids)) == 2 and parents.id not in ids
                 os.write(write, b"ok" if ok else b"no")
             finally:
                 os._exit(0)
@@ -1313,20 +1358,7 @@ class TestCloudLeases:
         try:
             _, status = os.waitpid(pid, 0)
             assert status == 0 and os.read(read, 2) == b"ok"
-            assert source.pending_acquisition_id == "parent"
+            assert source._acquisition is parents
         finally:
             inherited_lock.release()
             os.close(read)
-
-    @pytest.mark.parametrize("legacy_reply", ["lost", "malformed"])
-    def test_unsupported_server_never_receives_allocating_request(self, cloud, legacy_reply):
-        cloud.legacy = True
-        cloud.drop_once = legacy_reply == "lost"
-        cloud.raw = "{}" if legacy_reply == "malformed" else None
-        source = CloudLeases("trg_budget", url=cloud.url, api_key="test")
-        for _ in range(2):
-            with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
-                source.acquire()
-        assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/acquire"] * 2
-        # The legacy fire behavior (dropped/malformed successful issuance) was never invoked.
-        assert cloud.drop_once == (legacy_reply == "lost")
