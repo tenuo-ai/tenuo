@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.9] - 2026-11-27
 
+### Upgrade notes
+
+- **Cloud-backed token budgets:** keep Cloud-connected SDK clients on 0.3.8
+  until their Cloud server supports `POST /v1/triggers/{id}/acquire`.
+  Cloud deployment is separate from this core release. Upgrading a
+  `CloudLeases` client against an older server fails closed with
+  `lease_unavailable`; this prerequisite does not apply to local token budgets.
+- TypeScript packages remain prereleases (`0.3.9-beta.0`) on the `beta` npm
+  channel. Rust users of `tenuo::aat` must apply the source migration below.
+
 ### Breaking
 
 - **`tenuo::aat`: a trust anchor's key and the verified holder key are a
