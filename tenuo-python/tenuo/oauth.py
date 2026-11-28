@@ -643,6 +643,8 @@ class OAuthTokens:
             )
         if shape.needs_token_id and not _is_text(claims.get("jti")):
             raise _NotAccepted("the token has no jti claim, which this claim map requires")
+        if "jti" in claims and not _is_text(claims["jti"]):  # The same answer whatever the JWT library's version.
+            raise _NotAccepted("the jti claim is not usable text")
         for name, constant in shape.constants.items():
             if claims.get(name) != constant:
                 hint = "; this looks like an ID token, not an access token" if claims.get(name) == "ID" else ""
