@@ -387,6 +387,17 @@ def test_an_unusable_key_set_is_refused_whole(provider, validator, keys):
         validator.authenticate(provider["token"]())
 
 
+@pytest.mark.parametrize("kid", ["one\n", "o\x00ne", "\ud800", "k" * 2000])
+def test_a_key_id_must_be_plain_text_even_if_the_provider_publishes_it(provider, validator, kid):
+    provider["keys"] = [{**provider["keys"][0], "kid": kid}, provider["keys"][0]]
+    assert validator.authenticate(provider["token"]()).subject == "alice"  # The well-named key still works.
+    assert kid not in validator._keys
+    token = provider["token"](headers={"kid": kid, "typ": "JWT"})
+    with pytest.raises(OAuthError) as refused:
+        validator.authenticate(token)
+    assert refused.value.reason == "the header has no usable key ID (kid)"
+
+
 def test_duplicate_jwt_claims_and_unsigned_token(provider, validator):
     def encode(value):
         return base64.urlsafe_b64encode(value).rstrip(b"=").decode()

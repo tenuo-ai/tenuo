@@ -182,8 +182,9 @@ names owns nothing.
 
 Arguments the template does not name stay unauthorized. `MaximumFrom` is a
 limit per call, not a running total: keep totals in your own ledger. It
-allows whole numbers from 1 up to the record's value; `MaximumFrom(field,
-minimum=0)` changes the lower end. The
+becomes a numeric range from 1 up to the record's value; `MaximumFrom(field,
+minimum=0)` changes the lower end. A range does not require a whole number
+(1.5 is inside 1 to 5000), so a tool that needs one must check that itself. The
 template does not read tool schemas, so test allowed and refused arguments
 whenever a tool's schema changes.
 

@@ -410,7 +410,7 @@ class OAuthTokens:
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
             algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
-            if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not kid or len(kid) > 1024:
+            if algorithm not in ("RS256", "ES256") or not _is_text(kid):
                 continue
             try:
                 key = jwt.PyJWK.from_dict(entry, algorithm=algorithm).key
@@ -602,7 +602,7 @@ class OAuthTokens:
         if header.get("alg") not in ("RS256", "ES256"):
             raise _NotAccepted(f"the algorithm is {_shown(header.get('alg'))}; RS256 and ES256 are accepted")
         kid = header.get("kid")
-        if not isinstance(kid, str) or not kid or len(kid) > 1024:
+        if not _is_text(kid):  # Text, with no control characters or lone surrogates.
             raise _NotAccepted("the header has no usable key ID (kid)")
         algorithm, key = self._key(kid)
         if algorithm != header["alg"]:
@@ -710,7 +710,12 @@ class ExactFrom:
 
 @dataclass(frozen=True)
 class MaximumFrom:
-    """An integer per-call limit. This is not cumulative accounting."""
+    """A per-call upper limit, taken from an integer field. This is not cumulative accounting.
+
+    The warrant carries a numeric range from ``minimum`` to the field's value.
+    A range does not require a whole number (1.5 is inside 1 to 5000): a tool
+    that needs one must check that itself.
+    """
 
     field: str
     minimum: int = 1
