@@ -1007,3 +1007,43 @@ def test_shared_inbound_nonce_denial_releases_approval_reservation(setup, nonce_
     fresh = bytes(setup["warrant"].sign(setup["holder"], "transfer", setup["args"], now + 31))
     assert call(fresh, nonces).allowed
     assert len(store) == 1
+
+
+def test_crewai_combined_hook_publishes_key_to_worker(setup):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+    from tenuo import Wildcard
+    from tenuo.crewai import GuardBuilder, GuardedCrew
+    from tenuo.consumption import _set_current_idempotency_key
+
+    guard = (GuardBuilder().allow("transfer", amount=Wildcard())
+             .with_warrant(setup["warrant"], setup["holder"])
+             .with_trusted_roots([setup["issuer"].public_key])
+             .with_approvals([setup["approval"]]).on_denial("skip").build())
+    crew = GuardedCrew(agents=[], tasks=[]).build()
+    crew._guards["banker"] = guard
+    _set_current_idempotency_key("stale-kickoff")
+    hook = crew._create_combined_hook()
+    enable_default_consumption_store()
+
+    def calls():
+        context = SimpleNamespace(agent=SimpleNamespace(role="banker"),
+                                  tool_name="transfer", tool_input=setup["args"])
+        _set_current_idempotency_key("stale-worker")
+        assert hook(context) is None
+        key = current_idempotency_key()
+        assert key is not None and len(key) == 64
+        # Approval replay denies and clears the key before a handler can use it.
+        assert hook(context) is False
+        assert current_idempotency_key() is None
+        # Even an early routing denial must discard a previous call's key.
+        _set_current_idempotency_key("stale-worker")
+        context.agent = None
+        assert hook(context) is False
+        assert current_idempotency_key() is None
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(calls).result(timeout=10)
+    finally:
+        _set_current_idempotency_key(None)

@@ -2709,12 +2709,14 @@ class _GuardedCrewImpl:
     def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
         """Create a hook that routes to the appropriate per-agent guard."""
         from contextvars import copy_context
+        from .consumption import _set_current_idempotency_key, current_idempotency_key
 
         guards = self._guards
         kickoff_context = copy_context()
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
+            _set_current_idempotency_key(None)
             # Extract agent role from context
             agent = getattr(context, "agent", None)
             role = None
@@ -2740,7 +2742,14 @@ class _GuardedCrewImpl:
             # CrewAI may invoke the hook from a worker without ContextVars.
             # Each call gets its own copy so concurrent workers can safely
             # use the kickoff's chain, Runtime, and authorization settings.
-            return kickoff_context.copy().run(guard.authorize_hook, context, agent_role=role)
+            call_context = kickoff_context.copy()
+            call_context.run(_set_current_idempotency_key, None)
+            result = call_context.run(guard.authorize_hook, context, agent_role=role)
+            if result is None:
+                # Enforcement publishes this for the handler that runs next
+                # in the worker's context, outside the copied policy scope.
+                _set_current_idempotency_key(call_context.run(current_idempotency_key))
+            return result
 
         return guarded_crew_hook
 
