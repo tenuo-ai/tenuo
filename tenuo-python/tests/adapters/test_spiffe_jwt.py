@@ -364,6 +364,20 @@ def test_an_rsa_key_with_a_huge_exponent_is_skipped(authority, tmp_path, caplog)
         validator.authenticate(costly.token())
 
 
+def test_the_largest_rsa_modulus_taken_is_8192_bits(authority):
+    """At the limit a key is used. One bit over, it is skipped, and the keys next to it are not lost."""
+    from tenuo.spiffe_jwt import _jwks_keys
+
+    def b64(number):
+        return base64.urlsafe_b64encode(number.to_bytes((number.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+
+    template = JWTAuthority(kind="RSA").jwk
+    at_the_limit = {**template, "kid": "limit", "n": b64(2**8191 + 1)}  # A stand-in for a modulus of 8192 bits.
+    over_it = {**template, "kid": "over", "n": b64(2**8192 + 1)}
+    keys = _jwks_keys(jwks(authority, extra=[at_the_limit, over_it]), DOMAIN)
+    assert set(keys) == {authority.kid, "limit"} and keys["limit"].key_size == 8192
+
+
 def test_one_token_has_one_spelling(validator, authority):
     """Padding or junk after a valid token must not validate as a second identity."""
     token = authority.token()

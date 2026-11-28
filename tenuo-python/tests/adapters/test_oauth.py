@@ -455,6 +455,27 @@ def test_a_key_that_would_make_every_check_costly_is_not_used(provider, validato
     assert not _rsa_within_bounds(rsa_keys.RSAPublicNumbers(65537, modulus).public_key(), minimum_bits=4096)
 
 
+def test_the_largest_rsa_modulus_taken_is_8192_bits(provider, validator):
+    """At the limit a key is used. One bit over, it is passed over, and the keys next to it are not lost."""
+
+    def b64(number):
+        return base64.urlsafe_b64encode(number.to_bytes((number.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+
+    good = provider["keys"][0]
+    at_the_limit, over_it = 2**8191 + 1, 2**8192 + 1  # Stand-ins for moduli of 8192 and 8193 bits.
+    provider["keys"] = [
+        {**good, "kid": "limit", "n": b64(at_the_limit)},
+        {**good, "kid": "over", "n": b64(over_it)},
+        good,
+    ]
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    assert set(validator._keys) == {"limit", "one"}
+    assert validator._keys["limit"][1].key_size == 8192
+    with pytest.raises(OAuthError) as refused:
+        validator.authenticate(provider["token"](headers={"kid": "over", "typ": "JWT"}))
+    assert "is not among the 2 usable keys" in refused.value.reason
+
+
 def test_every_refused_token_gets_the_same_message(provider, validator):
     messages = set()
     for changes in ({"aud": "elsewhere"}, {"cnf": {"jkt": "x"}}, {"act": {"sub": "s"}}, {"azp": "other"}, {"exp": 1}):
