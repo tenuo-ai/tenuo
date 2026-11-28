@@ -2725,6 +2725,8 @@ class _GuardedCrewImpl:
         kickoff_config = replace(config, trusted_roots=list(roots or []), _authorizer=None)
         kickoff_chain = list(chain_scope() or [])
         for guard in guards.values():
+            guard._allowed = {tool: dict(constraints) for tool, constraints in guard._allowed.items()}
+            guard._namespaced = guard._index_namespaced(guard._allowed)
             guard_roots = resolve_trusted_roots(guard._trusted_roots)
             if guard_roots is None:
                 guard_roots = roots

@@ -1852,6 +1852,12 @@ class TestGuardedCrewIssuerChain:
             hook = crew._create_combined_hook()
         finally:
             config._config_context.reset(token)
+        context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                  tool_name="search", tool_input={"query": "evil.com"})
+        assert hook(context) is False
+        # In-place changes to the exposed guard must not alter the hook either.
+        crew.guards["researcher"]._allowed["search"]["query"] = Wildcard()
+        assert hook(context) is False
         # A later kickoff/configuration cannot broaden an earlier hook.
         crew._guards["researcher"] = (GuardBuilder().allow("search", query=Wildcard())
                                      .on_denial("skip").build())
