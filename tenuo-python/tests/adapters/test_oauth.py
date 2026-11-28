@@ -1593,3 +1593,4 @@ def test_the_quickstart_runs_as_printed():
         "All as expected.",
     ):
         assert line in done.stdout, line
+    assert done.stdout.count("refunded 4000 cents") == 1  # The approved refund is made once.

@@ -151,10 +151,14 @@ issuer_app = OAuthWarrantIssuerApp(
 authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
 
+REFUNDS_MADE = []  # Stands in for the payments service's ledger.
+
+
 def refund(payment_id, amount_cents, *, warrant, signature):
     """Refund a payment, if the warrant allows exactly this call."""
     arguments = {"payment_id": payment_id, "amount_cents": amount_cents}  # The names the template uses.
     authorizer.authorize(warrant, "refund", arguments, signature)  # Raises unless allowed.
+    REFUNDS_MADE.append((payment_id, amount_cents))  # Reached only by an allowed call.
     return f"refunded {amount_cents} cents on {payment_id}"
 
 
@@ -192,11 +196,13 @@ def run_agent(issuer_url):
     print("   got a warrant that expires at", warrant.expires_at())
 
     print("2. It refunds within the approval:")
-    print("  ", call(warrant, "payment-789", 4000))
+    approved = call(warrant, "payment-789", 4000)
+    print("  ", approved)
 
     print("3. The same warrant does not stretch:")
-    print("  ", call(warrant, "payment-789", 9000))
-    print("  ", call(warrant, "payment-000", 4000))
+    too_much, another_payment = call(warrant, "payment-789", 9000), call(warrant, "payment-000", 4000)
+    print("  ", too_much)
+    print("  ", another_payment)
 
     print("4. A task nobody approved gets no warrant:")
     try:
@@ -210,12 +216,10 @@ def run_agent(issuer_url):
     except OAuthError as refused:
         print("  ", refused)
 
-    done = [
-        "refunded" in call(warrant, "payment-789", 4000),
-        "REFUSED" in call(warrant, "payment-789", 9000),
-        "REFUSED" in call(warrant, "payment-000", 4000),
-    ]
-    return all(done)
+    # Each call above was made once. The warrant limits what a call may be, not how many times it is made:
+    # until it expires the approved refund would be allowed again, so a payments service still needs its own
+    # rule for doing an operation once (an operation ID, for example).
+    return "refunded" in approved and "REFUSED" in too_much and "REFUSED" in another_payment and len(REFUNDS_MADE) == 1
 
 
 def main():
