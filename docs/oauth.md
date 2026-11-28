@@ -333,6 +333,10 @@ exactly the five parameters above and refuses any other (`scope`, `audience`,
 `actor_token`), so nothing is accepted and then ignored. The authorization
 detail names a task. It cannot ask for permissions.
 
+The token is the `subject_token`. Through a gateway that checks a bearer
+token the request carries an `Authorization` header as well, and it must be
+`Bearer` with that same token; any other `Authorization` header is refused.
+
 In this shape the token is in the body, so the body is read before the caller
 is known. Such requests get a quarter of the endpoint's places, so they cannot
 crowd out callers whose token is checked first.
@@ -381,14 +385,24 @@ was denied or failed can be sent again.
 | Requests in progress | 256, and 16 for one identity | `OAuthWarrantIssuerApp(max_concurrent=, max_per_identity=)` |
 | Proofs remembered | 16384 in a process, a quarter of them for one identity | `proof_store=` |
 
-- **Keys.** Tokens signed by a key already fetched are checked locally. A
-  token signed by an unknown key sends one caller to fetch, and does not hold
-  up the others. If that fetch fails the answer is 503, since the key may be
-  a new one. With the provider unreachable, known keys work until
-  `cache_seconds` runs out, and then tokens are refused. When there are no
-  usable keys and a fetch is under way, callers wait for it. A fetched key
-  set replaces the one before it, so a withdrawn key stops working at the
-  next fetch. `OAuthTokens.refresh()` fetches at once.
+- **Keys.** A token signed by a key already fetched is checked locally and is
+  never held up by a fetch. From half of `cache_seconds` the keys are fetched
+  again in the background. With the provider unreachable, known keys work
+  until `cache_seconds` runs out, and then tokens are refused.
+- **Tokens that need a fetch.** A token with a key ID not yet known, or one
+  that arrives when there are no usable keys, sends its own caller to fetch:
+  one at a time for each provider, and at most every `refresh_interval`.
+  Nobody waits for another caller's fetch. While one is under way, or after
+  one failed, such a token gets 503 at once and should be sent again; it gets
+  401 only when a fetch succeeded and the key was not in it. So a provider
+  that does not answer costs one request at a time, and callers of your
+  other providers are not held up. The bundled endpoint fetches every
+  provider's keys when the server starts it; if you call the issuer directly,
+  call `OAuthTokens.refresh()` at start-up.
+- **Withdrawing a key.** A fetched key set replaces the one before it, so a
+  withdrawn key stops working at the next fetch. `OAuthTokens.refresh()`
+  fetches at once, and a fetch that began before it cannot bring the key
+  back.
 - **Key sets.** An entry this adapter has no use for (another algorithm or
   curve, an encryption key, an RSA key under 2048 bits, no key ID) is passed
   over, and a token signed by it is not accepted. A key ID listed twice, or

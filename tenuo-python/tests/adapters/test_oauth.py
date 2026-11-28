@@ -321,6 +321,8 @@ def test_a_slow_key_fetch_does_not_hold_up_tokens_from_known_keys(provider, vali
     [
         lambda jwk: [jwk, jwk],  # One key ID twice.
         lambda jwk: [{**jwk, "d": "AQAB"}],  # A private key published by mistake.
+        lambda jwk: [jwk, {**jwk, "kid": "two", "use": "enc", "d": "AQAB"}],  # Whatever use it claims.
+        lambda jwk: [jwk, {**jwk, "kid": "two", "key_ops": ["sign"], "d": "AQAB"}],
         lambda jwk: {"not": "a list"},
     ],
 )
@@ -380,20 +382,69 @@ def test_a_refresh_is_not_undone_by_a_fetch_that_began_before_it(provider, valid
         validator.authenticate(token)
 
 
-def test_callers_wait_for_the_first_fetch_instead_of_being_refused(provider, validator):
-    provider["delay"] = 0.4
+def test_nobody_waits_for_another_callers_fetch(provider, validator):
+    """With no keys yet, one caller fetches. The others are told to try again, at once."""
+    provider["delay"] = 0.5
     token = provider["token"]()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        subjects = list(pool.map(lambda _: validator.authenticate(token).subject, range(4)))
-    assert subjects == ["alice"] * 4 and provider["calls"] == 1
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(validator.authenticate, token)
+        for _ in range(200):
+            if validator._under_way:
+                break
+            time.sleep(0.005)
+        began = time.monotonic()
+        for _ in range(3):
+            with pytest.raises(OAuthUnavailable):
+                validator.authenticate(token)
+        assert time.monotonic() - began < 0.3
+        assert first.result().subject == "alice"
+    assert validator.authenticate(token).subject == "alice" and provider["calls"] == 1
+
+
+def test_known_keys_are_fetched_again_in_the_background_before_they_age_out(provider, validator):
+    token = provider["token"]()
+    assert validator.authenticate(token).subject == "alice"
+    validator._loaded -= validator._cache_seconds * 0.6  # Past half their life.
+    time.sleep(0.02)
+    provider["delay"] = 0.3
+    began = time.monotonic()
+    assert validator.authenticate(token).subject == "alice"  # Answered from the keys in hand.
+    assert time.monotonic() - began < 0.2
+    provider["delay"] = 0.0
+    for _ in range(200):
+        if provider["calls"] == 2 and not validator._under_way:
+            break
+        time.sleep(0.01)
+    assert provider["calls"] == 2 and time.monotonic() - validator._loaded < 5
+
+
+def test_an_interrupted_fetch_does_not_stop_later_ones(provider, validator, monkeypatch):
+    real = validator._fetch
+    monkeypatch.setattr(validator, "_fetch", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+    with pytest.raises(KeyboardInterrupt):
+        validator.authenticate(provider["token"]())
+    monkeypatch.setattr(validator, "_fetch", real)
+    assert validator._under_way == 0
+    time.sleep(0.02)
+    assert validator.authenticate(provider["token"]()).subject == "alice"
 
 
 def test_a_new_key_that_cannot_be_fetched_is_unavailable_not_invalid(provider, validator):
     assert validator.authenticate(provider["token"]()).subject == "alice"
     provider["status"] = 503
     time.sleep(0.02)
-    with pytest.raises(OAuthUnavailable):
-        validator.authenticate(provider["token"](headers={"kid": "rotated", "typ": "JWT"}))
+    rotated = provider["token"](headers={"kid": "rotated", "typ": "JWT"})
+    for _ in range(3):  # The caller that fetched, and those after it who may not fetch again yet.
+        with pytest.raises(OAuthUnavailable):
+            validator.authenticate(rotated)
+        validator._refresh_interval = 60
+    assert provider["calls"] == 2
+    assert validator.authenticate(provider["token"]()).subject == "alice"  # Known keys are unaffected.
+    provider["status"] = 200
+    validator.refresh()
+    with pytest.raises(OAuthError) as refused:  # Fetched, and not there: now it is simply not accepted.
+        validator.authenticate(rotated)
+    assert not isinstance(refused.value, OAuthUnavailable)
 
 
 def test_entries_this_adapter_does_not_use_are_passed_over(provider, validator):
@@ -895,6 +946,91 @@ def test_a_task_id_no_statement_can_carry_is_the_callers_mistake(provider, setup
     assert status in (400, 403), reply
 
 
+def test_an_unreachable_provider_does_not_hold_up_callers_of_another(provider, validator):
+    """Tokens that only name a provider whose key endpoint does not answer cost one check thread, not all of them."""
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen(64)  # Accepts connections and never answers.
+    url = f"http://127.0.0.1:{silent.getsockname()[1]}"
+    down = OAuthTokens(
+        Trust(url, AUDIENCE, url + "/keys", KEYCLOAK, clients=frozenset({"support"})),
+        allow_loopback_http=True,
+        timeout=3,
+    )
+    holder = SigningKey.generate()
+    issuer = OAuthWarrantIssuer(
+        credentials=[validator, down],
+        signing_key=SigningKey.generate(),
+        policy=lambda identity, task_id: TaskGrant({"refund": {"payment_id": Exact("p1")}}),
+        audit=lambda record: None,
+    )
+    application = OAuthWarrantIssuerApp(issuer)
+    good = provider["token"]()
+    assert validator.authenticate(good).subject == "alice"
+    forged = provider["token"](iss=url)  # Names the silent provider. Nothing about it is checked before its keys.
+
+    async def post(token):
+        sent = []
+
+        async def whole():
+            return {"type": "http.request", "body": compact(token, holder), "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/warrants",
+            "headers": [(n.lower().encode(), v.encode()) for n, v in bearer(token)],
+        }
+        await application(scope, whole, send)
+        return sent[0]["status"]
+
+    async def run():
+        others = [asyncio.ensure_future(post(forged)) for _ in range(12)]
+        for _ in range(200):
+            await asyncio.sleep(0.005)
+            if down._under_way:
+                break
+        began = time.monotonic()
+        status = await asyncio.wait_for(post(good), 2)
+        waited = time.monotonic() - began
+        return status, waited, await asyncio.gather(*others)
+
+    try:
+        status, waited, others = asyncio.run(run())
+    finally:
+        application.close()
+        silent.close()
+    assert status == 200 and waited < 1
+    assert set(others) == {503}
+
+
+def test_keys_are_fetched_when_the_server_starts_the_application(provider, setup, app):
+    async def start():
+        events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+        started = asyncio.Event()
+
+        async def receive():
+            if len(events) == 1:
+                await started.wait()
+            return events.pop(0)
+
+        async def send(message):
+            if message["type"] == "lifespan.startup.complete":
+                for _ in range(200):
+                    if provider["calls"]:
+                        break
+                    await asyncio.sleep(0.01)
+                started.set()
+
+        await app({"type": "lifespan"}, receive, send)
+
+    asyncio.run(start())
+    assert provider["calls"] == 1  # Before any request arrived.
+
+
 def test_one_identity_cannot_take_every_place(provider, setup):
     issuer, holder, *_ = setup
     application = OAuthWarrantIssuerApp(issuer, max_concurrent=8, max_per_identity=1)
@@ -1048,6 +1184,24 @@ def test_token_exchange_requests_are_read_strictly(provider, setup, app, fields,
     assert audits == []
 
 
+def test_token_exchange_with_an_authorization_header_needs_the_same_token_in_both(provider, setup, app):
+    """Through a gateway the request carries a bearer header too. It is never accepted and then ignored."""
+    _, holder, *_ = setup
+    token = provider["token"]()
+    for header in (
+        f"Bearer {provider['token'](sub='bob')}",  # Another valid token.
+        "Bearer aaaa.bbbb.cccc",
+        "Basic dXNlcjpwYXNz",
+        "Bearer",
+    ):
+        status, _, reply, _ = call_app(app, headers=[("Authorization", header), *FORM], body=exchange(token, holder))
+        assert (status, reply["error"]) == (400, "invalid_request"), reply
+    status, _, reply, _ = call_app(
+        app, headers=[("Authorization", f"Bearer {token}"), *FORM], body=exchange(token, holder)
+    )
+    assert status == 200 and reply["access_token"]
+
+
 def test_token_exchange_duplicate_fields_and_bad_encoding(provider, setup, app):
     _, holder, *_ = setup
     body = exchange(provider["token"](), holder)
@@ -1138,6 +1292,9 @@ def test_client_and_endpoint_over_http(provider, setup, app):
         for bad in ("http://issuer.example/warrants", "https://127.0.0.1:99999/warrants", "ftp://127.0.0.1/warrants"):
             with pytest.raises(OAuthError):  # Every failure of the client is this one type.
                 request_warrant_oauth(bad, token=token, task_id="t1", **options)
+        for changed in ({"task_id": "\ud800"}, {"token": "\ud800"}, {"audience": "\ud800"}):
+            with pytest.raises(OAuthError):  # Text that cannot be signed.
+                request_warrant_oauth(url, **{"token": token, "task_id": "t1", **options, **changed})
     finally:
         server.should_exit = True
         thread.join(timeout=10)

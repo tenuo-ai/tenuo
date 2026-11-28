@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hmac
 import http.client
 import json
 import logging
@@ -235,6 +236,9 @@ class _IssuerApp:
         work.add_done_callback(checked)
         return await asyncio.shield(work)
 
+    def _started(self) -> None:
+        """Called when the server starts the application (ASGI lifespan). Must not block."""
+
     def _limit_key(self, credential: Any) -> Optional[str]:
         """The caller to count requests against, when it is already known from the credential."""
         return None
@@ -274,6 +278,7 @@ class _IssuerApp:
                         # Work the earlier run left behind may never report back (its event
                         # loop is gone), so this run counts its requests afresh.
                         self._pool, self._places, self._closed = self._new_pool(), _Places(), False
+                    self._started()
                     await send({"type": "lifespan.startup.complete"})
                 elif message["type"] == "lifespan.shutdown":
                     self.close()
@@ -323,7 +328,7 @@ class _IssuerApp:
         if scope.get("method") != "POST":
             raise _Refusal(405, "method_not_allowed", "Use POST")
         if self._is_exchange(scope):
-            return await self._exchange(receive)
+            return await self._exchange(scope, receive)
         credential = await self._checked(self._credential(scope))
         slot = self._admit(credential)
         try:
@@ -417,7 +422,22 @@ class _IssuerApp:
         """The credential for a token that arrived in the body, in the form ``_credential`` returns."""
         raise NotImplementedError
 
-    async def _exchange(self, receive: _Receive) -> Warrant:
+    @staticmethod
+    def _same_token(scope: _Scope, token: str) -> None:
+        """Refuse a token-exchange request whose Authorization header is not its subject token.
+
+        The request names its token in the body. Through a gateway that checks
+        a bearer token it carries that header as well, and then the two must
+        be one token: a header is never accepted and then ignored.
+        """
+        values = [value for name, value in scope.get("headers", ()) if name.lower() == b"authorization"]
+        if not values:
+            return
+        scheme, _, value = (values[0] if len(values) == 1 else b"").partition(b" ")
+        if scheme.lower() != b"bearer" or not hmac.compare_digest(value.strip(), token.encode("utf-8")):
+            raise _Refusal(400, "invalid_request", "The Authorization header does not carry the subject token")
+
+    async def _exchange(self, scope: _Scope, receive: _Receive) -> Warrant:
         """One RFC 8693 request: the token is in the body, so the body is read before the caller is known.
 
         Only a share of the places is open to such requests, so callers who
@@ -451,6 +471,7 @@ class _IssuerApp:
         except (ValueError, TypeError, RecursionError, UnicodeError):
             raise _Refusal(400, "invalid_request", "Malformed token-exchange request") from None
         holder, task_id, proof = self._holder_and_proof(detail)
+        self._same_token(scope, request["subject_token"])
         credential = await self._checked(self._exchange_credential(request["subject_token"]))
         slot = self._admit(credential)
         try:

@@ -113,7 +113,9 @@ def _json(raw: Any) -> Any:
 
 
 def _text(value: Any, name: str, maximum: int = 1024) -> str:
-    if not isinstance(value, str) or not value or len(value) > maximum or any(ord(c) < 32 for c in value):
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise OAuthError(f"Invalid {name}")
+    if any(ord(c) < 32 or 0xD800 <= ord(c) <= 0xDFFF for c in value):  # Control characters and lone surrogates.
         raise OAuthError(f"Invalid {name}")
     return value
 
@@ -226,11 +228,16 @@ class OAuthTokens:
 
     Signing keys come from ``trust.jwks_url``, which is configuration and is
     never read from a token. A fetched key set replaces the one before it.
-    Keys are used for ``cache_seconds`` after a successful fetch; past that,
-    with the provider unreachable, tokens are refused. A token signed by a
-    key not yet known sends one caller to fetch, at most every
-    ``refresh_interval`` seconds, and never holds up tokens signed by keys
-    already known. No discovery, no redirects, no environment proxies.
+    Keys are used for ``cache_seconds`` after a successful fetch and fetched
+    again in the background from half that age; past ``cache_seconds``, with
+    the provider unreachable, tokens are refused.
+
+    A token signed by a known key is never held up by a fetch. A token that
+    needs one (a key ID not yet known, or no usable keys at all) sends its own
+    caller to fetch, one at a time and at most every ``refresh_interval``
+    seconds. Nobody waits for someone else's fetch: while one is under way,
+    or after one failed, such a token is answered "unavailable" at once, to be
+    tried again. No discovery, no redirects, no environment proxies.
     """
 
     def __init__(
@@ -261,9 +268,10 @@ class OAuthTokens:
         self._timeout, self._ca_file = _seconds("timeout", timeout), ca_file
         self._keys: Dict[str, Tuple[str, Any]] = {}
         self._loaded = self._attempted = float("-inf")
-        self._fetching = False
+        self._under_way = 0  # Fetches in progress, from any caller.
+        self._failed = False  # Whether the latest fetch to finish failed.
         self._begun = self._in_use = 0  # Fetches begun, and which of them the keys in use came from.
-        self._lock = threading.Condition()
+        self._lock = threading.Lock()
 
     def close(self) -> None:
         """Nothing is held open between fetches. Kept so callers can treat every source alike."""
@@ -279,14 +287,19 @@ class OAuthTokens:
             connection = http.client.HTTPSConnection(host, port, timeout=self._timeout, context=context)
         else:
             connection = http.client.HTTPConnection(host, port, timeout=self._timeout)
+        # The socket timeout bounds each read, not their sum, so a timer cuts off a
+        # provider that sends a little at a time. It holds the socket itself (the
+        # connection lets go of it once a reply says it will close), and shares a
+        # lock with the code that closes it, so it never acts on a closed socket.
+        ending = threading.Lock()
+        held: Dict[str, Any] = {"socket": None, "over": False}
 
         def give_up() -> None:
-            # The socket timeout bounds each read, not their sum: a provider that
-            # sends a little at a time is cut off here.
-            connected = connection.sock
-            if connected is not None:
+            with ending:
+                if held["over"] or held["socket"] is None:
+                    return
                 try:
-                    socket.socket.shutdown(connected, socket.SHUT_RDWR)
+                    socket.socket.shutdown(held["socket"], socket.SHUT_RDWR)
                 except OSError:
                     pass
 
@@ -296,6 +309,8 @@ class OAuthTokens:
         response: Optional[http.client.HTTPResponse] = None
         try:
             connection.connect()
+            with ending:
+                held["socket"] = connection.sock
             if time.monotonic() > deadline:
                 raise ValueError("Key endpoint too slow")
             connection.request("GET", path, headers={"Accept": "application/json"})
@@ -310,20 +325,26 @@ class OAuthTokens:
                 raw.extend(chunk)
                 if len(raw) > _MAX_JSON or time.monotonic() > deadline:
                     raise ValueError("Key set too large or too slow")
+            if time.monotonic() > deadline:
+                raise ValueError("Key endpoint too slow")
         finally:
             timer.cancel()
-            if response is not None:
-                response.close()  # Otherwise a refused answer keeps the socket until it is collected.
-            connection.close()
+            with ending:
+                held["over"] = True
+                if response is not None:
+                    response.close()  # Otherwise a refused answer keeps the socket until it is collected.
+                connection.close()
         entries = _json(bytes(raw))["keys"]
         if not isinstance(entries, list) or len(entries) > 100 or any(not isinstance(e, dict) for e in entries):
             raise ValueError("Invalid keys")
         keys: Dict[str, Tuple[str, Any]] = {}
         seen = set()
         for entry in entries:
-            # Two things refuse the whole set: one key ID twice, and private key
-            # material. An entry this adapter has no use for is passed over, and
-            # a token signed by it is simply not accepted.
+            # Two things refuse the whole set, whatever else the entry says: private
+            # key material, and one key ID twice. An entry this adapter has no use
+            # for is passed over, and a token signed by it is simply not accepted.
+            if any(name in entry for name in ("d", "p", "q", "k")):
+                raise ValueError("Private or symmetric key")
             kid = entry.get("kid")
             if isinstance(kid, str):
                 if kid in seen:
@@ -331,8 +352,6 @@ class OAuthTokens:
                 seen.add(kid)
             if entry.get("use", "sig") != "sig" or entry.get("key_ops", ["verify"]) != ["verify"]:
                 continue
-            if any(name in entry for name in ("d", "p", "q", "k")):
-                raise ValueError("Private or symmetric key")
             algorithm = entry.get("alg") or {"RSA": "RS256", "EC": "ES256"}.get(entry.get("kty"))
             if algorithm not in ("RS256", "ES256") or not isinstance(kid, str) or not kid or len(kid) > 1024:
                 continue
@@ -350,57 +369,69 @@ class OAuthTokens:
         return keys
 
     def _begin(self) -> int:
-        """Number a fetch that is about to start. Call with the lock held."""
+        """Count and number a fetch that is about to start. Call with the lock held."""
         self._begun += 1
+        self._under_way += 1
         self._attempted = time.monotonic()
         return self._begun
 
-    def _use(self, keys: Dict[str, Tuple[str, Any]], number: int) -> None:
-        """Put a fetched key set to use, unless one fetched later is already in use. Call with the lock held."""
-        if number > self._in_use:
-            self._keys, self._loaded, self._in_use = keys, time.monotonic(), number
-
-    def refresh(self) -> None:
-        """Fetch the keys now, for example right after the provider withdrew one."""
-        with self._lock:
-            number = self._begin()
+    def _run(self, number: int) -> Optional[BaseException]:
+        """Carry out fetch ``number`` and record how it went. Returns what went wrong, or None."""
+        keys: Dict[str, Tuple[str, Any]] = {}
+        failure: Optional[BaseException] = OAuthUnavailable("The key fetch was interrupted")
         try:
             keys = self._fetch()
+            failure = None
         except Exception as exc:
-            raise OAuthUnavailable("OAuth signing keys unavailable") from exc
+            failure = exc
+        finally:  # Whatever ended it, an interruption included, the fetch is over.
+            with self._lock:
+                self._under_way -= 1
+                if (
+                    failure is None and number > self._in_use
+                ):  # A set fetched later is never replaced by an earlier one.
+                    self._keys, self._loaded, self._in_use = keys, time.monotonic(), number
+                if number >= self._in_use:
+                    if failure is not None and not self._failed:
+                        logger.warning("Could not fetch signing keys from %s: %r", self.trust.jwks_url, failure)
+                    self._failed = failure is not None
+        return failure
+
+    def refresh(self) -> None:
+        """Fetch the keys now, for example at start-up or right after the provider withdrew one."""
         with self._lock:
-            self._use(keys, number)
-            self._lock.notify_all()
+            number = self._begin()
+        failure = self._run(number)
+        if failure is not None:
+            raise OAuthUnavailable("OAuth signing keys unavailable") from failure
 
     def _key(self, kid: str) -> Tuple[str, Any]:
-        failure: Optional[BaseException] = None
-        number, keys = 0, {}
         with self._lock:
-            if self._fetching and time.monotonic() - self._loaded >= self._cache_seconds:
-                # No keys to judge any token by, and a fetch is under way: wait for it rather than refuse.
-                self._lock.wait_for(lambda: not self._fetching, self._timeout + 1)
             now = time.monotonic()
-            if now - self._loaded < self._cache_seconds and kid in self._keys:
+            age = now - self._loaded
+            usable = age < self._cache_seconds
+            due = self._under_way == 0 and now - self._attempted >= self._refresh_interval
+            if usable and kid in self._keys:
+                if due and age >= self._cache_seconds / 2:
+                    # Fetch again well before the keys age out, without holding anyone up.
+                    number = self._begin()
+                    try:
+                        threading.Thread(target=self._run, args=(number,), daemon=True, name="tenuo-oauth-keys").start()
+                    except RuntimeError:  # No thread to be had: the next caller will try.
+                        self._under_way -= 1
                 return self._keys[kid]
-            fetch = not self._fetching and now - self._attempted >= self._refresh_interval
-            if fetch:
-                self._fetching, number = True, self._begin()
-        if fetch:  # One caller at a time, and never while holding the lock.
-            try:
-                keys = self._fetch()
-            except Exception as exc:
-                failure = exc
-            with self._lock:
-                if failure is None:
-                    self._use(keys, number)
-                self._fetching = False
-                self._lock.notify_all()
+            if not due:
+                if not usable or self._under_way or self._failed:
+                    # No keys to judge by, or a key that may be new and has not been fetched yet.
+                    raise OAuthUnavailable("OAuth signing keys unavailable")
+                raise OAuthError("Invalid OAuth access token")
+            number = self._begin()
+        failure = self._run(number)  # This caller only, and never while holding the lock.
         with self._lock:
-            if time.monotonic() - self._loaded >= self._cache_seconds:
-                raise OAuthUnavailable("OAuth signing keys unavailable") from failure
-            if kid in self._keys:
+            if time.monotonic() - self._loaded < self._cache_seconds and kid in self._keys:
                 return self._keys[kid]
-            if failure is not None:  # The key may be a new one that could not be fetched.
+            if failure is not None or number != self._in_use:
+                # The fetch failed, or another one overtook it: this token cannot be judged yet.
                 raise OAuthUnavailable("OAuth signing keys unavailable") from failure
             raise OAuthError("Invalid OAuth access token")
 
@@ -818,6 +849,18 @@ class OAuthWarrantIssuerApp(_IssuerApp):
         super().__init__(issuer, **options)
         self._issuer: OAuthWarrantIssuer = issuer
         self._max_per_key = max_per_identity
+
+    def _started(self) -> None:
+        """Fetch each provider's keys as the server starts, so the first callers need not."""
+
+        def warm() -> None:
+            for source in self._issuer.credentials:
+                try:
+                    source.refresh()
+                except OAuthError:
+                    pass  # Logged where it failed. The first caller that needs the keys tries again.
+
+        threading.Thread(target=warm, daemon=True, name="tenuo-oauth-keys").start()
 
     def _credential(self, scope: Mapping[str, Any]) -> str:
         headers = scope.get("headers", ())
