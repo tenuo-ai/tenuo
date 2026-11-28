@@ -25,7 +25,7 @@ Runtime Validation (_check_constraint):
 - Subpath: tenuo_core.Subpath.contains() - Rust path normalization & containment
 - UrlSafe: tenuo_core.UrlSafe.is_safe() - Rust URL parsing & SSRF protection
 - Pattern: tenuo_core.Pattern.matches() - Rust glob matching (NO Python fallback)
-- Shlex: tenuo.constraints.Shlex.matches() - Python only (shell parsing)
+- Shlex: tenuo_core.Shlex.matches() - Rust POSIX tokenization
 
 Attenuation Validation (_constraint_is_narrower):
 All constraints with validate_attenuation() use Rust core:
@@ -36,14 +36,12 @@ All constraints with validate_attenuation() use Rust core:
 - Cidr: tenuo_core.Cidr.validate_attenuation() - checks subnet containment
 - OneOf/NotOneOf: tenuo_core validate_attenuation() - checks value sets
 - All/Contains/Subset: tenuo_core validate_attenuation() - checks constraint sets
-- Shlex: Python set comparison on allowed_bins (no Rust implementation)
+- Shlex: tenuo_core.Shlex.validate_attenuation() - child allowlist must be a subset
 
 SECURITY: All checks fail-closed. If tenuo_core is not available for a constraint
 type that requires it, validation fails rather than falling back to Python.
 
-The only Python-native constraint is Shlex, which uses Python's shlex module
-for shell parsing. This is intentional - shell syntax parsing is complex and
-the Rust core doesn't implement it.
+Shlex tokenization lives in the Rust core, the same check the other SDKs run.
 """
 
 from __future__ import annotations
@@ -299,6 +297,18 @@ ReplayCache = InMemoryReplayBackend
 # =============================================================================
 
 
+def _is_constraint_class_marker(constraint: Any) -> bool:
+    """True for an uninstantiated constraint class such as ``Subpath``.
+
+    Plain Python types (``str``, ``int``) are not markers: they are real
+    isinstance checks. Constraint classes are recognised by the same duck-typed
+    methods ``A2AServer._check_constraint`` dispatches on.
+    """
+    return isinstance(constraint, type) and any(
+        hasattr(constraint, m) for m in ("contains", "is_safe", "matches", "matches_url", "allows")
+    )
+
+
 class SkillDefinition:
     """Internal representation of a registered skill."""
 
@@ -329,7 +339,8 @@ class SkillDefinition:
 
         constraint_infos = {}
         for key, constraint in self.constraints.items():
-            type_name = type(constraint).__name__
+            # A plain type such as ``str`` advertises its own name.
+            type_name = constraint.__name__ if isinstance(constraint, type) else type(constraint).__name__
             constraint_infos[key] = ConstraintInfo(type=type_name, required=True)
 
         return SkillInfo(
@@ -481,7 +492,7 @@ class A2AServerBuilder:
         return self
 
     def require_audience(self, enabled: bool = True) -> "A2AServerBuilder":
-        """Require aud claim matches our URL (default: True via env)."""
+        """Require aud claim matches our URL (default: False, env: TENUO_A2A_REQUIRE_AUDIENCE)."""
         self._require_audience = enabled
         return self
 
@@ -704,7 +715,9 @@ class A2AServer:
                 (accepts PublicKey objects, multibase strings, or DIDs)
             trust_delegated: Accept warrants attenuated from trusted issuers
             require_warrant: Reject tasks without warrant (env: TENUO_A2A_REQUIRE_WARRANT)
-            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE)
+            require_audience: Require aud claim matches our URL (env: TENUO_A2A_REQUIRE_AUDIENCE).
+                Default False: tenuo-core warrants carry no audience claim, so enabling
+                this rejects them unless the warrant object exposes ``aud``/``audience``.
             require_pop: Require Proof-of-Possession signature (env: TENUO_A2A_REQUIRE_POP)
             check_replay: Enforce jti uniqueness (env: TENUO_A2A_CHECK_REPLAY)
             replay_window: Seconds to remember jti values (env: TENUO_A2A_REPLAY_WINDOW)
@@ -739,7 +752,7 @@ class A2AServer:
         # Apply environment variable defaults
         # Explicit args take precedence over env vars
         self.require_warrant = self._get_bool_config(require_warrant, "TENUO_A2A_REQUIRE_WARRANT", default=True)
-        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=True)
+        self.require_audience = self._get_bool_config(require_audience, "TENUO_A2A_REQUIRE_AUDIENCE", default=False)
         self.require_pop = self._get_bool_config(require_pop, "TENUO_A2A_REQUIRE_POP", default=True)
         self.check_replay = self._get_bool_config(check_replay, "TENUO_A2A_CHECK_REPLAY", default=True)
         self.replay_window = self._get_int_config(replay_window, "TENUO_A2A_REPLAY_WINDOW", default=3600)
@@ -966,19 +979,21 @@ class A2AServer:
             # Handle multibase (z = base58btc for Ed25519)
             if key.startswith("z"):
                 try:
-                    import base58  # type: ignore[import-not-found]
-
-                    # Strip multibase prefix and decode
-                    decoded = base58.b58decode(key[1:])
-                    # Ed25519 multicodec prefix is 0xed01 (2 bytes)
-                    if len(decoded) > 2 and decoded[:2] == b"\xed\x01":
-                        return decoded[2:].hex()
-                    return decoded.hex()
-                except ImportError:
-                    # base58 not installed - return as-is
-                    logger.debug("base58 not installed, cannot normalize multibase key")
-                    return key
-                except Exception:
+                    encoded = key[1:]
+                    if not encoded or len(encoded) > 64:
+                        raise ValueError("Invalid Ed25519 multibase key length")
+                    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+                    number = 0
+                    for character in encoded:
+                        number = number * 58 + alphabet.index(character)
+                    decoded = (
+                        b"\x00" * (len(encoded) - len(encoded.lstrip("1")))
+                        + number.to_bytes((number.bit_length() + 7) // 8, "big")
+                    )
+                    if len(decoded) != 34 or decoded[:2] != b"\xed\x01":
+                        raise ValueError("Expected an Ed25519 multicodec public key")
+                    return decoded[2:].hex()
+                except ValueError:
                     # Decoding failed - return as-is
                     return key
 
@@ -1008,15 +1023,26 @@ class A2AServer:
 
         Args:
             skill_id: Unique identifier for this skill
-            constraints: Map of parameter names to constraint types
+            constraints: Map of parameter names to constraint instances, enforced
+                on every call in addition to the warrant. A bare constraint class
+                (``Subpath`` rather than ``Subpath("/data")``) has no bounds and
+                raises ``TypeError``.
             name: Display name (defaults to skill_id)
 
         Example:
-            @server.skill("read_file", constraints={"path": Subpath})
+            @server.skill("read_file", constraints={"path": Subpath("/data")})
             async def read_file(path: str) -> str:
                 ...
         """
         constraints = constraints or {}
+
+        for param, constraint in constraints.items():
+            if _is_constraint_class_marker(constraint):
+                cls = constraint.__name__
+                raise TypeError(
+                    f"Skill '{skill_id}': constraint for '{param}' is the class {cls}, which has "
+                    f"no bounds. Pass an instance such as {cls}(...)."
+                )
 
         def decorator(func: Callable) -> Callable:
             # Register skill
@@ -1085,7 +1111,7 @@ class A2AServer:
             arguments: Skill arguments to check against constraints
             warrant_chain: Optional semicolon-separated parent warrants (legacy)
             _preloaded_parents: Already-decoded parent warrants from a WarrantStack
-                (takes precedence over ``warrant_chain`` when provided)
+                (nonempty parents take precedence over ``warrant_chain``)
             pop_signature: Optional Proof-of-Possession signature bytes
             approvals: Optional list of decoded SignedApproval objects for multi-sig
 
@@ -1095,6 +1121,9 @@ class A2AServer:
         Raises:
             Various A2AErrors for validation failures
         """
+        from tenuo.consumption import _set_current_idempotency_key
+
+        _set_current_idempotency_key(None)
         start_time = time.time()
 
         # Size guard — reject oversized tokens before any parsing cost
@@ -1162,19 +1191,32 @@ class A2AServer:
         # when the leaf's issuer is a delegated agent (not a direct trusted root).
         _resolved_chain_parents: Optional[List[Any]] = None
 
-        if issuer_normalized and issuer_normalized not in self.trusted_issuers:
-            if _preloaded_parents is not None and len(_preloaded_parents) > 0:
-                # WarrantStack path: parents already decoded by the HTTP handler.
-                # Verify chain structure now; PoP (if required) is done below
-                # via check_chain so the full chain is validated atomically.
-                if not self.require_pop:
-                    await self._validate_chain_warrants(warrant, _preloaded_parents)
-                _resolved_chain_parents = _preloaded_parents
-            elif self.trust_delegated and warrant_chain:
-                # Legacy path: semicolon-separated header.
-                _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
-            else:
-                raise UntrustedIssuerError(issuer_normalized)
+        # A supplied chain is part of the presented authority even when the
+        # leaf issuer is independently trusted. Never silently discard it.
+        if _preloaded_parents:
+            if not self.trust_delegated:
+                raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
+            if len(_preloaded_parents) > self.max_chain_depth:
+                raise ChainValidationError(
+                    f"Chain depth {len(_preloaded_parents)} exceeds maximum {self.max_chain_depth}"
+                )
+            if not self.require_pop:
+                await self._validate_chain_warrants(warrant, _preloaded_parents)
+            _resolved_chain_parents = _preloaded_parents
+        elif warrant_chain:
+            if not self.trust_delegated:
+                raise UntrustedIssuerError(issuer_normalized or "", reason="Delegated chains are disabled")
+            _resolved_chain_parents = await self._validate_chain(warrant, warrant_chain)
+
+        if issuer_normalized not in self.trusted_issuers and not _resolved_chain_parents:
+            raise UntrustedIssuerError(issuer_normalized or "")
+
+        # A revoked key anywhere in the chain revokes everything issued under it.
+        for parent in _resolved_chain_parents or []:
+            parent_issuer = self._get_warrant_prop(parent, "iss", "issuer")
+            parent_issuer_normalized = self._normalize_key(parent_issuer) if parent_issuer else None
+            if parent_issuer_normalized and parent_issuer_normalized in self._revoked_issuers:
+                raise RevokedError(f"Issuer key '{parent_issuer_normalized}' is revoked")
 
         # Check audience (SECURITY: must be present AND match when required)
         if self.require_audience:
@@ -1188,12 +1230,12 @@ class A2AServer:
         # Extract JTI once — reused for replay check and audit event
         jti = self._get_warrant_prop(warrant, "jti", "id")
 
-        # Check replay
-        if self.check_replay:
-            if jti:
-                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
-                if not is_new:
-                    raise ReplayDetectedError(jti)
+        # Set when the shared PEP allowed the call. Its receipt is collected only
+        # after the A2A-local gates below pass, so a later local denial never
+        # leaves a signed allow behind.
+        enforcement = None
+        runtime = None
+        nonce_reservation = None
 
         # Verify Proof-of-Possession (I6)
         if self.require_pop:
@@ -1201,7 +1243,8 @@ class A2AServer:
                 raise PopRequiredError()
 
             # Shared inbound PEP — same Authorizer + receipt path as MCP/FastAPI.
-            from tenuo._enforcement import verify_inbound_call
+            from tenuo._enforcement import EnforcementResult, verify_inbound_call
+            from tenuo.receipts import collect_enforcement_receipt
             from tenuo.runtime import bind_runtime, get_runtime
 
             runtime = self._runtime or get_runtime()
@@ -1216,15 +1259,10 @@ class A2AServer:
                         warrant_chain=_resolved_chain_parents or [],
                         approvals=approvals,
                     )
-                    from tenuo.receipts import collect_enforcement_receipt
-                    collect_enforcement_receipt(
-                        enforcement,
-                        getattr(enforcement, "chain_result", None),
-                        runtime=runtime,
-                    )
                 if enforcement.allowed:
                     logger.debug(f"PoP verified for skill '{skill_id}'")
                 else:
+                    collect_enforcement_receipt(enforcement, None, runtime=runtime)
                     _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
             except (
                 ApprovalRequiredError,
@@ -1312,15 +1350,50 @@ class A2AServer:
                 if skill_id not in granted_skills:
                     raise SkillNotGrantedError(skill_id, granted_skills)
 
-            # Always check server-level constraints (declared on SkillDefinition).
-            # These represent the skill's own input requirements and are NOT encoded
-            # in the warrant — why_denied() cannot see them.
+        try:
+            # Always check server-level constraints (declared on SkillDefinition),
+            # regardless of require_pop. These represent the skill's own input
+            # requirements and are NOT encoded in the warrant, so neither
+            # why_denied() nor the Authorizer above can see them.
             skill_def = self._skills.get(skill_id)
             if skill_def:
                 for param, server_constraint in skill_def.constraints.items():
                     if param in arguments:
                         value = arguments[param]
-                        if not self._check_constraint(server_constraint, value, param):
+                        try:
+                            constraint_satisfied = self._check_constraint(server_constraint, value, param)
+                        except Exception as exc:
+                            # Core constraints use ValidationError for malformed input
+                            # (for example, a non-IP value passed to Cidr). That is an
+                            # authorization denial, not an adapter failure. Keep
+                            # configuration/programming errors such as
+                            # UnknownConstraintError distinct and fail closed.
+                            from tenuo.exceptions import ValidationError as _ValidationError
+
+                            if not isinstance(exc, _ValidationError):
+                                raise
+                            constraint_satisfied = False
+                        if not constraint_satisfied:
+                            if enforcement is not None:
+                                # The Authorizer allowed the call, so its receipt was
+                                # held back; record this refusal instead.
+                                collect_enforcement_receipt(
+                                    EnforcementResult(
+                                        allowed=False,
+                                        tool=skill_id,
+                                        arguments=arguments,
+                                        denial_reason="Value does not satisfy server constraint",
+                                        constraint_violated=param,
+                                        error_type="constraint_violation",
+                                        warrant_id=enforcement.warrant_id,
+                                        authorizer=enforcement.authorizer,
+                                        presented_chain=[*(_resolved_chain_parents or []), warrant],
+                                        verified_pop=pop_signature,
+                                        pop_auth_args=arguments,
+                                    ),
+                                    None,
+                                    runtime=runtime,
+                                )
                             raise ConstraintViolationError(
                                 param=param,
                                 constraint_type=type(server_constraint).__name__,
@@ -1328,36 +1401,105 @@ class A2AServer:
                                 reason="Value does not satisfy server constraint",
                             )
 
-        # Log audit event
-        latency_ms = int((time.time() - start_time) * 1000)
-        await self._audit(
-            AuditEvent(
-                timestamp=datetime.now(timezone.utc),
-                event=AuditEventType.WARRANT_VALIDATED,
-                task_id="",
-                skill=skill_id,
-                warrant_jti=jti or "",
-                warrant_iss=issuer_normalized or "",
-                warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
-                outcome="allowed",
-                latency_ms=latency_ms,
+            # Check replay last, so only a request that passed every other gate
+            # (proof-of-possession included) can mark the warrant as used.
+            if self.require_pop and pop_signature is not None and enforcement is not None and not enforcement.observed:
+                from tenuo.nonce import _validate_retention, get_default_nonce_store
+
+                nonce_store = get_default_nonce_store()
+                if nonce_store is not None:
+                    validity = _validate_retention(nonce_store, self._authorizer)
+                    nonce_reservation = nonce_store.reserve(pop_signature, min_ttl_seconds=validity)
+                if nonce_store is not None and nonce_reservation is None:
+                    from dataclasses import replace
+                    from tenuo._enforcement import _apply_observe_mode
+
+                    if enforcement.approval_reservation is not None:
+                        enforcement.approval_reservation.release()
+                    _set_current_idempotency_key(None)
+                    enforcement = _apply_observe_mode(replace(
+                        enforcement, allowed=False, denial_reason="PoP replay detected",
+                        error_type="invalid_pop", chain_result=None,
+                        approval_reservation=None, idempotency_key=None,
+                        presented_chain=[*(_resolved_chain_parents or []), warrant],
+                        verified_pop=pop_signature, pop_auth_args=arguments,
+                    ))
+            if self.check_replay and jti and (enforcement is None or (enforcement.allowed and not enforcement.observed)):
+                is_new = await self._replay_cache.check_and_add(jti, self.replay_window)
+                if not is_new:
+                    raise ReplayDetectedError(jti)
+
+            # Record the final outcome after both local policy and nonce checks.
+            if enforcement is not None:
+                collect_enforcement_receipt(enforcement, enforcement.chain_result, runtime=runtime)
+
+            # Log audit event
+            latency_ms = int((time.time() - start_time) * 1000)
+            denied = bool(enforcement is not None and (not enforcement.allowed or enforcement.observed))
+            await self._audit(
+                AuditEvent(
+                    timestamp=datetime.now(timezone.utc),
+                    event=(
+                        AuditEventType.WARRANT_REJECTED
+                        if denied
+                        else AuditEventType.WARRANT_VALIDATED
+                    ),
+                    task_id="",
+                    skill=skill_id,
+                    warrant_jti=jti or "",
+                    warrant_iss=issuer_normalized or "",
+                    warrant_sub=self._normalize_key(self._get_warrant_prop(warrant, "sub", "subject")) or "",
+                    outcome="denied" if denied else "allowed",
+                    latency_ms=latency_ms,
+                    reason=(
+                        enforcement.denial_reason
+                        if denied and enforcement is not None
+                        else None
+                    ),
+                )
             )
-        )
 
-        if self._control_plane is not None:
-            try:
-                from tenuo._enforcement import EnforcementResult
-                _res = EnforcementResult(
-                    allowed=True, tool=skill_id, arguments=arguments,
-                    warrant_id=jti or "",
-                )
-                self._control_plane.emit_for_enforcement(
-                    _res, latency_us=latency_ms * 1000,
-                )
-            except Exception:
-                logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
+            control_plane_emitted = False
+            if self._control_plane is not None:
+                try:
+                    from tenuo._enforcement import EnforcementResult
+                    _res = enforcement or EnforcementResult(
+                        allowed=True, tool=skill_id, arguments=arguments,
+                        warrant_id=jti or "",
+                    )
+                    self._control_plane.emit_for_enforcement(
+                        _res,
+                        chain_result=getattr(_res, "chain_result", None),
+                        latency_us=latency_ms * 1000,
+                    )
+                    control_plane_emitted = True
+                except Exception:
+                    logger.warning("Control plane emission failed for '%s'; audit event lost", skill_id, exc_info=True)
 
-        return warrant
+            if enforcement is not None and not enforcement.allowed:
+                try:
+                    _raise_a2a_from_enforcement(enforcement, skill_id, arguments)
+                except A2AError as error:
+                    error._control_plane_emitted = control_plane_emitted
+                    error._enforcement_result = enforcement
+                    raise
+            if nonce_reservation is not None:
+                nonce_reservation.commit()
+            return warrant
+        except BaseException:
+            if nonce_reservation is not None:
+                try:
+                    nonce_reservation.release()
+                except Exception:
+                    logger.exception("Failed to release nonce after A2A admission failure")
+            _set_current_idempotency_key(None)
+            reservation = getattr(enforcement, "approval_reservation", None)
+            if reservation is not None:
+                try:
+                    reservation.release()
+                except Exception:
+                    logger.exception("Failed to release approvals after A2A denial")
+            raise
 
     async def _validate_chain_warrants(
         self,
@@ -1622,7 +1764,7 @@ class A2AServer:
 
         # PREFERRED: Use tenuo_core's validate_attenuation() method (Rust)
         # This is available for: Subpath, UrlSafe, Pattern, Range, Cidr, OneOf,
-        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL
+        # NotOneOf, Contains, Subset, All, Regex, UrlPattern, CEL, Shlex
         if hasattr(parent, "validate_attenuation"):
             try:
                 parent.validate_attenuation(child)
@@ -1631,8 +1773,7 @@ class A2AServer:
                 logger.warning(f"Attenuation violation: field='{field}' - {e}")
                 return False
 
-        # Shlex: Python-only constraint (no Rust implementation)
-        # Uses allowed_bins attribute for attenuation check
+        # Allowlist fallback for a constraint object with no validate_attenuation.
         if hasattr(parent, "matches") and hasattr(parent, "allowed_bins"):
             try:
                 parent_exec = set(getattr(parent, "allowed_bins", []))
@@ -1670,9 +1811,9 @@ class A2AServer:
           - Pattern.matches()      -> Rust core
           - Shlex.matches()        -> Rust core
           - Range.contains()       -> Rust core
-          - Exact.matches()        -> Rust core
-          - OneOf.contains()       -> Rust core
-          - NotOneOf.allows()      -> Rust core
+          - Exact.satisfies()      -> Rust core, typed
+          - OneOf.satisfies()      -> Rust core, typed
+          - Not/NotOneOf.satisfies() -> Rust core, preserving value kinds
           - Wildcard.matches()     -> Rust core
 
         If tenuo_core changes these method names, tests in test_a2a.py will fail.
@@ -1690,6 +1831,9 @@ class A2AServer:
             UnknownConstraintError: If constraint type is not recognized
         """
         constraint_type = type(constraint).__name__
+
+        if constraint_type in {"Exact", "OneOf", "Not", "NotOneOf"} and hasattr(constraint, "satisfies"):
+            return constraint.satisfies(value)
 
         # =================================================================
         # RUST CORE METHODS - Type-aware dispatch
@@ -1713,7 +1857,7 @@ class A2AServer:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Rust core via Python shlex)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 
@@ -1728,18 +1872,6 @@ class A2AServer:
             except (ValueError, TypeError):
                 return False  # Non-numeric value fails Range check
 
-        # Exact - exact value match (Rust core)
-        if hasattr(constraint, "matches") and constraint_type == "Exact":
-            return constraint.matches(str(value))
-
-        # OneOf - set membership (Rust core)
-        if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(str(value))
-
-        # NotOneOf - exclusion list (Rust core)
-        if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(str(value))
-
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":
             return constraint.matches(str(value))
@@ -1747,6 +1879,14 @@ class A2AServer:
         # Regex - regex matching (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Regex":
             return constraint.matches(value)
+
+        # The core's common constraint protocol. This covers constraints whose
+        # specialized Python method differs from the historical A2A dispatcher,
+        # including UrlPattern and composites such as AnyOf/All/Not. Keep this
+        # after the cases above so UrlSafe's list handling and existing type
+        # coercions remain backward compatible.
+        if hasattr(constraint, "satisfies"):
+            return bool(constraint.satisfies(value))
 
         # Type constraint (e.g., str, int)
         if isinstance(constraint, type):
@@ -1811,9 +1951,9 @@ class A2AServer:
 
                 return UrlSafe(allow_domains=data.get("allow_domains"))
 
-            # Shell command validation (Python-only)
+            # Shell command validation
             elif constraint_type == "Shlex":
-                from tenuo.constraints import Shlex
+                from tenuo_core import Shlex
 
                 return Shlex(allow=data.get("allow", []))
 
@@ -1849,8 +1989,8 @@ class A2AServer:
                 values = data.get("values", [])
                 if not values:
                     raise ValueError("OneOf constraint requires non-empty 'values' list")
-                # Convert values to strings for OneOf
-                return OneOf(values=[str(v) for v in values])
+                # Values keep their JSON types; checks are typed.
+                return OneOf(values=list(values))
 
             # Exclusion list (blocklist)
             elif constraint_type == "NotOneOf":
@@ -1859,8 +1999,8 @@ class A2AServer:
                 values = data.get("values", [])
                 if not values:
                     raise ValueError("NotOneOf constraint requires non-empty 'values' list")
-                # Convert values to strings for NotOneOf
-                return NotOneOf(values=[str(v) for v in values])
+                # Values keep their JSON types; checks are typed.
+                return NotOneOf(values=list(values))
 
             # Regular expression matching
             elif constraint_type == "Regex":
@@ -2053,16 +2193,16 @@ class A2AServer:
                 )
 
             except A2AError as e:
-                if self._control_plane is not None and method in ("task/send", "task/sendSubscribe"):
+                if self._control_plane is not None and method in ("task/send", "task/sendSubscribe") and not e._control_plane_emitted:
                     try:
                         from tenuo._enforcement import EnforcementResult
                         _skill = params.get("task", {}).get("skill", "")
                         _args = params.get("task", {}).get("arguments", {})
-                        _res = EnforcementResult(
+                        _res = e._enforcement_result or EnforcementResult(
                             allowed=False, tool=_skill, arguments=_args,
                             denial_reason=str(e),
                         )
-                        self._control_plane.emit_for_enforcement(_res)
+                        self._control_plane.emit_for_enforcement(_res, chain_result=_res.chain_result)
                     except Exception:
                         logger.warning("Control plane emission failed for '%s'; audit event lost", _skill, exc_info=True)
                 return JSONResponse(
@@ -2398,8 +2538,17 @@ class A2AServer:
                 approvals=decoded_approvals,
             )
 
-        # Get warrant expiry for mid-stream checks
-        warrant_exp = getattr(warrant, "exp", None) if warrant else None
+        def warrant_expired() -> bool:
+            """Mid-stream expiry, with the same clock tolerance as admission."""
+            if warrant is None:
+                return False
+            is_expired = getattr(warrant, "is_expired", None)
+            if callable(is_expired):
+                result = is_expired()
+                if isinstance(result, bool):
+                    return result
+            exp = getattr(warrant, "exp", None)
+            return isinstance(exp, (int, float)) and time.time() > exp + 30
 
         async def event_generator():
             """Generate SSE events."""
@@ -2435,9 +2584,7 @@ class A2AServer:
                 # Check if result is async generator (streaming skill)
                 if hasattr(result, "__anext__"):
                     async for chunk in result:
-                        # Mid-stream expiry check — mirror Rust's 30 s clock skew tolerance
-                        _CLOCK_SKEW = 30
-                        if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
+                        if warrant_expired():
                             error_event = {
                                 "type": "error",
                                 "task_id": task_id,
@@ -2462,9 +2609,7 @@ class A2AServer:
 
                 # Final expiry check before completion
                 # (catches expiry during long-running non-streaming skills)
-                # Mirror Rust's CLOCK_SKEW_TOLERANCE_SECS (30 s)
-                _CLOCK_SKEW = 30
-                if warrant_exp and time.time() > warrant_exp + _CLOCK_SKEW:
+                if warrant_expired():
                     error_event = {
                         "type": "error",
                         "task_id": task_id,

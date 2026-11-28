@@ -43,7 +43,7 @@ use glob::Pattern as GlobPattern;
 use regex::Regex as RegexPattern;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 thread_local! {
     static DESERIALIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -106,9 +106,7 @@ pub mod constraint_type_id {
     // 19-127: Future standard types
 
     // Experimental / extension constraints (128-255)
-    /// Shell command safety (binary allowlist + metacharacter rejection).
-    /// Extension constraint: Rust provides conservative approximation,
-    /// Python shlex is authoritative at runtime.
+    /// Shell command safety (binary allowlist + POSIX tokenization).
     /// Wire format: `[128, { "allow": ["npm", "docker"] }]`
     pub const SHLEX: u8 = 128;
 }
@@ -207,6 +205,7 @@ pub enum Constraint {
 
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
+    /// `payload` contains the CBOR encoding of the unknown value.
     Unknown { type_id: u8, payload: Vec<u8> },
 }
 
@@ -295,8 +294,16 @@ impl Serialize for Constraint {
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
+                let mut reader = std::io::Cursor::new(payload.as_slice());
+                let value: ciborium::value::Value =
+                    ciborium::de::from_reader(&mut reader).map_err(serde::ser::Error::custom)?;
+                if reader.position() != payload.len() as u64 {
+                    return Err(serde::ser::Error::custom(
+                        "unknown constraint payload contains trailing CBOR data",
+                    ));
+                }
                 tup.serialize_element(type_id)?;
-                tup.serialize_element(&serde_bytes::Bytes::new(payload))?;
+                tup.serialize_element(&value)?;
             }
         }
 
@@ -304,7 +311,10 @@ impl Serialize for Constraint {
     }
 }
 
-// Custom Deserialize: reads [type_id, value] array format
+// Custom Deserialize: reads [type_id, value] array format.
+// Every payload struct denies unknown fields: a member this version does not know
+// may restrict the constraint, so dropping it would fail open (wire-format-v1.md,
+// "Fail closed"). Unknown type IDs still decode to `Unknown` and deny at evaluation.
 impl<'de> serde::Deserialize<'de> for Constraint {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -443,14 +453,22 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                     }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
-                        // Try to read value as raw bytes for preservation
-                        let payload: Vec<u8> = seq
-                            .next_element::<serde_bytes::ByteBuf>()?
-                            .map(|b| b.into_vec())
-                            .unwrap_or_default();
+                        // Preserve any future payload shape as encoded CBOR. This
+                        // lets older verifiers fail authorization without making
+                        // warrants containing new constraint types undecodable.
+                        let value: ciborium::value::Value = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        let mut payload = Vec::new();
+                        ciborium::ser::into_writer(&value, &mut payload)
+                            .map_err(A::Error::custom)?;
                         Constraint::Unknown { type_id, payload }
                     }
                 };
+
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(A::Error::invalid_length(3, &self));
+                }
 
                 Ok(constraint)
             }
@@ -524,6 +542,64 @@ impl Constraint {
         }
     }
 
+    /// The kinds of value this constraint can judge.
+    ///
+    /// A value of any other kind is rejected by the constraint for being the
+    /// wrong kind, not for failing the rule. `Not` and `NotOneOf` use this so
+    /// that negating a rule never admits values the rule could not judge.
+    pub(crate) fn value_kinds(&self) -> Result<ValueKinds> {
+        Ok(match self {
+            Constraint::Wildcard(_) => ValueKinds::ALL,
+            Constraint::Cel(c) => {
+                c.validate()?;
+                ValueKinds::ALL
+            }
+            Constraint::Pattern(p) => {
+                p.get_compiled()?;
+                ValueKinds::STRING
+            }
+            Constraint::Regex(r) => {
+                r.get_compiled()?;
+                ValueKinds::STRING
+            }
+            Constraint::Cidr(_)
+            | Constraint::UrlPattern(_)
+            | Constraint::Shlex(_)
+            // A list satisfies Subpath only when every item does, so the
+            // negation of a list match is not "no item is under the root".
+            | Constraint::Subpath(_) => ValueKinds::STRING,
+            Constraint::UrlSafe(u) => {
+                u.validate()?;
+                ValueKinds::STRING
+            }
+            Constraint::Range(_) => ValueKinds::NUMBER,
+            Constraint::Contains(_) | Constraint::Subset(_) => ValueKinds::LIST,
+            Constraint::Exact(e) => ValueKinds::of(&e.value),
+            Constraint::OneOf(o) => ValueKinds::of_all(&o.values),
+            Constraint::NotOneOf(n) => n.value_kinds(),
+            Constraint::All(a) => {
+                if a.constraints.is_empty() {
+                    return Err(Error::Validation(
+                        "All constraint with an empty constraints array is invalid".to_string(),
+                    ));
+                }
+                a.constraints.iter().try_fold(ValueKinds::ALL, |acc, c| {
+                    Ok::<_, Error>(acc.intersection(c.value_kinds()?))
+                })?
+            }
+            Constraint::Any(a) => a.constraints.iter().try_fold(ValueKinds::NONE, |acc, c| {
+                Ok::<_, Error>(acc.union(c.value_kinds()?))
+            })?,
+            Constraint::Not(n) => n.constraint.value_kinds()?,
+            Constraint::Unknown { type_id, .. } => {
+                return Err(Error::ConstraintNotSatisfied {
+                    field: "constraint".to_string(),
+                    reason: format!("unknown constraint type ID {}", type_id),
+                });
+            }
+        })
+    }
+
     /// Check if this constraint is satisfied by the given value.
     ///
     /// **Note**: This method does not check depth limits. Call `validate_depth()`
@@ -555,11 +631,231 @@ impl Constraint {
         }
     }
 
+    /// Absence must not bypass an unsupported predicate, including one hidden
+    /// inside a short-circuiting composite. No argument value is needed here.
+    fn validate_optional_support(&self) -> Result<()> {
+        match self {
+            Self::Unknown { type_id, .. } => Err(Error::ConstraintNotSatisfied {
+                field: "constraint".to_string(),
+                reason: format!("unknown constraint type ID {}", type_id),
+            }),
+            Self::All(a) => a
+                .constraints
+                .iter()
+                .try_for_each(Self::validate_optional_support),
+            Self::Any(a) => a
+                .constraints
+                .iter()
+                .try_for_each(Self::validate_optional_support),
+            Self::Not(n) => n.constraint.validate_optional_support(),
+            #[cfg(not(feature = "cel"))]
+            Self::Cel(_) => Err(Error::FeatureNotEnabled { feature: "cel" }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Approval gates must not turn an out-of-kind negation into a bypass.
+    pub(crate) fn has_off_kind_negation(&self, value: &ConstraintValue) -> Result<bool> {
+        Ok(match self {
+            Self::Not(n) => {
+                !n.constraint.value_kinds()?.accepts(value)
+                    || n.constraint.has_off_kind_negation(value)?
+            }
+            Self::NotOneOf(n) => !n.value_kinds().accepts(value),
+            Self::All(a) => a.constraints.iter().try_fold(false, |found, c| {
+                Ok::<_, Error>(found | c.has_off_kind_negation(value)?)
+            })?,
+            Self::Any(a) => a.constraints.iter().try_fold(false, |found, c| {
+                Ok::<_, Error>(found | c.has_off_kind_negation(value)?)
+            })?,
+            _ => false,
+        })
+    }
+
+    /// Do not let typed negation suppress a parser error in an approval gate.
+    pub(crate) fn approval_gate_matches(
+        &self,
+        value: &ConstraintValue,
+        eager: bool,
+    ) -> Result<(bool, bool)> {
+        if !eager {
+            // The caller uses ordered evaluation for positive-only gate maps.
+            // Do not inspect a branch that the matcher intentionally skips.
+            return Ok((self.matches(value)?, false));
+        }
+        self.value_kinds()?;
+        let off_kind = self.has_off_kind_negation(value)?;
+        Ok((self.matches_for_negation(value)?, off_kind))
+    }
+
+    /// Preserve every source of off-kind approval requirements across delegation.
+    pub(crate) fn preserves_gate_negations_of(&self, parent: &Constraint) -> bool {
+        self.preserves_gate_negation_nodes(parent)
+            && (!parent.has_negation() || self.preserves_negation_errors_of(parent))
+    }
+
+    pub(crate) fn preserves_gate_errors_of(&self, parent: &Constraint) -> bool {
+        self.preserves_negation_errors_of(parent)
+    }
+
+    pub(crate) fn has_fallible_gate_negation(&self) -> bool {
+        self.has_negation() && self.can_fail()
+    }
+
+    pub(crate) fn has_negation(&self) -> bool {
+        match self {
+            Self::Not(_) | Self::NotOneOf(_) => true,
+            Self::All(a) => a.constraints.iter().any(Self::has_negation),
+            Self::Any(a) => a.constraints.iter().any(Self::has_negation),
+            _ => false,
+        }
+    }
+
+    fn preserves_gate_negation_nodes(&self, parent: &Constraint) -> bool {
+        match parent {
+            Self::Not(_) | Self::NotOneOf(_) => self.contains_gate_negation(parent),
+            Self::All(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negation_nodes(c)),
+            Self::Any(a) => a
+                .constraints
+                .iter()
+                .all(|c| self.preserves_gate_negation_nodes(c)),
+            _ => true,
+        }
+    }
+
+    fn contains_gate_negation(&self, rule: &Constraint) -> bool {
+        if self == rule {
+            return true;
+        }
+        match self {
+            Self::Not(n) => n.constraint.contains_gate_negation(rule),
+            Self::All(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            Self::Any(a) => a.constraints.iter().any(|c| c.contains_gate_negation(rule)),
+            _ => false,
+        }
+    }
+
+    /// Evaluate composites under negation without hiding errors behind a
+    /// branch whose result changed due to kind-scoped negation. The caller
+    /// first validates availability and structure with `value_kinds()`.
+    fn matches_for_negation(&self, value: &ConstraintValue) -> Result<bool> {
+        match self {
+            Constraint::All(all) => {
+                let mut matched = true;
+                for clause in &all.constraints {
+                    matched &= clause.matches_for_negation(value)?;
+                }
+                Ok(matched)
+            }
+            Constraint::Any(any) => {
+                let mut matched = false;
+                for clause in &any.constraints {
+                    matched |= clause.matches_for_negation(value)?;
+                }
+                Ok(matched)
+            }
+            _ => self.matches(value),
+        }
+    }
+
+    /// Every potentially failing leaf in the parent must still run under
+    /// negation. Reversed positive attenuation only compares boolean match
+    /// sets, so it cannot prove that removing a parser preserves denials.
+    fn preserves_negation_errors_of(&self, parent: &Constraint) -> bool {
+        if !parent.can_fail() {
+            return true;
+        }
+        match parent {
+            Constraint::All(all) if all.constraints.is_empty() => {
+                self.contains_negation_leaf(parent)
+            }
+            Constraint::All(all) => all
+                .constraints
+                .iter()
+                .all(|c| self.preserves_negation_errors_of(c)),
+            Constraint::Any(any) => any
+                .constraints
+                .iter()
+                .all(|c| self.preserves_negation_errors_of(c)),
+            Constraint::Not(not) => self.preserves_negation_errors_of(&not.constraint),
+            Constraint::Wildcard(_)
+            | Constraint::Exact(_)
+            | Constraint::OneOf(_)
+            | Constraint::NotOneOf(_)
+            | Constraint::Range(_)
+            | Constraint::Contains(_)
+            | Constraint::Subset(_)
+            | Constraint::Shlex(_) => true,
+            _ => self.contains_negation_leaf(parent),
+        }
+    }
+
+    fn contains_negation_leaf(&self, leaf: &Constraint) -> bool {
+        if self == leaf {
+            return true;
+        }
+        match self {
+            Constraint::All(all) => all
+                .constraints
+                .iter()
+                .any(|c| c.contains_negation_leaf(leaf)),
+            Constraint::Any(any) => any
+                .constraints
+                .iter()
+                .any(|c| c.contains_negation_leaf(leaf)),
+            Constraint::Not(not) => not.constraint.contains_negation_leaf(leaf),
+            _ => self == leaf,
+        }
+    }
+
+    pub(crate) fn can_fail(&self) -> bool {
+        match self {
+            Constraint::Wildcard(_)
+            | Constraint::Exact(_)
+            | Constraint::OneOf(_)
+            | Constraint::NotOneOf(_)
+            | Constraint::Range(_)
+            | Constraint::Contains(_)
+            | Constraint::Subset(_)
+            | Constraint::Shlex(_)
+            | Constraint::Subpath(_) => false,
+            Constraint::Pattern(p) => p.get_compiled().is_err(),
+            Constraint::Regex(r) => r.get_compiled().is_err(),
+            Constraint::UrlSafe(u) => u.validate().is_err(),
+            Constraint::All(a) => {
+                a.constraints.is_empty() || a.constraints.iter().any(Self::can_fail)
+            }
+            Constraint::Any(a) => a.constraints.iter().any(Self::can_fail),
+            Constraint::Not(n) => n.constraint.can_fail(),
+            _ => true,
+        }
+    }
+
     /// Check if `child` is a valid attenuation of `self` (parent).
     ///
     /// Returns `Ok(())` if the child is strictly narrower or equal.
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
+        // An invalid conjunction grants no authority. The cross-type
+        // All-to-Exact proof must not succeed by iterating zero clauses.
+        if matches!(self, Constraint::All(all) if all.constraints.is_empty()) {
+            return Err(Error::MonotonicityViolation(
+                "cannot attenuate an invalid empty All constraint".to_string(),
+            ));
+        }
+        // Positive Any short-circuits. Removing or reordering a potentially
+        // failing alternative can expose a later allow that the parent never
+        // reaches, even when boolean match sets appear to narrow.
+        if let Constraint::Any(parent) = self {
+            if parent.constraints.iter().any(Constraint::can_fail) && self != child {
+                return Err(Error::MonotonicityViolation(
+                    "Any attenuation must preserve ordered alternatives that can fail".to_string(),
+                ));
+            }
+        }
         match (self, child) {
             // Wildcard can attenuate to ANYTHING (it's the universal superset)
             (Constraint::Wildcard(_), _) => Ok(()),
@@ -743,23 +1039,65 @@ impl Constraint {
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
-            // Subpath can narrow to Subpath (narrower root) or Exact
+            // Subpath can narrow to Subpath (narrower root), Subset (all paths contained), or Exact
             (Constraint::Subpath(parent), Constraint::Subpath(child)) => {
                 parent.validate_attenuation(child)
             }
+            (Constraint::Subpath(parent), Constraint::Subset(child_subset)) => {
+                for item in &child_subset.allowed {
+                    match item.as_str() {
+                        Some(path_str) => {
+                            if !parent.contains_path(path_str)? {
+                                return Err(Error::PathNotContained {
+                                    path: path_str.to_string(),
+                                    root: parent.root.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return Err(Error::IncompatibleConstraintTypes {
+                                parent_type: "Subpath".to_string(),
+                                child_type: "Subset (non-string)".to_string(),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
             (Constraint::Subpath(parent), Constraint::Exact(child_exact)) => {
-                match child_exact.value.as_str() {
-                    Some(path_str) => {
+                match &child_exact.value {
+                    ConstraintValue::String(path_str) => {
                         if parent.contains_path(path_str)? {
                             Ok(())
                         } else {
                             Err(Error::PathNotContained {
-                                path: path_str.to_string(),
+                                path: path_str.clone(),
                                 root: parent.root.clone(),
                             })
                         }
                     }
-                    None => Err(Error::IncompatibleConstraintTypes {
+                    ConstraintValue::List(items) => {
+                        for item in items {
+                            match item.as_str() {
+                                Some(path_str) => {
+                                    if !parent.contains_path(path_str)? {
+                                        return Err(Error::PathNotContained {
+                                            path: path_str.to_string(),
+                                            root: parent.root.clone(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    return Err(Error::IncompatibleConstraintTypes {
+                                        parent_type: "Subpath".to_string(),
+                                        child_type: "Exact (non-string list item)".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(Error::IncompatibleConstraintTypes {
                         parent_type: "Subpath".to_string(),
                         child_type: "Exact (non-string)".to_string(),
                     }),
@@ -857,7 +1195,13 @@ impl Constraint {
 ///
 /// Note: Object uses BTreeMap for deterministic serialization order.
 /// This ensures canonical CBOR encoding for consistent warrant IDs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Equality is numeric across `Integer` and `Float`: `Integer(1)` equals
+/// `Float(1.0)`, the same number rule the signed argument map uses. Every
+/// value-equality constraint (`Exact`, `OneOf`, `NotOneOf`, `Contains`,
+/// `Subset`) and every approval gate compares through this, so the spelling
+/// of an integral number cannot change a decision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConstraintValue {
     String(String),
@@ -867,6 +1211,79 @@ pub enum ConstraintValue {
     List(Vec<ConstraintValue>),
     Object(BTreeMap<String, ConstraintValue>),
     Null,
+}
+
+/// A set of [`ConstraintValue`] kinds. Integers and finite floats are one kind;
+/// non-finite floats have no admissible kind for negation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ValueKinds(u8);
+
+impl ValueKinds {
+    pub(crate) const NONE: Self = Self(0);
+    pub(crate) const STRING: Self = Self(1);
+    pub(crate) const NUMBER: Self = Self(1 << 1);
+    pub(crate) const BOOLEAN: Self = Self(1 << 2);
+    pub(crate) const LIST: Self = Self(1 << 3);
+    pub(crate) const OBJECT: Self = Self(1 << 4);
+    pub(crate) const NULL: Self = Self(1 << 5);
+    pub(crate) const ALL: Self = Self(0b11_1111);
+
+    pub(crate) fn of(value: &ConstraintValue) -> Self {
+        match value {
+            ConstraintValue::String(_) => Self::STRING,
+            ConstraintValue::Integer(_) => Self::NUMBER,
+            ConstraintValue::Float(number) if number.is_finite() => Self::NUMBER,
+            ConstraintValue::Float(_) => Self::NONE,
+            ConstraintValue::Boolean(_) => Self::BOOLEAN,
+            ConstraintValue::List(_) => Self::LIST,
+            ConstraintValue::Object(_) => Self::OBJECT,
+            ConstraintValue::Null => Self::NULL,
+        }
+    }
+
+    pub(crate) fn of_all(values: &[ConstraintValue]) -> Self {
+        values
+            .iter()
+            .fold(Self::NONE, |acc, v| acc.union(Self::of(v)))
+    }
+
+    pub(crate) fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub(crate) fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    pub(crate) fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Whether a value has a supported kind in this domain. NONE is a valid
+    /// empty set in subset comparisons, but must never admit an invalid value.
+    pub(crate) fn accepts(self, value: &ConstraintValue) -> bool {
+        let kind = Self::of(value);
+        kind != Self::NONE && self.contains(kind)
+    }
+}
+
+impl PartialEq for ConstraintValue {
+    fn eq(&self, other: &Self) -> bool {
+        use ConstraintValue::*;
+        match (self, other) {
+            (String(a), String(b)) => a == b,
+            (Integer(a), Integer(b)) => a == b,
+            (Float(a), Float(b)) => a == b,
+            (Integer(i), Float(f)) | (Float(f), Integer(i)) => {
+                crate::meta_envelope::integral_i64(*f) == Some(*i)
+            }
+            (Boolean(a), Boolean(b)) => a == b,
+            (List(a), List(b)) => a == b,
+            (Object(a), Object(b)) => a == b,
+            (Null, Null) => true,
+            _ => false,
+        }
+    }
 }
 
 impl ConstraintValue {
@@ -890,6 +1307,26 @@ impl ConstraintValue {
             ConstraintValue::Integer(i) => Some(*i as f64),
             ConstraintValue::Float(f) => Some(*f),
             _ => None,
+        }
+    }
+
+    /// This value with every integral `Float` written as `Integer`, recursively.
+    ///
+    /// Equal values (under the numeric `PartialEq`) map to one representation,
+    /// for code that orders or hashes values rather than comparing them.
+    pub(crate) fn with_integral_floats_folded(&self) -> ConstraintValue {
+        match self {
+            ConstraintValue::Float(f) => crate::meta_envelope::integral_i64(*f)
+                .map_or(ConstraintValue::Float(*f), ConstraintValue::Integer),
+            ConstraintValue::List(l) => {
+                ConstraintValue::List(l.iter().map(Self::with_integral_floats_folded).collect())
+            }
+            ConstraintValue::Object(m) => ConstraintValue::Object(
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.with_integral_floats_folded()))
+                    .collect(),
+            ),
+            other => other.clone(),
         }
     }
 
@@ -1021,11 +1458,18 @@ impl From<Wildcard> for Constraint {
 // ============================================================================
 
 /// Glob-style pattern constraint.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pattern {
     pub pattern: String,
     #[serde(skip)]
     compiled: Option<GlobPattern>,
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+    }
 }
 
 impl Pattern {
@@ -1203,6 +1647,7 @@ impl From<Pattern> for Constraint {
 
 /// Regular expression constraint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegexConstraint {
     pub pattern: String,
     #[serde(skip)]
@@ -1272,6 +1717,7 @@ impl From<RegexConstraint> for Constraint {
 
 /// Exact value constraint (works for any value type).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Exact {
     pub value: ConstraintValue,
 }
@@ -1302,6 +1748,7 @@ impl From<Exact> for Constraint {
 
 /// One-of constraint (value must be in allowed set).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct OneOf {
     pub values: Vec<ConstraintValue>,
 }
@@ -1386,6 +1833,7 @@ impl From<OneOf> for Constraint {
 /// Child can exclude MORE values (grow the exclusion set).
 /// This shrinks the effective allowed set, maintaining monotonicity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct NotOneOf {
     /// Values to exclude.
     pub excluded: Vec<ConstraintValue>,
@@ -1414,15 +1862,35 @@ impl NotOneOf {
         self.excluded.contains(value)
     }
 
+    /// The kinds of value this exclusion list can judge: the kinds of its
+    /// entries, or every kind when the list is empty.
+    pub(crate) fn value_kinds(&self) -> ValueKinds {
+        if self.excluded.is_empty() {
+            ValueKinds::ALL
+        } else {
+            ValueKinds::of_all(&self.excluded)
+        }
+    }
+
     /// Check if a value passes (is NOT excluded).
+    ///
+    /// A value whose kind differs from every excluded entry does not pass:
+    /// `NotOneOf(["prod"])` rejects `["prod"]` and `5` as well as `"prod"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        Ok(!self.is_excluded(value))
+        Ok(self.value_kinds().accepts(value) && !self.is_excluded(value))
     }
 
     /// Validate attenuation: child can exclude MORE values.
     ///
-    /// More exclusions = smaller allowed set = valid attenuation.
+    /// More exclusions = smaller allowed set = valid attenuation. The added
+    /// values must be of kinds the parent already judges, since a new kind
+    /// would admit values of that kind the parent rejects.
     pub fn validate_attenuation(&self, child: &NotOneOf) -> Result<()> {
+        if !self.value_kinds().contains(child.value_kinds()) {
+            return Err(Error::MonotonicityViolation(
+                "child NotOneOf excludes a kind of value the parent does not accept".to_string(),
+            ));
+        }
         // Child must exclude everything parent excludes (can add more)
         for v in &self.excluded {
             if !child.excluded.contains(v) {
@@ -1445,6 +1913,32 @@ impl From<NotOneOf> for Constraint {
 // Range Constraint
 // ============================================================================
 
+fn deserialize_finite_optional_f64<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::de::Error::custom("range bound must be finite"));
+    }
+    Ok(value)
+}
+
+fn serialize_finite_optional_f64<S>(
+    value: &Option<f64>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if value.is_some_and(|bound| !bound.is_finite()) {
+        return Err(serde::ser::Error::custom("range bound must be finite"));
+    }
+    value.serialize(serializer)
+}
+
 /// Numeric range constraint.
 ///
 /// **Precision Warning**: Bounds are stored as `f64`. Integers larger than 2^53
@@ -1455,8 +1949,19 @@ impl From<NotOneOf> for Constraint {
 ///
 /// Wire type ID: 3
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Range {
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub min: Option<f64>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_finite_optional_f64",
+        serialize_with = "serialize_finite_optional_f64"
+    )]
     pub max: Option<f64>,
     pub min_inclusive: bool,
     pub max_inclusive: bool,
@@ -1466,17 +1971,16 @@ impl Range {
     /// Create a new range constraint with inclusive bounds.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN (NaN causes non-deterministic serialization).
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn new(min: Option<f64>, max: Option<f64>) -> Result<Self> {
-        // NaN values cause non-deterministic serialization and comparison issues
         if let Some(m) = min {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("min cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("min must be finite".to_string()));
             }
         }
         if let Some(m) = max {
-            if m.is_nan() {
-                return Err(Error::InvalidRange("max cannot be NaN".to_string()));
+            if !m.is_finite() {
+                return Err(Error::InvalidRange("max must be finite".to_string()));
             }
         }
         Ok(Self {
@@ -1490,7 +1994,7 @@ impl Range {
     /// Create a range with only a maximum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if max is NaN.
+    /// Returns `InvalidRange` if max is not finite.
     pub fn max(max: f64) -> Result<Self> {
         Self::new(None, Some(max))
     }
@@ -1498,7 +2002,7 @@ impl Range {
     /// Create a range with only a minimum value.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min is NaN.
+    /// Returns `InvalidRange` if min is not finite.
     pub fn min(min: f64) -> Result<Self> {
         Self::new(Some(min), None)
     }
@@ -1506,7 +2010,7 @@ impl Range {
     /// Create a range between min and max.
     ///
     /// # Errors
-    /// Returns `InvalidRange` if min or max is NaN.
+    /// Returns `InvalidRange` if min or max is not finite.
     pub fn between(min: f64, max: f64) -> Result<Self> {
         Self::new(Some(min), Some(max))
     }
@@ -1833,8 +2337,17 @@ impl<'de> Deserialize<'de> for UrlPattern {
     where
         D: serde::Deserializer<'de>,
     {
+        let human_readable = deserializer.is_human_readable();
         let s = String::deserialize(deserializer)?;
-        UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        if human_readable {
+            // JSON/YAML are authoring surfaces, so new inputs must get the same
+            // validation as the public constructor.
+            UrlPattern::new(&s).map_err(serde::de::Error::custom)
+        } else {
+            // Signed CBOR warrants issued before bare wildcard hosts were
+            // rejected still decode; such a pattern matches no URL, as always.
+            UrlPattern::parse(&s, false).map_err(serde::de::Error::custom)
+        }
     }
 }
 
@@ -1858,8 +2371,13 @@ impl UrlPattern {
     /// `https://example.com/` parses as "any path". Use `https://example.com/*` to restrict to root.
     ///
     /// # Errors
-    /// Returns error if the pattern is not a valid URL pattern.
+    /// Returns error if the pattern is not a valid URL pattern, including a
+    /// bare wildcard host such as `https://*` or `https://*/*`.
     pub fn new(pattern: &str) -> Result<Self> {
+        Self::parse(pattern, true)
+    }
+
+    fn parse(pattern: &str, reject_bare_wildcard_host: bool) -> Result<Self> {
         // Internal placeholders for URL parsing
         const HOST_PLACEHOLDER: &str = "__tenuo_host_wildcard__";
         const PATH_PLACEHOLDER: &str = "__tenuo_path_wildcard__";
@@ -1905,6 +2423,24 @@ impl UrlPattern {
             .host_str()
             .map(|h| h.replace(&format!("{}.", HOST_PLACEHOLDER), "*."));
 
+        // A `*` host is parsed as the path placeholder (the `/*` in `//*`), so
+        // it would otherwise match no URL at all without any error.
+        if reject_bare_wildcard_host {
+            if let Some(host) = &host_pattern {
+                let rest = host.strip_prefix("*.").unwrap_or(host);
+                if rest.contains(PATH_PLACEHOLDER)
+                    || rest.contains(HOST_PLACEHOLDER)
+                    || rest.contains('*')
+                {
+                    return Err(Error::InvalidUrl {
+                        url: pattern.to_string(),
+                        reason: "wildcard host is not supported; name the host, use *.example.com, or use UrlSafe"
+                            .to_string(),
+                    });
+                }
+            }
+        }
+
         // Extract port (None means default for scheme)
         let port = parsed.port();
 
@@ -1927,6 +2463,10 @@ impl UrlPattern {
 
     /// Check if a URL string matches this pattern.
     pub fn matches_url(&self, url_str: &str) -> Result<bool> {
+        // The host checked here must be the host any client would fetch.
+        if has_ambiguous_url_syntax(url_str) {
+            return Ok(false);
+        }
         let parsed = url::Url::parse(url_str).map_err(|e| Error::InvalidUrl {
             url: url_str.to_string(),
             reason: e.to_string(),
@@ -2220,6 +2760,7 @@ impl From<UrlPattern> for Constraint {
 /// [17, { "root": "/data", "case_sensitive": true }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subpath {
     /// Root directory path (must be absolute).
     pub root: String,
@@ -2432,11 +2973,23 @@ impl Subpath {
 
     /// Check if a value satisfies the Subpath constraint.
     ///
-    /// The value must be a string containing an absolute path.
+    /// The value must be a string containing an absolute path, or a list of
+    /// strings where every element is an absolute path contained within `root`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        match value.as_str() {
-            Some(path_str) => self.contains_path(path_str),
-            None => Ok(false),
+        match value {
+            ConstraintValue::String(path_str) => self.contains_path(path_str),
+            ConstraintValue::List(list) => {
+                for item in list {
+                    let Some(path_str) = item.as_str() else {
+                        return Ok(false);
+                    };
+                    if !self.contains_path(path_str)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
         }
     }
 
@@ -2499,8 +3052,10 @@ impl From<Subpath> for Constraint {
 /// SSRF-safe URL constraint.
 ///
 /// Validates URLs to prevent Server-Side Request Forgery attacks by blocking:
-/// - Private IP ranges (RFC1918: 10.x, 172.16.x, 192.168.x)
-/// - Loopback addresses (127.x, ::1, localhost)
+/// - Private IP ranges (RFC 1918, RFC 6598, fc00::/7, fe80::/10, ...)
+/// - Loopback and unspecified addresses (127.x, ::1, 0.0.0.0, ::, localhost)
+/// - Reserved ranges the IANA special-purpose registries mark as not
+///   globally reachable
 /// - Cloud metadata endpoints (169.254.169.254, etc.)
 /// - Dangerous schemes (file://, gopher://, etc.)
 /// - IP encoding bypasses (decimal, hex, octal, IPv6-mapped, URL-encoded)
@@ -2523,7 +3078,11 @@ impl From<Subpath> for Constraint {
 /// 2. Attacker-controlled domains can resolve to internal IPs (DNS rebinding)
 /// 3. Stateless validation enables caching and cross-language compatibility
 ///
-/// For DNS-aware validation, use `url_jail` at the execution layer.
+/// `UrlSafe` therefore protects literal IPs and URL/host policy, but is not by
+/// itself a complete defense against DNS rebinding. The HTTP execution layer
+/// must validate every resolved address (including redirects) and connect to
+/// that validated address without resolving the hostname again. For Python,
+/// `url_jail` is one execution-layer option.
 ///
 /// # Example
 ///
@@ -2546,6 +3105,7 @@ impl From<Subpath> for Constraint {
 /// [18, { "schemes": ["http", "https"], "block_private": true, ... }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct UrlSafe {
     /// Allowed URL schemes. Default: ["http", "https"]
     #[serde(default = "default_schemes")]
@@ -2563,16 +3123,19 @@ pub struct UrlSafe {
     /// If set, only these ports are allowed
     #[serde(default)]
     pub allow_ports: Option<Vec<u16>>,
-    /// Block RFC1918 private IPs (10.x, 172.16.x, 192.168.x). Default: true
+    /// Block private IPs (RFC 1918, RFC 6598 shared space, benchmarking,
+    /// fc00::/7, fe80::/10, fec0::/10). Default: true
     #[serde(default = "default_true")]
     pub block_private: bool,
-    /// Block loopback (127.x, ::1, localhost). Default: true
+    /// Block loopback (127.x, ::1, localhost), and the unspecified addresses
+    /// when `block_reserved` is off. Default: true
     #[serde(default = "default_true")]
     pub block_loopback: bool,
     /// Block cloud metadata endpoints (169.254.169.254, etc.). Default: true
     #[serde(default = "default_true")]
     pub block_metadata: bool,
-    /// Block reserved IP ranges (multicast, broadcast). Default: true
+    /// Block other ranges that are not globally reachable (unspecified,
+    /// multicast, broadcast, documentation, class E, ...). Default: true
     #[serde(default = "default_true")]
     pub block_reserved: bool,
     /// Block internal TLDs (.internal, .local, .localhost). Default: false
@@ -2662,6 +3225,96 @@ const INTERNAL_TLDS: &[&str] = &[
 ];
 
 impl UrlSafe {
+    fn canonical_domain_pattern(pattern: &str) -> Result<String> {
+        use url::Host;
+
+        if pattern.is_empty() {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must not be empty".to_string(),
+            });
+        }
+
+        let (wildcard, host_pattern) = match pattern.strip_prefix("*.") {
+            Some(suffix) => (true, suffix),
+            None => (false, pattern),
+        };
+        if host_pattern.is_empty() || host_pattern.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+
+        let host = Host::parse(host_pattern).map_err(|error| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: format!("invalid domain pattern: {error}"),
+        })?;
+        let canonical = match host {
+            Host::Domain(domain) if !wildcard || !domain.starts_with('.') => domain,
+            _ if wildcard => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "wildcards require a domain name suffix".to_string(),
+                });
+            }
+            host => host.to_string(),
+        }
+        .to_lowercase();
+        // Host::parse percent-decodes domains. Re-check the canonical value so
+        // an encoded `*` cannot become wildcard syntax after raw validation.
+        if canonical.contains('*') {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "domain pattern must be a host name or *.host name".to_string(),
+            });
+        }
+        // Match the root-label handling in `rejection_reason`.
+        let canonical = match canonical.strip_suffix('.') {
+            Some(name) if name.is_empty() || name.ends_with('.') => {
+                return Err(Error::InvalidUrl {
+                    url: pattern.to_string(),
+                    reason: "invalid domain pattern: empty label".to_string(),
+                });
+            }
+            Some(name) => name.to_string(),
+            None => canonical,
+        };
+        Ok(if wildcard {
+            format!("*.{canonical}")
+        } else {
+            canonical
+        })
+    }
+
+    /// Return whether every host matched by `candidate` is also matched by
+    /// `covering`. Both patterns are canonicalized before comparison.
+    fn domain_pattern_covers(covering: &str, candidate: &str) -> Result<bool> {
+        let covering = Self::canonical_domain_pattern(covering)?;
+        let candidate = Self::canonical_domain_pattern(candidate)?;
+
+        let Some(covering_suffix) = covering.strip_prefix("*.") else {
+            return Ok(covering == candidate);
+        };
+        let candidate_suffix = candidate.strip_prefix("*.").unwrap_or(&candidate);
+
+        Ok(candidate_suffix == covering_suffix
+            || candidate_suffix.ends_with(&format!(".{covering_suffix}")))
+    }
+
+    /// Validate domain allow- and deny-list configuration.
+    pub fn validate(&self) -> Result<()> {
+        for pattern in self
+            .allow_domains
+            .iter()
+            .flatten()
+            .chain(self.deny_domains.iter().flatten())
+        {
+            Self::canonical_domain_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Create a new UrlSafe constraint with secure defaults.
     ///
     /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
@@ -2705,9 +3358,17 @@ impl UrlSafe {
     pub fn rejection_reason(&self, url: &str) -> Result<Option<UrlSafeRejection>> {
         use url::Url;
 
+        self.validate()?;
+
         // Reject null bytes
         if url.contains('\0') {
             return Ok(Some(UrlSafeRejection::NullByte));
+        }
+
+        // Text that HTTP clients may resolve to a different host than the
+        // one checked below (backslashes, repeated `@`, stripped characters).
+        if has_ambiguous_url_syntax(url) {
+            return Ok(Some(UrlSafeRejection::Malformed));
         }
 
         // Parse URL
@@ -2730,6 +3391,16 @@ impl UrlSafe {
 
         // Decode percent-encoded hostname (SSRF bypass prevention)
         let host = urlencoding_decode(host).to_lowercase();
+        // `localhost.` and `localhost` are the same DNS name: strip the root
+        // label so every name policy sees one spelling. Further dots are not
+        // a valid name, so fail closed rather than guess.
+        let host = match host.strip_suffix('.') {
+            Some(name) if name.is_empty() || name.ends_with('.') => {
+                return Ok(Some(UrlSafeRejection::Malformed));
+            }
+            Some(name) => name.to_string(),
+            None => host,
+        };
 
         // Check port
         // Note: url::Url::port() returns None for default ports (80 for http, 443 for https)
@@ -2779,12 +3450,12 @@ impl UrlSafe {
             if self.looks_like_ambiguous_ip(&host) {
                 return Ok(Some(UrlSafeRejection::AmbiguousIp));
             }
+        }
 
-            // Check domain allowlist (hostnames only — IPs use block_* flags)
-            if let Some(ref domains) = self.allow_domains {
-                if !self.check_domain_allowed(&host, domains) {
-                    return Ok(Some(UrlSafeRejection::DomainAllowList));
-                }
+        // An allowlist constrains every host, including public IP literals.
+        if let Some(ref domains) = self.allow_domains {
+            if !self.check_domain_allowed(&host, domains) {
+                return Ok(Some(UrlSafeRejection::DomainAllowList));
             }
         }
 
@@ -2913,113 +3584,164 @@ impl UrlSafe {
         None
     }
 
-    /// Check if IP address is safe to connect to.
+    /// Classify an IP literal. Ranges follow the IANA IPv4 and IPv6
+    /// Special-Purpose Address Registries: anything not globally reachable
+    /// falls under one of the `block_*` flags, and IPv6 forms that carry an
+    /// IPv4 address are judged by that address too.
     fn ip_rejection_reason(&self, ip: &IpAddr) -> Option<UrlSafeRejection> {
-        // Handle IPv6 addresses that embed IPv4
-        let ip = match ip {
-            IpAddr::V6(v6) => {
-                // 1. IPv6-mapped IPv4: ::ffff:x.x.x.x
-                if let Some(mapped) = v6.to_ipv4_mapped() {
-                    IpAddr::V4(mapped)
-                }
-                // 2. IPv4-compatible IPv6: ::x.x.x.x (deprecated RFC 4291 but still parsed)
-                // These have the first 96 bits as zero and last 32 bits as IPv4
-                // Example: ::127.0.0.1, ::10.0.0.1, [0:0:0:0:0:0:127.0.0.1]
-                else {
-                    let segments = v6.segments();
-                    // Check if first 6 segments are all zero (IPv4-compatible format)
-                    if segments[0..6].iter().all(|&s| s == 0) {
-                        // Extract the IPv4 address from the last 32 bits
-                        let octets = v6.octets();
-                        let ipv4 =
-                            std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
-                        // Don't convert ::0 or ::1 since those are valid IPv6 addresses
-                        // (unspecified and loopback respectively)
-                        if ipv4.octets() != [0, 0, 0, 0] && ipv4.octets() != [0, 0, 0, 1] {
-                            IpAddr::V4(ipv4)
-                        } else {
-                            *ip
-                        }
-                    } else {
-                        *ip
-                    }
-                }
-            }
-            _ => *ip,
-        };
+        match ip {
+            IpAddr::V4(v4) => self.ipv4_rejection_reason(*v4),
+            IpAddr::V6(v6) => self.ipv6_rejection_reason(*v6),
+        }
+    }
 
-        // Check loopback
+    fn ipv4_rejection_reason(&self, ip: std::net::Ipv4Addr) -> Option<UrlSafeRejection> {
+        let [a, b, c, d] = ip.octets();
+
+        // 0.0.0.0 connects to the local host.
+        if ip.is_unspecified() {
+            if self.block_reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
+            }
+            if self.block_loopback {
+                return Some(UrlSafeRejection::Loopback);
+            }
+        }
+        if self.block_loopback && a == 127 {
+            return Some(UrlSafeRejection::Loopback);
+        }
+        // 169.254.0.0/16 (link-local, including 169.254.169.254) and the
+        // Alibaba Cloud endpoint.
+        if self.block_metadata && ((a == 169 && b == 254) || ip.octets() == [100, 100, 100, 200]) {
+            return Some(UrlSafeRejection::Metadata);
+        }
+        if self.block_private {
+            match (a, b) {
+                // RFC 1918, RFC 6598 shared address space, RFC 2544 benchmarking
+                (10, _) | (172, 16..=31) | (192, 168) | (100, 64..=127) | (198, 18..=19) => {
+                    return Some(UrlSafeRejection::PrivateNetwork);
+                }
+                _ => {}
+            }
+        }
+        if self.block_reserved {
+            let reserved = match (a, b, c) {
+                (0, _, _) => true,                                    // "this network"
+                (192, 0, 0) => d != 9 && d != 10,                     // IETF assignments
+                (192, 0, 2) | (198, 51, 100) | (203, 0, 113) => true, // documentation
+                (192, 88, 99) => true,                                // 6to4 relay anycast
+                (224..=255, _, _) => true, // multicast, class E, broadcast
+                _ => false,
+            };
+            if reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
+            }
+        }
+        None
+    }
+
+    fn ipv6_rejection_reason(&self, ip: std::net::Ipv6Addr) -> Option<UrlSafeRejection> {
+        let s = ip.segments();
+
+        // :: connects to the local host, like 0.0.0.0.
+        if ip.is_unspecified() {
+            return self.ipv4_rejection_reason(std::net::Ipv4Addr::UNSPECIFIED);
+        }
         if self.block_loopback && ip.is_loopback() {
             return Some(UrlSafeRejection::Loopback);
         }
 
-        // Check private ranges (requires manual check for IPv4)
-        if self.block_private {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                // 10.0.0.0/8
-                if octets[0] == 10 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // 172.16.0.0/12
-                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // 192.168.0.0/16
-                if octets[0] == 192 && octets[1] == 168 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-            }
-            // IPv6 private ranges
-            if let IpAddr::V6(v6) = ip {
-                let segments = v6.segments();
-                // fc00::/7 (unique local)
-                if (segments[0] & 0xfe00) == 0xfc00 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
-                // fe80::/10 (link-local)
-                if (segments[0] & 0xffc0) == 0xfe80 {
-                    return Some(UrlSafeRejection::PrivateNetwork);
-                }
+        if let Some(v4) = Self::embedded_ipv4(ip) {
+            if let Some(reason) = self.ipv4_rejection_reason(v4) {
+                return Some(reason);
             }
         }
+        // The local-use NAT64 prefix (RFC 8215) puts the IPv4 address wherever
+        // the operator's prefix length places it, so it cannot be extracted.
+        if self.block_private && s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1 {
+            return Some(UrlSafeRejection::PrivateNetwork);
+        }
 
-        // Check reserved ranges
+        // AWS IPv6 metadata endpoint
+        if self.block_metadata && u128::from(ip) == 0xfd00_0ec2_0000_0000_0000_0000_0000_0254 {
+            return Some(UrlSafeRejection::Metadata);
+        }
+        if self.block_private
+            && ((s[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+                || (s[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || (s[0] & 0xffc0) == 0xfec0)
+        // fec0::/10 deprecated site-local
+        {
+            return Some(UrlSafeRejection::PrivateNetwork);
+        }
         if self.block_reserved {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                // 0.0.0.0/8 ("This" network)
-                if octets[0] == 0 {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
-                // 224.0.0.0/4 (Multicast)
-                if (224..=239).contains(&octets[0]) {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
-                // 255.255.255.255 (Broadcast)
-                if octets == [255, 255, 255, 255] {
-                    return Some(UrlSafeRejection::ReservedAddress);
-                }
+            let reserved = match s {
+                [0x100, 0, 0, 0 | 1, ..] => true,      // discard-only, dummy prefix
+                [0x2001, 0xdb8, ..] => true,           // documentation
+                [0x3fff, b, ..] if b < 0x1000 => true, // documentation
+                [0x2001, b, ..] if b < 0x200 => !Self::is_global_ietf_assignment(ip),
+                [0x5f00, ..] => true,                    // segment routing SIDs
+                [a, ..] if a & 0xff00 == 0xff00 => true, // multicast
+                _ => false,
+            };
+            if reserved {
+                return Some(UrlSafeRejection::ReservedAddress);
             }
         }
-
-        // Check metadata range (169.254.0.0/16 link-local)
-        if self.block_metadata {
-            if let IpAddr::V4(v4) = ip {
-                let octets = v4.octets();
-                if octets[0] == 169 && octets[1] == 254 {
-                    return Some(UrlSafeRejection::Metadata);
-                }
-            }
-        }
-
         None
+    }
+
+    /// The IPv4 address an IPv6 address carries and routes to: IPv4-mapped
+    /// (`::ffff:0:0/96`), IPv4-compatible (`::/96`), 6to4 (`2002::/16`),
+    /// NAT64 well-known (`64:ff9b::/96`) and Teredo (`2001::/32`).
+    fn embedded_ipv4(ip: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+        use std::net::Ipv4Addr;
+
+        let s = ip.segments();
+        let low = Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            return Some(mapped);
+        }
+        // ::1 is IPv6 loopback, handled by the caller.
+        if s[..6] == [0; 6] {
+            return Some(low);
+        }
+        if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+            return Some(low);
+        }
+        if s[0] == 0x2002 {
+            return Some(Ipv4Addr::new(
+                (s[1] >> 8) as u8,
+                s[1] as u8,
+                (s[2] >> 8) as u8,
+                s[2] as u8,
+            ));
+        }
+        // Teredo stores the client's IPv4 bit-inverted (RFC 4380).
+        if s[0] == 0x2001 && s[1] == 0 {
+            return Some(Ipv4Addr::from(!u32::from(low)));
+        }
+        None
+    }
+
+    /// The globally reachable exceptions inside 2001::/23.
+    fn is_global_ietf_assignment(ip: std::net::Ipv6Addr) -> bool {
+        let s = ip.segments();
+        let bits = u128::from(ip);
+        bits == 0x2001_0001_0000_0000_0000_0000_0000_0001 // PCP anycast
+            || bits == 0x2001_0001_0000_0000_0000_0000_0000_0002 // TURN anycast
+            || bits == 0x2001_0001_0000_0000_0000_0000_0000_0003 // DNS-SD SRP anycast
+            || s[1] == 3 // AMT
+            || (s[1] == 4 && s[2] == 0x112) // AS112-v6
+            || (0x20..=0x3f).contains(&s[1]) // ORCHIDv2, DRIP
     }
 
     /// Check if hostname matches domain allowlist.
     fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
         for pattern in domains {
-            let pattern = pattern.to_lowercase();
+            let Ok(pattern) = Self::canonical_domain_pattern(pattern) else {
+                continue;
+            };
             if pattern.starts_with("*.") {
                 // Wildcard subdomain: *.example.com matches sub.example.com
                 let suffix = &pattern[1..]; // .example.com
@@ -3085,6 +3807,12 @@ impl UrlSafe {
     ///
     /// A child UrlSafe is valid if it is at least as restrictive as the parent.
     pub fn validate_attenuation(&self, child: &UrlSafe) -> Result<()> {
+        // Attenuation is only meaningful for well-formed policies. Validate
+        // here as well as at authorization time so malformed wire-decoded Rust
+        // values cannot be delegated and fail later in a surprising place.
+        self.validate()?;
+        child.validate()?;
+
         // Child schemes must be subset of parent
         for scheme in &child.schemes {
             if !self
@@ -3160,19 +3888,10 @@ impl UrlSafe {
                 Some(child_domains) => {
                     // Each child domain must be covered by a parent domain pattern
                     for cd in child_domains {
-                        if !parent_domains.iter().any(|pd| {
-                            let pd = pd.to_lowercase();
-                            let cd = cd.to_lowercase();
-                            // Exact match
-                            if pd == cd {
-                                return true;
-                            }
-                            // Parent wildcard covers child exact
-                            if pd.starts_with("*.") && cd.ends_with(&pd[1..]) {
-                                return true;
-                            }
-                            false
-                        }) {
+                        let covered = parent_domains.iter().try_fold(false, |covered, pd| {
+                            Ok::<_, Error>(covered || Self::domain_pattern_covers(pd, cd)?)
+                        })?;
+                        if !covered {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child domain '{}' not covered by parent allowlist",
                                 cd
@@ -3193,8 +3912,12 @@ impl UrlSafe {
                 }
                 Some(child_denied) => {
                     for pd in parent_denied {
-                        let pd_lower = pd.to_lowercase();
-                        if !child_denied.iter().any(|cd| cd.to_lowercase() == pd_lower) {
+                        // A child may preserve a parent denial with an equivalent
+                        // canonical spelling or a broader wildcard denial.
+                        let preserved = child_denied.iter().try_fold(false, |preserved, cd| {
+                            Ok::<_, Error>(preserved || Self::domain_pattern_covers(cd, pd)?)
+                        })?;
+                        if !preserved {
                             return Err(Error::MonotonicityViolation(format!(
                                 "child removes denied domain '{}' from parent",
                                 pd
@@ -3258,33 +3981,20 @@ impl From<UrlSafe> for Constraint {
 // Shlex Constraint (Shell command safety)
 // ============================================================================
 
-/// Characters that are dangerous in a shell context.
-///
-/// Includes control characters (null, newline, CR, etc.), expansion triggers
-/// ($, backtick), and operator characters (|, &, ;, <, >, parens).
-const SHELL_DANGEROUS_CHARS: &[char] = &[
-    '\0', '\n', '\r', '\x0b', '\x0c', '\x07', '\x08', '\x7f', // Control
-    '$', '`', // Expansion
-    '|', '&', ';', '<', '>', '(', ')', // Operators
-];
-
 /// Shell command safety constraint.
 ///
-/// Validates that a command string uses only allowed binaries and contains
-/// no shell metacharacters. This is a **conservative approximation** that
-/// fails closed on anything a POSIX shell might interpret specially.
+/// Validates that a command string is one allowlisted binary plus literal
+/// arguments. Words follow POSIX shell rules: they end at unquoted spaces,
+/// tabs, and operators, and `#` is an ordinary word character so operators
+/// after `#` are still rejected. A quoted or escaped operator character is a
+/// literal argument. `$` and backticks are rejected anywhere in the raw
+/// command, including inside quotes and escapes.
 ///
-/// # Rust vs Python evaluation
+/// Each `allow` entry matches the command word literally: `ls` matches `ls`
+/// only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command
+/// word containing `..` is rejected.
 ///
-/// The Rust `matches()` performs whitespace tokenization and rejects any
-/// character in `SHELL_DANGEROUS_CHARS`. It does NOT handle POSIX quoting.
-/// Python's `Shlex.matches()` uses full `shlex` parsing with
-/// `punctuation_chars=True`, so it accepts safely-quoted operators like
-/// `ls "foo; bar"` that Rust would reject.
-///
-/// The Rust layer is intentionally more restrictive, acting as a fail-closed
-/// pre-filter in the warrant verification path. Python's full evaluation is
-/// the authoritative runtime gate for annotated constraints in `@guard`.
+/// Every SDK calls [`crate::shell_words::check`]. There is no second evaluator.
 ///
 /// # Wire Format
 ///
@@ -3292,6 +4002,7 @@ const SHELL_DANGEROUS_CHARS: &[char] = &[
 /// [128, { "allow": ["npm", "docker"] }]
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Shlex {
     /// Allowed binary names or full paths. Literal strings only (no globs).
     pub allow: Vec<String>,
@@ -3305,46 +4016,15 @@ impl Shlex {
         }
     }
 
-    /// Conservative command matching (fail-closed approximation).
+    /// Whether `value` is a single allowlisted command with no shell operators.
     ///
-    /// Rejects any command containing shell metacharacters, then whitespace-splits
-    /// and checks the first token against the allowlist. This is strictly more
-    /// restrictive than Python's POSIX shlex parsing.
+    /// Non-strings, parse errors, control characters, and `$` / backticks
+    /// return `Ok(false)`. See [`crate::shell_words::command_allowed`].
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        let cmd = match value.as_str() {
-            Some(s) => s,
-            None => return Ok(false),
+        let Some(cmd) = value.as_str() else {
+            return Ok(false);
         };
-
-        if cmd.is_empty() {
-            return Ok(false);
-        }
-
-        // Reject any shell-dangerous character
-        for ch in cmd.chars() {
-            if SHELL_DANGEROUS_CHARS.contains(&ch) {
-                return Ok(false);
-            }
-        }
-
-        // Whitespace tokenization (no quoting awareness — conservative)
-        let tokens: Vec<&str> = cmd.split_whitespace().collect();
-        if tokens.is_empty() {
-            return Ok(false);
-        }
-
-        // Binary allowlist: check full path and basename.
-        // Reject path traversal (../) to prevent allowlist bypass.
-        let binary = tokens[0];
-        if binary.contains("..") {
-            return Ok(false);
-        }
-        let bin_name = binary.rsplit('/').next().unwrap_or(binary);
-        if !self.allow.iter().any(|a| a == binary || a == bin_name) {
-            return Ok(false);
-        }
-
-        Ok(true)
+        Ok(crate::shell_words::command_allowed(&self.allow, cmd))
     }
 
     /// Validate that `child` is a valid attenuation (child is more restrictive).
@@ -3374,6 +4054,35 @@ impl From<Shlex> for Constraint {
     fn from(s: Shlex) -> Self {
         Constraint::Shlex(s)
     }
+}
+
+/// Whether URL text may be read with a different host by other URL parsers.
+///
+/// Constraints check the host the WHATWG parser (`url` crate) sees, while
+/// the tool fetches with whatever client it uses. Those disagree on
+/// backslashes (WHATWG treats `\` as `/` in special URLs; RFC 3986 clients
+/// keep it in the authority), on characters WHATWG silently strips (tab,
+/// CR, LF, leading and trailing C0 and space), on slash counts after the
+/// scheme, and on which of several `@` ends the userinfo. Text with any of
+/// these is refused rather than guessed at. A single `@` is unambiguous.
+fn has_ambiguous_url_syntax(raw: &str) -> bool {
+    if raw
+        .chars()
+        .any(|c| c == '\\' || c == ' ' || c.is_ascii_control())
+    {
+        return true;
+    }
+    let Some(scheme_end) = raw.find(':') else {
+        return true;
+    };
+    let Some(rest) = raw[scheme_end + 1..].strip_prefix("//") else {
+        return true;
+    };
+    if rest.starts_with('/') {
+        return true;
+    }
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    rest[..authority_end].matches('@').count() > 1
 }
 
 /// Simple URL decoding (handles percent-encoded characters).
@@ -3408,6 +4117,7 @@ fn urlencoding_decode(s: &str) -> String {
 
 /// Constraint that a list value must contain specified values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Contains {
     /// Values that must be present in the list.
     pub required: Vec<ConstraintValue>,
@@ -3457,6 +4167,7 @@ impl From<Contains> for Constraint {
 
 /// Constraint that a list value must be a subset of allowed values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Subset {
     /// Allowed values (superset).
     pub allowed: Vec<ConstraintValue>,
@@ -3506,6 +4217,7 @@ impl From<Subset> for Constraint {
 
 /// All constraints must match (AND).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct All {
     pub constraints: Vec<Constraint>,
 }
@@ -3572,6 +4284,7 @@ impl From<All> for Constraint {
 ///
 /// Prefer the [`AnyOf`] alias in new code; it matches Python and TypeScript.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Any {
     pub constraints: Vec<Constraint>,
 }
@@ -3605,6 +4318,11 @@ impl Any {
     /// `Any` requires the child to only retain alternatives the parent already
     /// permits.
     pub fn validate_attenuation(&self, child: &Any) -> Result<()> {
+        if self.constraints.iter().any(Constraint::can_fail) && self != child {
+            return Err(Error::MonotonicityViolation(
+                "Any attenuation must preserve ordered alternatives that can fail".to_string(),
+            ));
+        }
         for child_c in &child.constraints {
             let covered = self
                 .constraints
@@ -3628,6 +4346,7 @@ impl From<Any> for Constraint {
 
 /// Negation of a constraint.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Not {
     pub constraint: Box<Constraint>,
 }
@@ -3641,8 +4360,15 @@ impl Not {
     }
 
     /// Check if the inner constraint does NOT match.
+    ///
+    /// A value of a kind the inner constraint cannot judge does not pass:
+    /// `Not(Regex("rm"))` rejects a list or a number as well as `"rm -rf"`.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
-        Ok(!self.constraint.matches(value)?)
+        let kinds = self.constraint.value_kinds()?;
+        // Even off-kind values must not hide an evaluation error that an
+        // enclosing negation could otherwise turn into an allow.
+        let matched = self.constraint.matches_for_negation(value)?;
+        Ok(kinds.accepts(value) && !matched)
     }
 
     /// Validate attenuation for `Not` constraints.
@@ -3650,24 +4376,46 @@ impl Not {
     /// `Not(child_inner)` is a valid attenuation of `Not(parent_inner)` when the
     /// child's accepted set is a subset of the parent's:
     ///
-    ///   accepted(Not(X)) = universe \ accepted(X)
+    ///   accepted(Not(X)) = kinds(X) \ accepted(X)
     ///
-    /// So child ⊆ parent iff:
+    /// A sufficient condition for child ⊆ parent is:
     ///
-    ///   (U \ accepted(child_inner)) ⊆ (U \ accepted(parent_inner))
-    ///   ⟺ accepted(parent_inner) ⊆ accepted(child_inner)
-    ///   ⟺ child_inner is a valid attenuation of parent_inner… reversed:
-    ///       parent_inner.validate_attenuation(child_inner) would check parent ⊆ child
-    ///       but we need parent ⊆ child, so we call child_inner.validate_attenuation(&parent_inner).
+    ///   kinds(child_inner) ⊆ kinds(parent_inner), and
+    ///   accepted(parent_inner) ⊆ accepted(child_inner).
     ///
-    /// In plain terms: the child inner constraint must be *looser* (accept more values)
-    /// than the parent inner, because the `Not` flips the direction.
+    /// The child inner constraint must be at least as permissive within the
+    /// parent's kinds, without adding a new kind under negation. The positive
+    /// attenuation check therefore runs in the reverse direction.
     ///
     /// Examples:
     ///   Not(Exact("admin")) → Not(Exact("admin"))           — identity, valid
     ///   Not(Exact("admin")) → Not(OneOf(["admin","root"]))  — child inner is wider → valid
     ///   Not(OneOf(["admin","root"])) → Not(Exact("admin"))  — child inner is narrower → invalid
     pub fn validate_attenuation(&self, child: &Not) -> Result<()> {
+        // A negation only admits values of kinds its inner constraint can
+        // judge, so a child whose inner constraint judges more kinds would
+        // admit values the parent rejects. `Not(Wildcard)` admits nothing.
+        if !matches!(*child.constraint, Constraint::Wildcard(_))
+            && !self
+                .constraint
+                .value_kinds()?
+                .contains(child.constraint.value_kinds()?)
+        {
+            return Err(Error::MonotonicityViolation(
+                "Not attenuation requires the child inner constraint to judge only kinds of \
+                 value the parent inner constraint judges"
+                    .to_string(),
+            ));
+        }
+        if !matches!(*child.constraint, Constraint::Wildcard(_))
+            && !child
+                .constraint
+                .preserves_negation_errors_of(&self.constraint)
+        {
+            return Err(Error::MonotonicityViolation(
+                "Not attenuation must preserve potentially failing inner rules".to_string(),
+            ));
+        }
         // Direction is inverted: child_inner must be at least as permissive as parent_inner.
         child
             .constraint
@@ -3719,6 +4467,7 @@ impl From<Not> for Constraint {
 /// CelConstraint::new("'admin' in roles")
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CelConstraint {
     /// The CEL expression as a string.
     pub expression: String,
@@ -3808,11 +4557,30 @@ impl CelConstraint {
     /// - Child: `net.in_cidr(ip, '10.1.0.0/16')` -> **REJECTED** (cannot prove subset)
     /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && (net.in_cidr(ip, '10.1.0.0/16'))` -> **ALLOWED**
     /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && true || false` -> **REJECTED** (no parens)
+    ///
+    /// The textual shape check below ignores whitespace everywhere, including
+    /// inside string literals, so on its own it would accept a child whose
+    /// parent clause has different literals. The parsed-expression check is
+    /// what proves the child's left operand is the parent expression.
     pub fn validate_attenuation(&self, child: &CelConstraint) -> Result<()> {
-        // Same expression is always valid (after normalizing whitespace)
+        if child.expression == self.expression {
+            return Ok(());
+        }
+        let shape_error = || {
+            Error::MonotonicityViolation(format!(
+                "child CEL must be '({}) && (<predicate>)', got '{}'",
+                self.expression, child.expression
+            ))
+        };
+
+        // Same expression up to formatting is valid.
         if normalize_cel_whitespace(&child.expression) == normalize_cel_whitespace(&self.expression)
         {
-            return Ok(());
+            return if crate::cel::is_conjunctive_attenuation(&self.expression, &child.expression)? {
+                Ok(())
+            } else {
+                Err(shape_error())
+            };
         }
 
         // Child must be a conjunction with parent: (parent) && (extra)
@@ -3821,10 +4589,7 @@ impl CelConstraint {
         let expected_prefix = format!("({})&&", parent_normalized);
 
         if !child_normalized.starts_with(&expected_prefix) {
-            return Err(Error::MonotonicityViolation(format!(
-                "child CEL must be '({}) && (<predicate>)', got '{}'",
-                self.expression, child.expression
-            )));
+            return Err(shape_error());
         }
 
         // Extract the remainder after "(parent)&&"
@@ -3842,6 +4607,12 @@ impl CelConstraint {
 
         // Validate the child expression compiles
         child.validate()?;
+
+        // The left operand must be the parent expression itself, compared as
+        // parsed CEL rather than as whitespace-stripped text.
+        if !crate::cel::is_conjunctive_attenuation(&self.expression, &child.expression)? {
+            return Err(shape_error());
+        }
 
         Ok(())
     }
@@ -3893,6 +4664,73 @@ impl From<CelConstraint> for Constraint {
 // Constraint Set
 // ============================================================================
 
+/// Stable category for a constraint diagnostic.
+///
+/// Diagnostics are non-authoritative explanations. Authorization continues to
+/// use [`ConstraintSet::matches`], which consumes the same diagnostic result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintViolationKind {
+    /// The warrant does not authorize the requested tool.
+    ToolNotAuthorized,
+    /// Closed-world checking rejected an undeclared argument field.
+    UnknownField,
+    /// A field declared by the capability was absent.
+    MissingRequired,
+    /// A supplied value did not satisfy its declared constraint.
+    ConstraintMismatch,
+}
+
+impl ConstraintViolationKind {
+    /// Stable machine-readable name used by SDK bindings.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolNotAuthorized => "tool_not_authorized",
+            Self::UnknownField => "unknown_field",
+            Self::MissingRequired => "missing_required",
+            Self::ConstraintMismatch => "constraint_mismatch",
+        }
+    }
+}
+
+/// One field-level constraint diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintViolation {
+    /// Argument field, or `"tool"` for a tool-level denial.
+    pub field: String,
+    /// Stable machine-readable category.
+    pub kind: ConstraintViolationKind,
+    /// Human-readable explanation. Callers should branch on [`Self::kind`].
+    pub reason: String,
+}
+
+/// Structured, deterministic result of non-authoritative constraint preflight.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConstraintDiagnostics {
+    /// Whether the evaluated constraint set rejects undeclared fields.
+    pub closed_world: bool,
+    /// All violations, ordered deterministically by category and field name.
+    pub violations: Vec<ConstraintViolation>,
+}
+
+impl ConstraintDiagnostics {
+    /// True when no constraint violations were found.
+    pub fn is_satisfied(&self) -> bool {
+        self.violations.is_empty()
+    }
+
+    pub(crate) fn tool_not_authorized(tool: &str) -> Self {
+        Self {
+            closed_world: false,
+            violations: vec![ConstraintViolation {
+                field: "tool".to_string(),
+                kind: ConstraintViolationKind::ToolNotAuthorized,
+                reason: format!("warrant does not authorize tool '{tool}'"),
+            }],
+        }
+    }
+}
+
 /// Helper for serde skip_serializing_if
 fn is_false(b: &bool) -> bool {
     !*b
@@ -3915,12 +4753,46 @@ fn is_false(b: &bool) -> bool {
 /// Use `Wildcard` constraint to allow any value for a specific field while
 /// still operating in closed-world mode for other fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(try_from = "ConstraintSetWire")]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
     /// When true, arguments not listed in constraints are allowed.
     /// When false (default), unknown arguments are rejected if any constraints exist.
     #[serde(default, skip_serializing_if = "is_false")]
     allow_unknown: bool,
+    /// Declared arguments that may be absent. Present values are still constrained.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    optional_fields: BTreeSet<String>,
+}
+
+// Keep malformed optional declarations out of the engine, including declarations
+// naming fields absent from the constraint map. All nested constraints retain
+// their own strict deserializers.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConstraintSetWire {
+    constraints: BTreeMap<String, Constraint>,
+    #[serde(default)]
+    allow_unknown: bool,
+    #[serde(default)]
+    optional_fields: BTreeSet<String>,
+}
+
+impl TryFrom<ConstraintSetWire> for ConstraintSet {
+    type Error = String;
+
+    fn try_from(wire: ConstraintSetWire) -> std::result::Result<Self, Self::Error> {
+        for field in &wire.optional_fields {
+            if !wire.constraints.contains_key(field) {
+                return Err(format!("optional field '{field}' has no constraint"));
+            }
+        }
+        Ok(Self {
+            constraints: wire.constraints,
+            allow_unknown: wire.allow_unknown,
+            optional_fields: wire.optional_fields,
+        })
+    }
 }
 
 impl ConstraintSet {
@@ -3931,7 +4803,29 @@ impl ConstraintSet {
 
     /// Add a constraint for a field.
     pub fn insert(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
-        self.constraints.insert(field.into(), constraint.into());
+        let field = field.into();
+        self.optional_fields.remove(&field);
+        self.constraints.insert(field, constraint.into());
+    }
+
+    /// Add an argument that may be absent, but must satisfy `constraint` when present.
+    ///
+    /// Explicit null is a present value. This does not validate tool defaults:
+    /// normalize defaults before authorization if the policy must constrain them.
+    pub fn insert_optional(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
+        let field = field.into();
+        self.optional_fields.insert(field.clone());
+        self.constraints.insert(field, constraint.into());
+    }
+
+    /// Whether a declared argument may be absent.
+    pub fn is_optional(&self, field: &str) -> bool {
+        self.optional_fields.contains(field)
+    }
+
+    /// Iterate over declared optional argument names in deterministic order.
+    pub fn optional_fields(&self) -> impl Iterator<Item = &str> {
+        self.optional_fields.iter().map(String::as_str)
     }
 
     /// Get a constraint for a field.
@@ -3974,77 +4868,141 @@ impl ConstraintSet {
     /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
     /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
-        // Zero-trust: if constraints exist and allow_unknown is false,
-        // reject any arguments not explicitly constrained
-        if !self.constraints.is_empty() && !self.allow_unknown {
-            for key in args.keys() {
-                if !self.constraints.contains_key(key) {
-                    return Err(Error::ConstraintNotSatisfied {
-                        field: key.clone(),
-                        reason: "unknown field not allowed (zero-trust mode)".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Check all defined constraints are satisfied
-        for (field, constraint) in &self.constraints {
-            let value = args
-                .get(field)
-                .ok_or_else(|| Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "missing required argument".to_string(),
-                })?;
-
-            if !constraint.matches(value)? {
-                return Err(Error::ConstraintNotSatisfied {
-                    field: field.clone(),
-                    reason: "value does not match constraint".to_string(),
-                });
-            }
+        let diagnostics = self.diagnose(args)?;
+        if let Some(violation) = diagnostics.violations.into_iter().next() {
+            return Err(Error::ConstraintNotSatisfied {
+                field: violation.field,
+                reason: violation.reason,
+            });
         }
         Ok(())
     }
 
-    /// Validate that `child` is a valid attenuation of this constraint set.
+    /// Diagnose all constraint failures without performing authorization.
+    ///
+    /// This is intended for developer-facing preflight and error rendering.
+    /// It does not verify signatures, expiry, revocation, approvals, or PoP and
+    /// must never be treated as an authorization verdict.
+    ///
+    /// Results contain field names but never argument values. Unknown fields
+    /// are reported first in lexical order, followed by declared fields in the
+    /// constraint set's canonical order.
+    pub fn diagnose(
+        &self,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<ConstraintDiagnostics> {
+        let closed_world = !self.constraints.is_empty() && !self.allow_unknown;
+        let mut violations = Vec::new();
+
+        if closed_world {
+            let mut unknown_fields: Vec<_> = args
+                .keys()
+                .filter(|field| !self.constraints.contains_key(*field))
+                .cloned()
+                .collect();
+            unknown_fields.sort();
+            violations.extend(unknown_fields.into_iter().map(|field| ConstraintViolation {
+                field,
+                kind: ConstraintViolationKind::UnknownField,
+                reason: "unknown field not allowed (zero-trust mode)".to_string(),
+            }));
+        }
+
+        for (field, constraint) in &self.constraints {
+            if self.is_optional(field) {
+                constraint.validate_optional_support()?;
+            }
+            let Some(value) = args.get(field) else {
+                if self.is_optional(field) {
+                    continue;
+                }
+                violations.push(ConstraintViolation {
+                    field: field.clone(),
+                    kind: ConstraintViolationKind::MissingRequired,
+                    reason: "missing required argument".to_string(),
+                });
+                continue;
+            };
+
+            match constraint.matches(value) {
+                Ok(true) => {}
+                Ok(false) | Err(Error::InvalidIpAddress { .. }) | Err(Error::InvalidUrl { .. }) => {
+                    // Invalid runtime IP/URL strings are ordinary mismatches,
+                    // not diagnostic-system failures. Normalize them here so
+                    // diagnostics can collect every violation without leaking
+                    // argument values carried by the parsing error.
+                    violations.push(ConstraintViolation {
+                        field: field.clone(),
+                        kind: ConstraintViolationKind::ConstraintMismatch,
+                        reason: "value does not match constraint".to_string(),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Ok(ConstraintDiagnostics {
+            closed_world,
+            violations,
+        })
+    }
+
+    /// True when arguments this set does not declare are admitted: it is
+    /// empty, or `allow_unknown` is set.
+    fn admits_undeclared(&self) -> bool {
+        self.constraints.is_empty() || self.allow_unknown
+    }
+
+    /// Validate that `child` is a valid attenuation of this constraint set:
+    /// every invocation `child` admits is one this set admits.
     ///
     /// # Monotonicity Rules
     ///
-    /// - Child must have all constraints that parent has (can be narrower)
-    /// - When the parent map is non-empty, the child must have exactly
-    ///   the same argument keys (keyset identity, I4). Adding a key
-    ///   produces invocations the parent's closed-world check rejects;
-    ///   dropping a key reopens that argument. Both break monotonicity.
-    /// - When the parent map is empty (open-world), the child may
-    ///   introduce any keys (open-world to closed-world transition).
-    /// - Child cannot enable `allow_unknown` if parent has it disabled
-    ///   (that would expand capabilities)
-    /// - Child can disable `allow_unknown` even if parent enabled it
-    ///   (that's more restrictive)
+    /// - A child admits undeclared arguments only if the parent does.
+    /// - Each argument the child declares is one the parent declares, with a
+    ///   constraint at least as narrow, or one the parent leaves undeclared
+    ///   and admits.
+    /// - Optional arguments may become required; required arguments cannot
+    ///   become optional.
+    /// - The child declares every argument the parent requires. It may leave
+    ///   out one the parent marks optional, provided the child admits no
+    ///   undeclared arguments: the child then refuses that argument, which
+    ///   the parent allowed to be absent.
     pub fn validate_attenuation(&self, child: &ConstraintSet) -> Result<()> {
-        if !self.allow_unknown && child.allow_unknown {
+        if child.admits_undeclared() && !self.admits_undeclared() {
             return Err(Error::MonotonicityViolation(
-                "child cannot enable allow_unknown when parent has it disabled".to_string(),
+                "child cannot admit undeclared arguments when the parent does not".to_string(),
             ));
         }
 
-        // Check each parent constraint has a valid child constraint
         for (field, parent_constraint) in &self.constraints {
-            let child_constraint = child.constraints.get(field).ok_or_else(|| {
-                Error::MonotonicityViolation(format!(
+            if self.is_optional(field) {
+                // Neither requiring the argument nor leaving it out may revive
+                // a parent policy that refuses every invocation because its
+                // predicate is unsupported.
+                parent_constraint.validate_optional_support()?;
+            }
+            let Some(child_constraint) = child.constraints.get(field) else {
+                if self.is_optional(field) && !child.admits_undeclared() {
+                    continue;
+                }
+                return Err(Error::MonotonicityViolation(format!(
                     "child is missing constraint for field '{}' that parent has",
                     field
-                ))
-            })?;
+                )));
+            };
 
+            if !self.is_optional(field) && child.is_optional(field) {
+                return Err(Error::MonotonicityViolation(format!(
+                    "child cannot make required argument '{field}' optional"
+                )));
+            }
             parent_constraint.validate_attenuation(child_constraint)?;
         }
 
-        // Keyset identity (I4): when the parent map is non-empty, the
-        // child must not introduce argument keys absent from the parent.
-        // When the parent map is empty, any child keys are permitted
-        // (open-world to closed-world transition).
-        if !self.constraints.is_empty() {
+        // A parent that admits no undeclared arguments refuses any the child
+        // adds, so the child would admit invocations the parent does not.
+        if !self.admits_undeclared() {
             for key in child.constraints.keys() {
                 if !self.constraints.contains_key(key) {
                     return Err(Error::MonotonicityViolation(format!(
@@ -4075,11 +5033,53 @@ impl ConstraintSet {
     }
 }
 
+/// Validate that a child's tool map attenuates its parent's.
+///
+/// A tool resolves to its own entry, or to the `*` entry when it has none.
+/// So a child's `*` entry governs every tool the child does not name, and
+/// must stay within what the parent allows for each of those tools.
+///
+/// `noun` names the parent map in errors ("tools" or "capabilities").
+pub(crate) fn validate_tool_map_attenuation(
+    parent: &BTreeMap<String, ConstraintSet>,
+    child: &BTreeMap<String, ConstraintSet>,
+    noun: &str,
+) -> Result<()> {
+    for (tool, child_constraints) in child {
+        let parent_constraints = parent
+            .get(tool)
+            .or_else(|| parent.get("*"))
+            .ok_or_else(|| {
+                Error::MonotonicityViolation(format!("tool '{}' not in parent's {}", tool, noun))
+            })?;
+        parent_constraints.validate_attenuation(child_constraints)?;
+    }
+
+    if let Some(child_wildcard) = child.get("*") {
+        for (tool, parent_constraints) in parent {
+            if tool == "*" || child.contains_key(tool) {
+                continue;
+            }
+            parent_constraints
+                .validate_attenuation(child_wildcard)
+                .map_err(|e| {
+                    Error::MonotonicityViolation(format!(
+                        "the child's '*' entry would widen tool '{}': {}",
+                        tool, e
+                    ))
+                })?;
+        }
+    }
+
+    Ok(())
+}
+
 impl FromIterator<(String, Constraint)> for ConstraintSet {
     fn from_iter<T: IntoIterator<Item = (String, Constraint)>>(iter: T) -> Self {
         Self {
             constraints: iter.into_iter().collect(),
             allow_unknown: false,
+            optional_fields: BTreeSet::new(),
         }
     }
 }
@@ -4265,16 +5265,16 @@ mod tests {
     }
 
     #[test]
-    fn test_range_rejects_nan() {
+    fn test_range_rejects_non_finite_bounds() {
         // NaN in min
         let result = Range::min(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in max
         let result = Range::max(f64::NAN);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NaN"));
+        assert!(result.unwrap_err().to_string().contains("finite"));
 
         // NaN in between
         let result = Range::between(f64::NAN, 100.0);
@@ -4288,9 +5288,17 @@ mod tests {
         assert!(Range::min(0.0).is_ok());
         assert!(Range::between(0.0, 100.0).is_ok());
 
-        // Infinity is allowed (it's a valid f64)
-        assert!(Range::max(f64::INFINITY).is_ok());
-        assert!(Range::min(f64::NEG_INFINITY).is_ok());
+        assert!(Range::max(f64::INFINITY).is_err());
+        assert!(Range::min(f64::NEG_INFINITY).is_err());
+
+        // Public fields cannot bypass the invariant during serialization.
+        let invalid = Range {
+            min: Some(f64::INFINITY),
+            max: None,
+            min_inclusive: true,
+            max_inclusive: true,
+        };
+        assert!(serde_json::to_string(&invalid).is_err());
     }
 
     #[test]
@@ -5162,25 +6170,29 @@ mod tests {
     #[test]
     fn test_unknown_constraint_type_id() {
         // Manually construct CBOR for unknown type ID 200
-        // [200, <bytes>] - Unknown expects raw bytes as payload
-        let payload_bytes: Vec<u8> = vec![1, 2, 3, 4];
+        let payload_value = ciborium::value::Value::Map(vec![(
+            ciborium::value::Value::Text("future".to_string()),
+            ciborium::value::Value::Bool(true),
+        )]);
+        let mut encoded_payload = Vec::new();
+        ciborium::ser::into_writer(&payload_value, &mut encoded_payload).unwrap();
         let mut bytes = Vec::new();
-        ciborium::ser::into_writer(
-            &(200u8, serde_bytes::Bytes::new(&payload_bytes)),
-            &mut bytes,
-        )
-        .unwrap();
+        ciborium::ser::into_writer(&(200u8, &payload_value), &mut bytes).unwrap();
 
         let constraint: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
 
-        match constraint {
+        match &constraint {
             Constraint::Unknown { type_id, payload } => {
-                assert_eq!(type_id, 200);
-                assert_eq!(payload, payload_bytes);
+                assert_eq!(*type_id, 200);
+                assert_eq!(payload, &encoded_payload);
                 // Unknown constraints always fail authorization (verified in other tests)
             }
             _ => panic!("Expected Unknown variant, got {:?}", constraint),
         }
+
+        let mut round_trip = Vec::new();
+        ciborium::ser::into_writer(&constraint, &mut round_trip).unwrap();
+        assert_eq!(round_trip, bytes);
     }
 
     #[test]
@@ -5255,17 +6267,41 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
-    fn test_url_pattern_bare_wildcard_host() {
-        // SECURITY: Bare wildcard hosts (https://*/*) are intentionally unsupported.
-        // This pattern would match ANY domain, bypassing SSRF protection.
-        // Users must use either:
-        //   - Explicit domains: UrlPattern("https://*.example.com/*")
-        //   - UrlSafe() for SSRF-protected URL matching
-        let pattern = UrlPattern::new("https://*/*").unwrap();
+    fn test_url_pattern_bare_wildcard_host_rejected() {
+        // SECURITY: Bare wildcard hosts are intentionally unsupported: they would
+        // match any domain. Use explicit domains, *.example.com, or UrlSafe().
+        for pattern in [
+            "https://*",
+            "https://*/",
+            "https://*/*",
+            "*://*/*",
+            "https://*:8443/api/*",
+            "https://a*b.example.com/*",
+            "https://*.*.example.com/*",
+        ] {
+            let err = UrlPattern::new(pattern).expect_err(pattern);
+            assert!(
+                err.to_string().contains("wildcard host"),
+                "{pattern}: {err}"
+            );
+        }
+        assert!(UrlPattern::new("https://*.example.com/*").is_ok());
+        assert!(UrlPattern::new("https://example.com/*").is_ok());
+    }
 
-        // The parser sets host_pattern incorrectly due to replacement order,
-        // but this is actually a security feature - bare wildcard hosts should not match.
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_rejected_by_human_readable_deserializers() {
+        let err = serde_json::from_str::<UrlPattern>("\"https://*/*\"").unwrap_err();
+        assert!(err.to_string().contains("wildcard host"));
+    }
+
+    #[test]
+    fn test_url_pattern_bare_wildcard_host_still_decodes_from_cbor() {
+        // Signed warrants use CBOR. Preserve decode compatibility without
+        // reopening JSON/YAML authoring paths for an invalid new pattern.
+        let mut encoded = Vec::new();
+        ciborium::ser::into_writer("https://*/*", &mut encoded).unwrap();
+        let pattern: UrlPattern = ciborium::de::from_reader(encoded.as_slice()).unwrap();
         assert!(!pattern.matches_url("https://example.com/path").unwrap());
         assert!(!pattern.matches_url("https://evil.com/attack").unwrap());
     }
@@ -5483,7 +6519,7 @@ mod tests {
         // We do not validate against it because... what were we talking about?
         let unknown = Constraint::Unknown {
             type_id: 55,
-            payload: vec![0, 1, 2, 3],
+            payload: vec![0xa0], // A valid single CBOR item: {}.
         };
 
         // Unknown constraints always fail matching
@@ -5616,6 +6652,115 @@ mod tests {
     }
 
     #[test]
+    fn test_constraint_diagnostics_reports_all_failures_deterministically() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("amount", Range::new(Some(0.0), Some(100.0)).unwrap());
+        cs.insert("currency", Exact::new("USD"));
+        cs.insert("memo", Wildcard::new());
+
+        let mut args = HashMap::new();
+        args.insert("amount".to_string(), ConstraintValue::Float(300.0));
+        args.insert("z_extra".to_string(), ConstraintValue::Boolean(true));
+        args.insert("a_extra".to_string(), ConstraintValue::Boolean(true));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(diagnostics.closed_world);
+        assert!(!diagnostics.is_satisfied());
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a_extra", "unknown_field"),
+                ("z_extra", "unknown_field"),
+                ("amount", "constraint_mismatch"),
+                ("currency", "missing_required"),
+                ("memo", "missing_required"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_honors_allow_unknown_and_wildcard() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("payload", Wildcard::new());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "payload".to_string(),
+            ConstraintValue::String("anything".into()),
+        );
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert!(!diagnostics.closed_world);
+        assert!(diagnostics.is_satisfied());
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_and_matches_share_first_failure() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("required", Exact::new("value"));
+
+        let mut args = HashMap::new();
+        args.insert("extra".to_string(), ConstraintValue::Integer(1));
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        let first = diagnostics.violations.first().unwrap();
+        let error = cs.matches(&args).unwrap_err();
+        match error {
+            Error::ConstraintNotSatisfied { field, reason } => {
+                assert_eq!(field, first.field);
+                assert_eq!(reason, first.reason);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn test_constraint_diagnostics_redacts_and_collects_invalid_network_values() {
+        let mut cs = ConstraintSet::new();
+        cs.insert("ip", Cidr::new("10.0.0.0/8").unwrap());
+        cs.insert("url", UrlPattern::new("https://*.example.com/*").unwrap());
+        cs.insert("required", Exact::new("present"));
+
+        let invalid_ip = "secret-invalid-ip";
+        let invalid_url = "secret invalid url";
+        let mut args = HashMap::new();
+        args.insert(
+            "ip".to_string(),
+            ConstraintValue::String(invalid_ip.to_string()),
+        );
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String(invalid_url.to_string()),
+        );
+
+        let diagnostics = cs.diagnose(&args).unwrap();
+        assert_eq!(diagnostics.violations.len(), 3);
+        assert_eq!(
+            diagnostics
+                .violations
+                .iter()
+                .map(|violation| (violation.field.as_str(), violation.kind.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ip", "constraint_mismatch"),
+                ("required", "missing_required"),
+                ("url", "constraint_mismatch"),
+            ]
+        );
+        let rendered = format!("{diagnostics:?}");
+        assert!(!rendered.contains(invalid_ip));
+        assert!(!rendered.contains(invalid_url));
+        assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
     fn test_zero_trust_attenuation_allow_unknown_not_inherited() {
         // Parent has allow_unknown=true, child doesn't specify
         // Child should default to allow_unknown=false (closed world)
@@ -5737,6 +6882,36 @@ mod tests {
         assert!(sp.matches(&"/data/file.txt".into()).unwrap());
         assert!(!sp.matches(&"/etc/passwd".into()).unwrap());
         assert!(!sp.matches(&123.into()).unwrap()); // Non-string returns false
+
+        // List of paths: every item must be a contained string
+        let ok_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/data/sub/b.txt".into()),
+        ]);
+        assert!(sp.matches(&ok_list).unwrap());
+
+        let bad_list = ConstraintValue::List(vec![
+            ConstraintValue::String("/data/a.txt".into()),
+            ConstraintValue::String("/etc/passwd".into()),
+        ]);
+        assert!(!sp.matches(&bad_list).unwrap());
+
+        let non_str_list = ConstraintValue::List(vec![ConstraintValue::Integer(1)]);
+        assert!(!sp.matches(&non_str_list).unwrap());
+
+        // Subpath -> Subset and Subpath -> Exact(List) attenuation
+        let parent = Constraint::Subpath(sp);
+        let child_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/data/b.txt"]));
+        assert!(parent.validate_attenuation(&child_subset).is_ok());
+
+        let bad_subset = Constraint::Subset(Subset::new(["/data/a.txt", "/etc/passwd"]));
+        assert!(parent.validate_attenuation(&bad_subset).is_err());
+
+        let child_exact_list = Constraint::Exact(Exact::new(ok_list));
+        assert!(parent.validate_attenuation(&child_exact_list).is_ok());
+
+        let bad_exact_list = Constraint::Exact(Exact::new(bad_list));
+        assert!(parent.validate_attenuation(&bad_exact_list).is_err());
     }
 
     // -------------------------------------------------------------------------
@@ -5758,6 +6933,113 @@ mod tests {
         assert!(!us.is_safe("http://[::1]/").unwrap());
         assert_eq!(
             us.rejection_reason("http://127.0.0.1/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
+    }
+
+    /// Each pair names one destination two ways. An alternate spelling must
+    /// get the same verdict as the canonical one.
+    #[test]
+    fn test_url_safe_alternate_spellings_judged_alike() {
+        let deny = UrlSafe {
+            deny_domains: Some(vec!["evil.example".into(), "*.evil2.example".into()]),
+            ..UrlSafe::new()
+        };
+        let tlds = UrlSafe {
+            block_internal_tlds: true,
+            ..UrlSafe::new()
+        };
+        let default = UrlSafe::new();
+        let cases: &[(&UrlSafe, &str, &str)] = &[
+            (&default, "http://localhost/", "http://localhost./"),
+            (&default, "http://localhost/", "http://LOCALHOST./"),
+            (&default, "http://localhost/", "http://localhost.:8080/"),
+            (
+                &default,
+                "http://localhost/",
+                "http://localhost.localdomain./",
+            ),
+            (
+                &default,
+                "http://metadata.google.internal/",
+                "http://metadata.google.internal./",
+            ),
+            (&tlds, "http://foo.internal/", "http://foo.internal./"),
+            (&tlds, "http://x.corp/", "http://x.corp./"),
+            (&deny, "http://evil.example/", "http://evil.example./"),
+            (&deny, "http://a.evil2.example/", "http://a.evil2.example./"),
+            (&deny, "http://evil2.example/", "http://evil2.example./"),
+            (&default, "http://0.0.0.0/", "http://[::]/"),
+            (&default, "http://0.0.0.0/", "http://[::0.0.0.0]/"),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[2002:a9fe:a9fe::]/",
+            ),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[64:ff9b::a9fe:a9fe]/",
+            ),
+            (
+                &default,
+                "http://169.254.169.254/",
+                "http://[2001:0:4136:e378:8000:63bf:5601:5601]/",
+            ),
+            (&default, "http://127.0.0.1/", "http://[2002:7f00:1::]/"),
+            (&default, "http://10.0.0.1/", "http://[64:ff9b::a00:1]/"),
+            (&default, "http://10.0.0.1/", "http://100.64.0.1/"),
+            (&default, "http://10.0.0.1/", "http://198.18.0.1/"),
+            (&default, "http://10.0.0.1/", "http://[64:ff9b:1::1]/"),
+            (&default, "http://[fd00::1]/", "http://[fec0::1]/"),
+            (&default, "http://224.0.0.1/", "http://[ff02::1]/"),
+            (&default, "http://255.255.255.255/", "http://[ff01::1]/"),
+            (&default, "http://255.255.255.255/", "http://240.0.0.1/"),
+            (&default, "http://224.0.0.1/", "http://192.0.2.1/"),
+            (&default, "http://224.0.0.1/", "http://[2001:db8::1]/"),
+        ];
+        for (policy, canonical, alternate) in cases {
+            assert_eq!(
+                policy.rejection_reason(canonical).unwrap(),
+                policy.rejection_reason(alternate).unwrap(),
+                "{alternate} must be judged like {canonical}"
+            );
+            assert!(
+                !policy.is_safe(canonical).unwrap(),
+                "{canonical} must be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_root_label_edge_cases() {
+        let us = UrlSafe::new();
+        assert!(us.is_safe("https://api.github.com./").unwrap());
+        assert!(!us.is_safe("http://localhost../").unwrap());
+        assert!(us.is_safe("http://[2001:4860:4860::8888]/").unwrap());
+        assert!(us.is_safe("http://[2002:808:808::]/").unwrap());
+        assert!(us.is_safe("http://192.0.0.9/").unwrap());
+
+        // An allowlist accepts the fully-qualified spelling of an allowed name
+        // in both directions.
+        let allow = UrlSafe::with_domains(vec!["api.github.com", "*.example.com."]);
+        assert!(allow.is_safe("https://api.github.com./").unwrap());
+        assert!(allow.is_safe("https://a.example.com/").unwrap());
+        assert!(!allow.is_safe("https://api.github.com.evil/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_unspecified_blocked_by_loopback_alone() {
+        let us = UrlSafe {
+            block_reserved: false,
+            ..UrlSafe::new()
+        };
+        assert_eq!(
+            us.rejection_reason("http://[::]/").unwrap(),
+            Some(UrlSafeRejection::Loopback)
+        );
+        assert_eq!(
+            us.rejection_reason("http://0.0.0.0/").unwrap(),
             Some(UrlSafeRejection::Loopback)
         );
     }
@@ -5797,12 +7079,9 @@ mod tests {
     fn test_url_safe_empty_host() {
         let us = UrlSafe::new();
 
-        // Note: The Rust `url` crate (WHATWG spec) parses "https:///path" as "https://path/"
-        // where "path" becomes the hostname. This is technically correct per spec.
-        // So "https:///path" is valid (host = "path"), but "http://" is invalid (no host).
-
-        // This is actually valid - parsed as https://path/
-        assert!(us.is_safe("https:///path").unwrap());
+        // WHATWG reads "https:///path" as host "path"; RFC 3986 clients read
+        // an empty host. The checked host would not be the fetched one.
+        assert!(!us.is_safe("https:///path").unwrap());
 
         // But "http://" with no path truly has no host
         assert!(!us.is_safe("http://").unwrap());
@@ -5815,6 +7094,57 @@ mod tests {
     fn test_url_safe_null_bytes() {
         let us = UrlSafe::new();
         assert!(!us.is_safe("https://evil.com\x00.trusted.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_parser_differential_syntax() {
+        // Reject ambiguous URL forms, including those that the WHATWG parser
+        // resolves to an allowed host but another client may read differently.
+        let us = UrlSafe::with_domains(vec!["allowed.com"]);
+        for url in [
+            "http://allowed.com\\@169.254.169.254/latest/meta-data/",
+            "http://allowed.com\\@10.0.0.1/",
+            "http://a@allowed.com@169.254.169.254/",
+            "http://allowed.com@a@169.254.169.254/",
+            // The final host is allowed, so only the repeated-`@` guard denies it.
+            "http://a@169.254.169.254@allowed.com/",
+            "http://allowed.com\t/",
+            "http://allowed.com\n/",
+            " http://allowed.com/",
+            "http://allowed.com/ ",
+            "http:/allowed.com/",
+            "http:allowed.com/",
+            "http:///allowed.com/",
+        ] {
+            assert!(!us.is_safe(url).unwrap(), "{url:?} must be rejected");
+        }
+        // Plain URLs, single userinfo and `@` outside the authority still pass.
+        for url in [
+            "http://allowed.com/latest",
+            "https://user:pass@allowed.com/",
+            "https://evil.com@allowed.com/",
+            "https://allowed.com:443/a/b?q=1#frag",
+            "https://allowed.com/users/@me",
+            "https://allowed.com/?mention=@me",
+        ] {
+            assert!(us.is_safe(url).unwrap(), "{url:?} should pass");
+        }
+    }
+
+    #[test]
+    fn test_url_pattern_rejects_parser_differential_syntax() {
+        let p = UrlPattern::new("https://*.allowed.com/*").unwrap();
+        assert!(p.matches_url("https://api.allowed.com/x").unwrap());
+        assert!(!p
+            .matches_url("https://api.allowed.com\\@169.254.169.254/x")
+            .unwrap());
+        assert!(!p
+            .matches_url("https://u@api.allowed.com@10.0.0.1/x")
+            .unwrap());
+        // An allowed final host must not hide ambiguous repeated userinfo.
+        assert!(!p
+            .matches_url("https://u@10.0.0.1@api.allowed.com/x")
+            .unwrap());
     }
 
     #[test]
@@ -5831,6 +7161,40 @@ mod tests {
         assert!(us.is_safe("https://api.github.com/repos").unwrap());
         assert!(us.is_safe("https://sub.example.com/path").unwrap());
         assert!(!us.is_safe("https://other.com/").unwrap());
+        assert!(!us.is_safe("https://8.8.8.8/").unwrap());
+
+        let exact_ip = UrlSafe::with_domains(vec!["8.8.8.8"]);
+        assert!(exact_ip.is_safe("https://8.8.8.8/").unwrap());
+        assert!(!exact_ip.is_safe("https://1.1.1.1/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_rejects_invalid_domain_patterns() {
+        for pattern in [
+            "",
+            "*",
+            "*.",
+            "*..example.com",
+            "foo.*.com",
+            "https://example.com",
+        ] {
+            let us = UrlSafe::with_domains(vec![pattern]);
+            assert!(
+                us.validate().is_err(),
+                "accepted invalid pattern {pattern:?}"
+            );
+            assert!(
+                us.is_safe("https://example.com/").is_err(),
+                "evaluated invalid pattern {pattern:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_url_safe_accepts_hosts_supported_by_url_parser() {
+        let us = UrlSafe::with_domains(vec!["_service.internal"]);
+        assert!(us.validate().is_ok());
+        assert!(us.is_safe("https://_service.internal/").unwrap());
     }
 
     #[test]
@@ -5996,6 +7360,69 @@ mod tests {
         assert!(parent.validate_attenuation(&child_bad2).is_err());
     }
 
+    #[test]
+    fn test_url_safe_attenuation_canonicalizes_domain_patterns() {
+        let parent = UrlSafe::with_domains(vec!["bücher.example", "*.example.com"]);
+
+        // IDNs are compared using the same canonical form as URL matching.
+        let idn_child = UrlSafe::with_domains(vec!["xn--bcher-kva.example"]);
+        assert!(parent.validate_attenuation(&idn_child).is_ok());
+
+        // Runtime wildcard semantics include both the base domain and nested
+        // wildcard policies, so attenuation must recognize both as subsets.
+        let base_child = UrlSafe::with_domains(vec!["example.com"]);
+        assert!(parent.validate_attenuation(&base_child).is_ok());
+        let nested_child = UrlSafe::with_domains(vec!["*.api.example.com"]);
+        assert!(parent.validate_attenuation(&nested_child).is_ok());
+    }
+
+    #[test]
+    fn test_url_safe_attenuation_rejects_malformed_policies() {
+        let malformed_parent = UrlSafe::with_domains(vec!["foo.*.example.com"]);
+        let valid = UrlSafe::with_domains(vec!["api.example.com"]);
+        assert!(malformed_parent.validate_attenuation(&valid).is_err());
+
+        let malformed_child = UrlSafe::with_domains(vec!["https://example.com"]);
+        assert!(valid.validate_attenuation(&malformed_child).is_err());
+
+        // Host parsing percent-decodes domains, so encoded wildcards must be
+        // rejected after canonicalization as well as in the raw input.
+        for pattern in ["%2A.example.com", "*.%2A.example.com"] {
+            let encoded_wildcard = UrlSafe::with_domains(vec![pattern]);
+            assert!(encoded_wildcard.validate().is_err());
+            assert!(encoded_wildcard.validate_attenuation(&valid).is_err());
+        }
+    }
+
+    #[test]
+    fn test_url_safe_deny_attenuation_uses_semantic_coverage() {
+        let idn_parent = UrlSafe {
+            deny_domains: Some(vec!["bücher.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        let idn_child = UrlSafe {
+            deny_domains: Some(vec!["xn--bcher-kva.example".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(idn_parent.validate_attenuation(&idn_child).is_ok());
+
+        let parent = UrlSafe {
+            deny_domains: Some(vec!["*.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        let broader_child = UrlSafe {
+            deny_domains: Some(vec!["*.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&broader_child).is_ok());
+
+        let narrower_child = UrlSafe {
+            deny_domains: Some(vec!["*.v1.api.example.com".to_string()]),
+            ..UrlSafe::new()
+        };
+        assert!(parent.validate_attenuation(&narrower_child).is_err());
+    }
+
     // ========================================================================
     // Shlex tests
     // ========================================================================
@@ -6132,21 +7559,19 @@ mod tests {
     }
 
     // ========================================================================
-    // Shlex corner cases (Rust conservative approximation)
+    // Shlex quoting
     // ========================================================================
 
     #[test]
-    fn test_shlex_quoted_operators_rejected_by_rust() {
-        // Python shlex accepts these (operators inside quotes are safe).
-        // Rust's conservative check rejects ANY metacharacter regardless of quoting.
-        // This is the intentional asymmetry documented in the spec.
-        let sh = Shlex::new(vec!["ls"]);
-        assert!(!sh
+    fn test_shlex_quoted_operators_are_literals() {
+        let sh = Shlex::new(vec!["ls", "echo"]);
+        assert!(sh
             .matches(&ConstraintValue::String(r#"ls "foo; bar""#.into()))
             .unwrap());
-        assert!(!sh
-            .matches(&ConstraintValue::String(r#"ls 'foo|bar'"#.into()))
+        assert!(sh
+            .matches(&ConstraintValue::String("ls 'foo|bar'".into()))
             .unwrap());
+        // `$` still expands inside double quotes, so the raw command is refused.
         assert!(!sh
             .matches(&ConstraintValue::String(r#"echo "$(date)""#.into()))
             .unwrap());
@@ -6172,14 +7597,22 @@ mod tests {
 
     #[test]
     fn test_shlex_path_traversal_in_binary() {
-        let sh = Shlex::new(vec!["npm"]);
-        // Path traversal doesn't bypass the allowlist — basename check
-        // matches "npm" but "../npm" is checked as full path first
+        let sh = Shlex::new(vec!["npm", "/usr/bin/npm"]);
+        // Any command word containing `..` is rejected, and a bare allow entry
+        // matches only that bare word.
+        assert!(!sh
+            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .unwrap());
+        assert!(!sh
+            .matches(&ConstraintValue::String(
+                "/tmp/l/../../usr/bin/npm install".into()
+            ))
+            .unwrap());
         assert!(!sh
             .matches(&ConstraintValue::String("../npm install".into()))
             .unwrap());
         assert!(!sh
-            .matches(&ConstraintValue::String("/usr/../bin/npm install".into()))
+            .matches(&ConstraintValue::String("/usr/../bin/rm install".into()))
             .unwrap());
     }
 
@@ -6203,10 +7636,7 @@ mod tests {
 
     #[test]
     fn test_shlex_backslash_not_rejected() {
-        // Backslash is NOT in SHELL_DANGEROUS_CHARS — it's a quoting mechanism
-        // but not a command separator or expansion trigger. The conservative
-        // approach accepts it, which means `ls foo\ bar` passes Rust but would
-        // need Python's full shlex to determine if it's safe.
+        // A backslash escapes the next character. `ls foo\ bar` is one argument.
         let sh = Shlex::new(vec!["ls"]);
         assert!(sh
             .matches(&ConstraintValue::String(r"ls foo\ bar".into()))
@@ -6235,9 +7665,7 @@ mod tests {
 
     #[test]
     fn test_shlex_exclamation_not_rejected() {
-        // ! is history expansion in interactive bash but NOT in sh/scripts.
-        // Conservative choice: allow it. If needed, callers can use a narrower
-        // constraint or the Python Shlex which handles this.
+        // ! is history expansion in interactive bash, not in sh scripts.
         let sh = Shlex::new(vec!["echo"]);
         assert!(sh
             .matches(&ConstraintValue::String("echo hello!".into()))
@@ -6259,6 +7687,57 @@ mod tests {
         assert!(!sh
             .matches(&ConstraintValue::String("npm install".into()))
             .unwrap());
+    }
+
+    #[test]
+    fn test_shlex_exact_attenuation_accepts_quoted_operators() {
+        let parent = Constraint::Shlex(Shlex::new(vec!["ls"]));
+        let child = Constraint::Exact(Exact::new(r#"ls "foo; bar""#));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\"b;c""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\b""#)))
+            .is_ok());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\b""#)))
+            .is_ok());
+        let chained = Constraint::Exact(Exact::new("ls; rm"));
+        assert!(parent.validate_attenuation(&chained).is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\""; rm"#)))
+            .is_err());
+        assert!(parent
+            .validate_attenuation(&Constraint::Exact(Exact::new(r#"ls "a\\"; rm"#)))
+            .is_err());
+        // `#` does not start a comment here, so the shell runs `rm`.
+        let hidden = Constraint::Exact(Exact::new("ls foo#; rm -rf /"));
+        assert!(parent.validate_attenuation(&hidden).is_err());
+    }
+
+    #[test]
+    fn test_shlex_shared_vectors() {
+        #[derive(serde::Deserialize)]
+        struct Suite {
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            allow: Vec<String>,
+            command: String,
+            matches: bool,
+        }
+        let suite: Suite =
+            serde_json::from_str(include_str!("../../tests/vectors/shlex.json")).unwrap();
+        for case in suite.cases {
+            let sh = Shlex::new(case.allow);
+            let got = sh
+                .matches(&ConstraintValue::String(case.command.clone()))
+                .unwrap();
+            assert_eq!(got, case.matches, "{}", case.name);
+        }
     }
 
     // ========================================================================
@@ -6327,6 +7806,37 @@ mod tests {
         let child =
             CelConstraint::new("(amount < 10000) && (currency == 'USD' || currency == 'EUR')");
         assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_cel_attenuation_string_literal_whitespace_preserved() {
+        // Whitespace inside a string literal is part of the value, so these
+        // children do not contain the parent clause.
+        let cases = [
+            (
+                "!value.contains('rm -rf')",
+                "(!value.contains('rm-rf')) && (true)",
+            ),
+            ("value == 'read only'", "(value == 'readonly') && (true)"),
+            ("value == 'read only'", "value == 'readonly'"),
+            ("value == \"a b\"", "(value == \"a\tb\") && (true)"),
+        ];
+        for (parent, child) in cases {
+            assert!(
+                CelConstraint::new(parent)
+                    .validate_attenuation(&CelConstraint::new(child))
+                    .is_err(),
+                "{child} must not attenuate {parent}"
+            );
+        }
+
+        // Formatting outside literals is still free.
+        let parent = CelConstraint::new("value == 'read only'");
+        let child = CelConstraint::new("( value=='read only' )  &&  ( size(value) > 0 )");
+        assert!(parent.validate_attenuation(&child).is_ok());
+        let same = CelConstraint::new("value  ==  'read only'");
+        assert!(parent.validate_attenuation(&same).is_ok());
     }
 
     #[cfg(feature = "cel")]
@@ -6407,6 +7917,260 @@ mod tests {
             parent.validate_attenuation(&child).is_err(),
             "Not(OneOf[wider]) -> Not(Exact) must be rejected (child accepts more values)"
         );
+    }
+
+    #[test]
+    fn test_negation_rejects_values_of_other_kinds() {
+        let list = |items: &[&str]| {
+            ConstraintValue::List(
+                items
+                    .iter()
+                    .map(|s| ConstraintValue::String(s.to_string()))
+                    .collect(),
+            )
+        };
+        let object = ConstraintValue::Object(BTreeMap::from([(
+            "v".to_string(),
+            ConstraintValue::String("x".to_string()),
+        )]));
+        let off_kind = [
+            list(&["rm -rf /"]),
+            list(&["prod"]),
+            list(&[]),
+            object,
+            ConstraintValue::Integer(5),
+            ConstraintValue::Float(5.5),
+            ConstraintValue::Boolean(false),
+            ConstraintValue::Null,
+        ];
+        let string_rules = [
+            Constraint::Not(Not::new(Constraint::Regex(
+                RegexConstraint::new("rm").unwrap(),
+            ))),
+            Constraint::Not(Not::new(Constraint::Pattern(
+                Pattern::new("*.exe").unwrap(),
+            ))),
+            Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod")))),
+            Constraint::Not(Not::new(Constraint::Subpath(Subpath::new("/etc").unwrap()))),
+            Constraint::Not(Not::new(Constraint::OneOf(OneOf::new(vec!["prod"])))),
+            Constraint::NotOneOf(NotOneOf::new(vec!["prod"])),
+        ];
+        for rule in &string_rules {
+            for value in &off_kind {
+                assert!(
+                    !rule.matches(value).unwrap(),
+                    "{rule:?} must reject {value:?}"
+                );
+            }
+            // Strings are still judged by the rule itself.
+            assert!(rule.matches(&"staging".into()).unwrap(), "{rule:?}");
+        }
+
+        // A numeric rule rejects numeric strings and booleans when negated.
+        let not_high = Constraint::Not(Not::new(Constraint::Range(Range::min(1000.0).unwrap())));
+        assert!(not_high.matches(&ConstraintValue::Integer(5)).unwrap());
+        assert!(!not_high.matches(&ConstraintValue::Integer(5000)).unwrap());
+        assert!(!not_high.matches(&"5000".into()).unwrap());
+        assert!(!not_high.matches(&ConstraintValue::Boolean(true)).unwrap());
+
+        // Entries of several kinds judge each of those kinds.
+        let mixed = NotOneOf::from_values(vec![
+            ConstraintValue::String("50".to_string()),
+            ConstraintValue::Integer(50),
+        ]);
+        assert!(!mixed.matches(&ConstraintValue::Integer(50)).unwrap());
+        assert!(!mixed.matches(&"50".into()).unwrap());
+        assert!(mixed.matches(&ConstraintValue::Integer(49)).unwrap());
+        assert!(!mixed.matches(&ConstraintValue::Boolean(true)).unwrap());
+
+        // List rules keep their list semantics under negation.
+        let no_admin =
+            Constraint::Not(Not::new(Constraint::Contains(Contains::new(vec!["admin"]))));
+        assert!(no_admin.matches(&list(&["user"])).unwrap());
+        assert!(!no_admin.matches(&list(&["admin"])).unwrap());
+        assert!(!no_admin.matches(&"admin".into()).unwrap());
+    }
+
+    #[test]
+    fn test_negation_attenuation_cannot_add_kinds() {
+        // Parent judges strings only, so it rejects every number. A child
+        // that also excluded a number would admit the other numbers.
+        let parent = NotOneOf::new(vec!["prod"]);
+        let widened = NotOneOf::from_values(vec![
+            ConstraintValue::String("prod".to_string()),
+            ConstraintValue::Integer(5),
+        ]);
+        assert!(parent.validate_attenuation(&widened).is_err());
+        assert!(parent
+            .validate_attenuation(&NotOneOf::new(vec!["prod", "staging"]))
+            .is_ok());
+
+        let parent = Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod"))));
+        let widened = Constraint::Not(Not::new(Constraint::OneOf(OneOf {
+            values: vec![
+                ConstraintValue::String("prod".to_string()),
+                ConstraintValue::Integer(5),
+            ],
+        })));
+        assert!(parent.validate_attenuation(&widened).is_err());
+        // Not(Wildcard) admits nothing, so it narrows any negation.
+        let nothing = Constraint::Not(Not::new(Constraint::Wildcard(Wildcard::new())));
+        assert!(parent.validate_attenuation(&nothing).is_ok());
+
+        // Subpath can positively narrow to these list constraints, but
+        // reversing that relation under Not would add string authority.
+        let subpath = Constraint::Subpath(Subpath::new("/etc").unwrap());
+        let list = vec![ConstraintValue::String("/etc/passwd".to_string())];
+        for list_rule in [
+            Constraint::Subset(Subset::new(list.clone())),
+            Constraint::Exact(Exact::new(ConstraintValue::List(list))),
+        ] {
+            assert!(subpath.validate_attenuation(&list_rule).is_ok());
+            let parent = Constraint::Not(Not::new(list_rule));
+            let child = Constraint::Not(Not::new(subpath.clone()));
+            let witness = ConstraintValue::String("/tmp/allowed".to_string());
+            assert!(!parent.matches(&witness).unwrap());
+            assert!(child.matches(&witness).unwrap());
+            assert!(parent.validate_attenuation(&child).is_err());
+        }
+    }
+
+    #[test]
+    fn test_negation_rejects_non_finite_numbers() {
+        let rules = [
+            Constraint::Not(Not::new(Constraint::Range(Range::min(1000.0).unwrap()))),
+            Constraint::Not(Not::new(Constraint::Range(Range::max(1000.0).unwrap()))),
+            Constraint::Not(Not::new(Constraint::Exact(Exact::new(1000)))),
+            Constraint::NotOneOf(NotOneOf::from_values(vec![ConstraintValue::Integer(1000)])),
+            Constraint::NotOneOf(NotOneOf::new(Vec::<String>::new())),
+            Constraint::NotOneOf(NotOneOf::from_values(vec![ConstraintValue::Float(
+                f64::NAN,
+            )])),
+            Constraint::Not(Not::new(Constraint::Regex(
+                RegexConstraint::new("rm").unwrap(),
+            ))),
+            Constraint::NotOneOf(NotOneOf::new(vec!["prod"])),
+        ];
+        for rule in &rules {
+            for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let value = ConstraintValue::Float(number);
+                assert!(
+                    !rule.matches(&value).unwrap(),
+                    "{rule:?} must reject {value:?}"
+                );
+            }
+        }
+        // Finite values still use the ordinary numeric rule.
+        for rule in &rules[..4] {
+            assert!(!rule.matches(&ConstraintValue::Float(1000.0)).unwrap());
+        }
+        assert!(rules[0].matches(&ConstraintValue::Float(999.5)).unwrap());
+        assert!(rules[1].matches(&ConstraintValue::Float(1000.5)).unwrap());
+    }
+
+    #[test]
+    fn test_negation_preserves_unknown_constraint_errors() {
+        let unknown = Constraint::Unknown {
+            type_id: 200,
+            payload: vec![0xf6],
+        };
+        let negated_unknown = Constraint::Not(Not::new(unknown.clone()));
+        for rule in [
+            negated_unknown.clone(),
+            Constraint::Not(Not::new(negated_unknown.clone())),
+            Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+                negated_unknown.clone(),
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+            Constraint::Not(Not::new(Constraint::All(All::new(vec![
+                negated_unknown,
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+        ] {
+            for value in [
+                ConstraintValue::String("allowed".to_string()),
+                ConstraintValue::Integer(5),
+            ] {
+                let error = rule.matches(&value).unwrap_err();
+                assert!(error.to_string().contains("unknown constraint type ID 200"));
+            }
+        }
+    }
+
+    fn nested_negation_with(inner: Constraint) -> Constraint {
+        Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::Not(Not::new(Constraint::All(All::new(vec![
+                inner,
+                Constraint::Exact(Exact::new("blocked")),
+            ])))),
+            Constraint::Exact(Exact::new(1000)),
+        ]))))
+    }
+
+    #[test]
+    fn test_negation_preserves_invalid_constraint_errors() {
+        let invalid = [
+            Constraint::All(All::new(Vec::<Constraint>::new())),
+            Constraint::Regex(RegexConstraint {
+                pattern: "[".to_string(),
+                compiled: None,
+            }),
+            Constraint::Pattern(Pattern {
+                pattern: "[".to_string(),
+                compiled: None,
+            }),
+            Constraint::Cel(CelConstraint::new("(")),
+        ];
+        for inner in invalid {
+            let value = ConstraintValue::Integer(5);
+            let error = inner.matches(&value).unwrap_err();
+            let nested = nested_negation_with(inner).matches(&value).unwrap_err();
+            assert_eq!(nested.to_string(), error.to_string());
+        }
+    }
+
+    #[cfg(not(feature = "cel"))]
+    #[test]
+    fn test_negation_preserves_disabled_cel_error() {
+        let rule = nested_negation_with(Constraint::Cel(CelConstraint::new("false")));
+        assert!(matches!(
+            rule.matches(&ConstraintValue::Integer(5)),
+            Err(Error::FeatureNotEnabled { feature: "cel" })
+        ));
+    }
+
+    #[cfg(feature = "cel")]
+    #[test]
+    fn test_negation_preserves_cel_evaluation_errors_for_off_kind_values() {
+        let inner = Constraint::Cel(CelConstraint::new("value / 0 == 0"));
+        let value = ConstraintValue::Integer(5);
+        assert!(inner.matches(&value).is_err());
+        assert!(nested_negation_with(inner).matches(&value).is_err());
+
+        let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::All(All::new(vec![
+                Constraint::Not(Not::new(Constraint::Exact(Exact::new("prod")))),
+                Constraint::Cel(CelConstraint::new("value / 0 == 0")),
+            ])),
+            Constraint::Exact(Exact::new(1000)),
+        ]))));
+        assert!(rule.matches(&value).is_err());
+    }
+
+    #[test]
+    fn test_negation_keeps_valid_mixed_kind_exclusions() {
+        let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+            Constraint::Exact(Exact::new("prod")),
+            Constraint::Exact(Exact::new(1000)),
+        ]))));
+        assert!(rule.matches(&ConstraintValue::Integer(5)).unwrap());
+        assert!(rule
+            .matches(&ConstraintValue::String("staging".to_string()))
+            .unwrap());
+        assert!(!rule.matches(&ConstraintValue::Integer(1000)).unwrap());
+        assert!(!rule
+            .matches(&ConstraintValue::String("prod".to_string()))
+            .unwrap());
     }
 
     #[test]

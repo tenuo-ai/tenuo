@@ -17,7 +17,7 @@ On Linux or CI, install the CLI from [Temporal downloads](https://docs.temporal.
 
 2. **Python dependencies**
 
-The Temporal integration requires **Python 3.10+** (inherited from `temporalio>=1.23.0`, which provides `SimplePlugin`).
+The Temporal integration requires **Python 3.10+** (inherited from `temporalio>=1.33.0`, which provides `SimplePlugin`).
 
 ```bash
 uv pip install "tenuo[temporal]"

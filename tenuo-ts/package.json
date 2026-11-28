@@ -4,21 +4,41 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build:wasm": "wasm-pack build --release --target nodejs --out-dir ../tenuo-ts/packages/core/src/generated ../tenuo-wasm && rm -f packages/core/src/generated/.gitignore packages/core/src/generated/README.md packages/core/src/generated/.npmignore && printf '%s\\n' '{\"type\":\"commonjs\"}' > packages/core/src/generated/package.json",
-    "test": "pnpm build:wasm && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test",
+    "test": "pnpm test:release-policy && pnpm build:wasm && pnpm --filter @tenuo/core test && pnpm --filter @tenuo/mcp test",
+    "test:release-policy": "node --test scripts/npm-release-policy.test.mjs",
+    "release:check": "node scripts/npm-release-policy.mjs check-workspace",
     "typecheck": "pnpm --filter @tenuo/core typecheck && pnpm --filter @tenuo/mcp typecheck",
     "example:mcp": "pnpm --filter @tenuo/core exec vitest run test/mcp.test.ts -t quarterly-close",
     "example:mcp:host": "pnpm --filter @tenuo/core exec vitest run test/mcp-host.smoke.test.ts",
     "example:mcp:adapter": "pnpm --filter @tenuo/mcp test",
     "example:mcp:v2": "pnpm --filter @tenuo/mcp exec vitest run test/example-v2.test.ts",
+    "example:basic": "pnpm --filter @tenuo/core exec vitest run test/example-basic.test.ts",
     "example:sessions": "pnpm --filter @tenuo/core exec vitest run test/example-sessions.test.ts",
     "test:mutation": "stryker run stryker.core.config.mjs && stryker run stryker.mcp.config.mjs"
   },
   "engines": {
     "node": ">=20"
   },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": "2.1.6",
+      "body-parser": "2.4.0",
+      "brace-expansion": "5.0.12",
+      "fast-uri": "3.1.9",
+      "hono": "4.13.16",
+      "ip-address": "10.7.6",
+      "minimatch": "11.0.4",
+      "proxy-addr": "2.0.8",
+      "qs": "6.17.1",
+      "source-map-js": "1.2.2",
+      "vite": "7.3.7"
+    }
+  },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0"
+    "@stryker-mutator/vitest-runner": "10.0.0",
+    "semver": "7.8.6",
+    "vite": "7.3.7"
   }
 }

@@ -100,6 +100,8 @@ _DECISION_CODE_BY_ERROR_TYPE = {
     "untrusted_issuer": "untrusted-root",
     # Python-side categories with no Rust counterpart; not in Error::name()'s
     # vocabulary, and kept kebab-case so they cannot be mistaken for it.
+    # approval-consumed comes from the consumption store, not verification.
+    "approval_consumed": "approval-consumed",
     "authorization_failed": "authorization-failed",
     "internal_error": "internal-error",
     "tenuo_error": "authorization-failed",
@@ -115,7 +117,9 @@ _POP_ESTABLISHED_ERROR_TYPES = frozenset(
         "constraint_violation",
         "policy_violation",
         "insufficient_approvals",
+        "approval_required",
         "approval_gate_misconfigured",
+        "approval_consumed",
     }
 )
 
@@ -291,7 +295,8 @@ class ControlPlaneClient:
             _receipts.collect_enforcement_receipt(result, chain_result)
         except Exception:  # noqa: BLE001 - collection must not fail the caller
             logger.warning("runtime receipt collection failed", exc_info=True)
-        allowed = getattr(result, "allowed", False)
+        # An observed denial was let through, but the decision was still a deny.
+        allowed = getattr(result, "allowed", False) and not getattr(result, "observed", False)
         tool = getattr(result, "tool", "") or ""
 
         # Resolve arguments — EnforcementResult uses .arguments,
@@ -348,7 +353,7 @@ class ControlPlaneClient:
                 latency_us, request_id, arguments_json,
             )
             self._bind_for_receipts_from_result(result)
-            self._emit_denial_receipt(result, tool, request_id)
+            self._emit_denial_receipt(result, tool, request_id, chain_result)
 
     def _bind_for_receipts_from_result(self, result: Any) -> None:
         """Best-effort receipt trust binding from the authorizer that decided.
@@ -376,12 +381,13 @@ class ControlPlaneClient:
         except Exception as exc:  # noqa: BLE001 - receipt setup must not fail auth
             logger.warning("failed to bind authorizer for receipt emission", exc_info=exc)
 
-    def _emit_denial_receipt(self, result, tool, request_id) -> None:
+    def _emit_denial_receipt(self, result, tool, request_id, chain_result=None) -> None:
         """Sign a receipt for a denial, from the chain that was presented.
 
-        Denials have no ``chain_result`` — ``check_chain`` raises for expiry,
-        revocation, an untrusted root or a constraint miss — so this builds from
-        the presented chain instead. Without it the receipt stream is a
+        Host-policy denials retain a verified decision with its policy snapshot.
+        Earlier failures (expiry, revocation, trust or warrant constraints) have
+        no ``chain_result``, so those build from the presented chain instead.
+        Without this fallback the receipt stream is a
         contiguous run of allows with every refusal silently absent, which is
         the incompleteness the chain link exists to make visible.
 
@@ -395,6 +401,10 @@ class ControlPlaneClient:
         """
         emitter = getattr(self, "_receipt_emitter", None)
         if emitter is None:
+            return
+        decision = chain_result if chain_result is not None else getattr(result, "chain_result", None)
+        if decision is not None:
+            self._emit_receipt(decision, tool, False, request_id, _decision_code(result))
             return
         chain = getattr(result, "presented_chain", None)
         if not chain:

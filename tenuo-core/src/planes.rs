@@ -96,17 +96,27 @@ fn verify_approvals_with_tolerance(
         NotAuthorized,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
-    let mut valid_count = 0u32;
-    let mut seen_approvers = std::collections::HashSet::new();
-    let tolerance_secs = clock_tolerance.num_seconds() as u64;
+    // Every presented approval is checked, not just enough to meet the
+    // threshold, so the set returned does not depend on presentation order: a
+    // retry that presents the same approvals reordered names the same
+    // authorization (idempotency key) and consumes the same approvals.
+    // The approval count is bounded by the DoS limit above.
+    let mut by_approver: std::collections::BTreeMap<[u8; 32], VerifiedApproval> =
+        std::collections::BTreeMap::new();
+    // Clock tolerance covers an approver whose clock runs ahead (an approval
+    // dated slightly in the future). Expiry is strict, as it is for warrants at
+    // authorization: an approval for a high-impact action must not outlive the
+    // window the approver chose.
+    let skew_tolerance_secs = clock_tolerance.num_seconds().max(0) as u64;
     let mut rejections: Vec<Rejection> = Vec::new();
-    let mut verified: Vec<VerifiedApproval> = Vec::new();
 
     for approval in approvals {
-        let payload = match approval.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -119,13 +129,13 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        if seen_approvers.contains(&approval.approver_key) {
-            rejections.push(Rejection::Duplicate);
+        if now >= payload.expires_at {
+            rejections.push(Rejection::Expired);
             continue;
         }
 
-        if payload.expires_at.saturating_add(tolerance_secs) < now {
-            rejections.push(Rejection::Expired);
+        if payload.approved_at > now.saturating_add(skew_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -134,20 +144,33 @@ fn verify_approvals_with_tolerance(
             continue;
         }
 
-        verified.push(VerifiedApproval {
-            approver_key: approval.approver_key.to_bytes(),
-            external_id: payload.external_id.clone(),
-            approved_at: payload.approved_at,
-            expires_at: payload.expires_at,
-            request_hash: payload.request_hash,
-            signed_approval_cbor_b64: Some(approval.to_cbor_b64()?),
-        });
-        valid_count = valid_count.saturating_add(1);
-        seen_approvers.insert(approval.approver_key.clone());
-
-        if valid_count >= threshold {
-            return Ok(verified);
+        let approver_key = approval.approver_key.to_bytes();
+        // One approval per approver counts. Of several valid ones from the same
+        // approver, the lowest nonce is kept, again independent of order.
+        if let Some(kept) = by_approver.get(&approver_key) {
+            rejections.push(Rejection::Duplicate);
+            if kept.nonce <= payload.nonce {
+                continue;
+            }
         }
+        by_approver.insert(
+            approver_key,
+            VerifiedApproval {
+                approver_key,
+                external_id: payload.external_id.clone(),
+                approved_at: payload.approved_at,
+                expires_at: payload.expires_at,
+                request_hash: payload.request_hash,
+                nonce: payload.nonce,
+                signed_approval_cbor_b64: Some(approval.to_cbor_b64()?),
+            },
+        );
+    }
+
+    let valid_count = u32::try_from(by_approver.len()).unwrap_or(u32::MAX);
+    if valid_count >= threshold {
+        // Sorted by approver key (BTreeMap order).
+        return Ok(by_approver.into_values().collect());
     }
 
     // 1-of-1 diagnostic: surface the exact rejection reason
@@ -156,7 +179,8 @@ fn verify_approvals_with_tolerance(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotAuthorized => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -166,7 +190,7 @@ fn verify_approvals_with_tolerance(
 
     // m-of-n: build rejection summary
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -194,6 +218,13 @@ fn verify_approvals_with_tolerance(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -226,8 +257,9 @@ fn verify_approvals_with_tolerance(
 // ============================================================================
 
 /// An approval that passed full cryptographic and semantic verification
-/// during `check_chain`. Only approvals that contributed to meeting the
-/// threshold are included.
+/// during `check_chain`. Every valid approval presented is included (one per
+/// approver), sorted by approver key, so the set does not depend on the order
+/// approvals were presented in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifiedApproval {
     /// Ed25519 public key of the approver (raw 32 bytes).
@@ -240,12 +272,33 @@ pub struct VerifiedApproval {
     pub expires_at: u64,
     /// Hash binding the approval to (warrant_id, tool, args, holder).
     pub request_hash: [u8; 32],
+    /// The approval's 128-bit nonce. Identifies this approval, as opposed to
+    /// the request it covers, for at-most-once use at the enforcement point.
+    /// All zero when deserializing older payloads.
+    #[serde(default)]
+    pub nonce: [u8; 16],
     /// Standard base64-encoded CBOR [`crate::approval::SignedApproval`] envelope.
     ///
     /// Present for approvals produced by `verify_approvals_with_tolerance`.
     /// Omitted when deserializing older payloads (`None`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_approval_cbor_b64: Option<String>,
+}
+
+impl VerifiedApproval {
+    /// Storage key under which an enforcement point records this approval as
+    /// used: `"<approver key hex>:<nonce hex>"`.
+    ///
+    /// Defined here so every SDK's consumption store agrees on it, and a
+    /// shared backend can serve enforcement points written in different
+    /// languages.
+    pub fn consumption_key(&self) -> String {
+        format!(
+            "{}:{}",
+            hex::encode(self.approver_key),
+            hex::encode(self.nonce)
+        )
+    }
 }
 
 /// Result of a successful chain verification.
@@ -263,8 +316,9 @@ pub struct ChainVerificationResult {
     /// Populated by check_chain(); None when computed from a single warrant
     /// via authorize_one() without a full chain.
     pub warrant_stack_b64: Option<String>,
-    /// Approvals that passed full verification and contributed to meeting
-    /// the approval threshold. Empty when no approvals were required.
+    /// Approvals that passed full verification, one per approver, sorted by
+    /// approver key; together they meet the approval threshold. Empty when no
+    /// approvals were required.
     pub verified_approvals: Vec<VerifiedApproval>,
     /// The holder's proof-of-possession for this invocation, when one was
     /// presented and verified.
@@ -310,6 +364,37 @@ fn encode_warrant_stack_b64(chain: &[Warrant]) -> Option<String> {
 }
 
 impl ChainVerificationResult {
+    /// A stable key for this authorization, for downstream deduplication.
+    ///
+    /// `SHA-256("tenuo-idempotency-v1" || request_hash || (approver_key ||
+    /// nonce)*)`, with approvals sorted so their presentation order does not
+    /// matter. The same approvals for the same request give the same key on
+    /// every retry, a restored checkpoint or another replica; a fresh approval
+    /// gives a new one. Carry it to the system that performs the action so the
+    /// action itself happens at most once.
+    ///
+    /// `None` when no approvals were verified: without one there is no
+    /// single-use authorization to name.
+    pub fn idempotency_key(&self) -> Option<[u8; 32]> {
+        use sha2::{Digest, Sha256};
+
+        let first = self.verified_approvals.first()?;
+        let mut parts: Vec<([u8; 32], [u8; 16])> = self
+            .verified_approvals
+            .iter()
+            .map(|a| (a.approver_key, a.nonce))
+            .collect();
+        parts.sort();
+        let mut h = Sha256::new();
+        h.update(crate::domain::IDEMPOTENCY_CONTEXT);
+        h.update(first.request_hash);
+        for (key, nonce) in parts {
+            h.update(key);
+            h.update(nonce);
+        }
+        Some(h.finalize().into())
+    }
+
     /// Build the signed content of a receipt from this verification.
     ///
     /// Every trust-critical field comes from the verification that produced
@@ -552,6 +637,71 @@ impl ControlPlane {
 // DATA PLANE
 // ============================================================================
 
+/// Re-check at verification time what the builders enforce: a chain forged
+/// outside the SDK cannot weaken or strip the parent's approval gates, drop a
+/// parent approver, or lower the parent's threshold on a gated child.
+fn verify_approval_link(parent: &Warrant, child: &Warrant) -> Result<()> {
+    use crate::approval_gate::{
+        parse_approval_gate_map, verify_approval_gate_monotonicity, APPROVAL_GATE_EXTENSION_KEY,
+    };
+    let parent_gates = parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+    if parent_gates.is_none() {
+        // Nothing to preserve; also skips building the scope on ungated chains.
+        return Ok(());
+    }
+    let child_gates = parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
+    verify_approval_gate_monotonicity(
+        parent_gates.as_ref(),
+        child_gates.as_ref(),
+        &child.approval_gate_scope(),
+    )
+    .map_err(|e| {
+        Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+    })?;
+
+    crate::warrant::check_approvers_under_unapprovable_gate(
+        parent,
+        &child.approval_gate_scope(),
+        child.required_approvers(),
+    )
+    .map_err(|e| {
+        Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
+    })?;
+
+    // A gated child keeps every parent approver and cannot dilute the parent's quorum.
+    if child_gates.is_some() {
+        if let Some(parent_approvers) = parent.required_approvers() {
+            let Some(child_approvers) = child.required_approvers() else {
+                return Err(Error::ChainVerificationFailed(
+                    "approval gate monotonicity violation: child removes a parent approver"
+                        .to_string(),
+                ));
+            };
+            let child_set: std::collections::HashSet<_> = child_approvers.iter().collect();
+            if parent_approvers.iter().any(|key| !child_set.contains(key)) {
+                return Err(Error::ChainVerificationFailed(
+                    "approval gate monotonicity violation: child removes a parent approver"
+                        .to_string(),
+                ));
+            }
+            let added = crate::warrant::added_approver_count(parent_approvers, child_approvers);
+            let required_threshold = parent.approval_threshold().saturating_add(added);
+            if child.approval_threshold() < required_threshold {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "approval gate monotonicity violation: {}",
+                    crate::warrant::threshold_violation(
+                        parent.approval_threshold(),
+                        added,
+                        child.approval_threshold()
+                    )
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Data Plane - Verifies and enforces warrants.
 ///
 /// The data plane only needs public keys of trusted issuers.
@@ -613,8 +763,6 @@ pub struct DataPlane {
     trusted_issuers: HashMap<String, PublicKey>,
     /// Optional: own keypair for attenuating warrants.
     own_keypair: Option<SigningKey>,
-    /// Clock skew tolerance for expiration checks.
-    clock_tolerance: chrono::Duration,
     /// Signed revocation list.
     revocation_list: Option<crate::revocation::SignedRevocationList>,
     /// Local cache of directly revoked warrants (Parental Revocation)
@@ -622,6 +770,9 @@ pub struct DataPlane {
     /// Tool clearance requirements: minimum clearance required per tool.
     /// Supports exact matches and glob patterns (e.g., "admin_*").
     tool_clearance_requirements: HashMap<String, Clearance>,
+    /// Allowed positive skew for warrants issued by a clock ahead of ours.
+    /// Expiry remains strict and is never extended by this tolerance.
+    clock_tolerance: chrono::Duration,
 }
 
 impl DataPlane {
@@ -632,10 +783,10 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -647,10 +798,10 @@ impl DataPlane {
                 .map(|pk| (hex::encode(pk.to_bytes()), pk))
                 .collect(),
             own_keypair: None,
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
@@ -659,29 +810,27 @@ impl DataPlane {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
             tool_clearance_requirements: HashMap::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
         }
     }
 
-    /// Set the clock skew tolerance.
+    /// Set tolerance for warrants issued by a clock ahead of this verifier.
     ///
     /// In distributed systems, clocks on different machines can drift apart.
-    /// This tolerance allows a grace period when checking warrant expiration.
+    /// Warrant expiry remains strict; this only affects the not-yet-valid
+    /// check on `issued_at`.
     ///
     /// # Arguments
-    /// * `tolerance` - Grace period (e.g., 30 seconds). Use 0 for strict checking.
+    /// * `tolerance` - Maximum accepted positive clock skew.
     ///
-    /// # Example
-    /// ```rust,ignore
-    /// let mut data_plane = DataPlane::new();
-    /// data_plane.set_clock_tolerance(Duration::from_secs(60)); // 1 minute tolerance
-    /// ```
     pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
-        self.clock_tolerance = chrono::Duration::from_std(tolerance)
-            .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
+        // Fallible: chrono's range is narrower than std's. Anything beyond it
+        // is effectively unbounded tolerance, and the issuance check saturates.
+        self.clock_tolerance =
+            chrono::Duration::from_std(tolerance).unwrap_or(chrono::Duration::MAX);
     }
 
     /// Set a signed revocation list.
@@ -1086,15 +1235,19 @@ impl DataPlane {
             .collect();
         verify_batch_raw(&batch_items)?;
 
-        // Authenticity first, then semantics. Expiry/structural checks cover
+        // Authenticity first, then semantics. Time/structural checks cover
         // every warrant, including a singleton root — they used to run only
         // while walking child links.
+        let as_of = chrono::Utc::now().timestamp();
         for warrant in chain {
-            if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
                 });
+            }
+            if warrant.is_issued_in_future_as_of(as_of, self.clock_tolerance) {
+                return Err(Error::IssuedInFuture);
             }
             warrant.validate_structural().map_err(|e| {
                 Error::ChainVerificationFailed(format!(
@@ -1261,46 +1414,25 @@ impl DataPlane {
             )));
         }
 
-        // 4. Check child is not expired (with clock tolerance)
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired {
-                warrant_id: child.id().to_string(),
-                expired_at: child.expires_at(),
-            });
-        }
-
-        // 5. Validate constraint attenuation (monotonicity)
+        // 4. Validate constraint attenuation (monotonicity). Expiry was checked
+        // for every warrant at the single evaluation instant above.
         match (parent.r#type(), child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
                 // For execution warrants, validate capability attenuation
                 if let (Some(parent_caps), Some(child_caps)) =
                     (parent.capabilities(), child.capabilities())
                 {
-                    for (tool, child_constraints) in child_caps {
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in parent's capabilities",
-                                tool
-                            )));
-                        }
-                    }
+                    crate::constraints::validate_tool_map_attenuation(
+                        parent_caps,
+                        child_caps,
+                        "capabilities",
+                    )?;
                 }
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.clearance(), child.clearance())
-                {
-                    if child_trust > parent_trust {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
-                        )));
-                    }
-                }
+                // Clearance may not increase, and may not appear where the parent has none.
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
                 // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
                 // attenuate capabilities, not escalate them. Self-delegation is harmless.
@@ -1320,12 +1452,23 @@ impl DataPlane {
                         }
                     }
                 }
-                // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (parent.constraint_bounds(), child.constraint_bounds())
-                {
-                    parent_bounds.validate_attenuation(child_bounds)?;
+                // Constraint bounds must be monotonic. A child that carries none
+                // would issue without the parent's bounds.
+                match (parent.constraint_bounds(), child.constraint_bounds()) {
+                    (Some(parent_bounds), Some(child_bounds)) => {
+                        parent_bounds.validate_attenuation(child_bounds)?;
+                    }
+                    (Some(parent_bounds), None) if !parent_bounds.is_empty() => {
+                        return Err(Error::MonotonicityViolation(
+                            "child issuer warrant drops the parent's constraint_bounds".to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
             }
             (WarrantType::Issuer, WarrantType::Execution) => {
                 // ISSUER -> EXECUTION: Validate issuance constraints
@@ -1342,17 +1485,11 @@ impl DataPlane {
                         }
                     }
                 }
-                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
-                if let Some(parent_trust) = parent.clearance() {
-                    if let Some(child_trust) = child.clearance() {
-                        if child_trust > parent_trust {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "clearance {:?} exceeds issuer's clearance {:?}",
-                                child_trust, parent_trust
-                            )));
-                        }
-                    }
-                }
+                // 2. Child clearance must not exceed, or appear without, the issuer's clearance
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // 3. Child constraints must respect issuer's constraint_bounds
                 if let (Some(bounds), Some(child_caps)) =
                     (parent.constraint_bounds(), child.capabilities())
@@ -1384,6 +1521,9 @@ impl DataPlane {
                 )));
             }
         }
+
+        // I5: Approval gate monotonicity
+        verify_approval_link(parent, child)?;
 
         // 6. Verify child's signature
         child.verify(child.issuer())?;
@@ -1423,32 +1563,46 @@ impl DataPlane {
                 }
             }
 
-            let auth_result = leaf.authorize(tool, args, signature).and_then(|_| {
-                // Evaluate approval gates before running multi-sig verification.
-                // Only require approvals when a gate fires for this tool+args. Absent a
-                // gate map evaluate_approval_gates returns false, matching Authorizer's
-                // semantics: required_approvers without any gate configuration means no
-                // call is gated (the builder rejects this state; legacy warrants see it
-                // as fully ungated rather than fully gated).
-                let gate_map = crate::approval_gate::parse_approval_gate_map(
-                    leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
-                )?;
-                let needs_approval =
-                    crate::approval_gate::evaluate_approval_gates(gate_map.as_ref(), tool, args)?;
-
-                if needs_approval {
-                    verify_approvals_with_tolerance(
-                        leaf,
+            // verify_chain applied this plane's issuance tolerance already.
+            let auth_result = leaf
+                .authorize_issuance_checked_as_of(
+                    tool,
+                    args,
+                    args,
+                    signature,
+                    crate::warrant::POP_TIMESTAMP_WINDOW_SECS,
+                    crate::warrant::POP_MAX_WINDOWS,
+                    chrono::Utc::now().timestamp(),
+                )
+                .and_then(|_| {
+                    // Evaluate approval gates before running multi-sig verification.
+                    // Only require approvals when a gate fires for this tool+args. Absent a
+                    // gate map evaluate_approval_gates returns false, matching Authorizer's
+                    // semantics: required_approvers without any gate configuration means no
+                    // call is gated (the builder rejects this state; legacy warrants see it
+                    // as fully ungated rather than fully gated).
+                    let gate_map = crate::approval_gate::parse_approval_gate_map(
+                        leaf.extension(crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY),
+                    )?;
+                    let needs_approval = crate::approval_gate::evaluate_approval_gates(
+                        gate_map.as_ref(),
                         tool,
                         args,
-                        approvals,
-                        chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                        chrono::Utc::now().timestamp() as u64,
-                    )
-                } else {
-                    Ok(Vec::new())
-                }
-            });
+                    )?;
+
+                    if needs_approval {
+                        verify_approvals_with_tolerance(
+                            leaf,
+                            tool,
+                            args,
+                            approvals,
+                            self.clock_tolerance,
+                            chrono::Utc::now().timestamp() as u64,
+                        )
+                    } else {
+                        Ok(Vec::new())
+                    }
+                });
 
             match &auth_result {
                 Ok(_) => {
@@ -1629,10 +1783,11 @@ impl AuthorizerBuilder {
         self
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps.
     ///
-    /// In distributed systems, clocks can drift. This tolerance allows a grace
-    /// period when checking warrant expiration.
+    /// In distributed systems, clocks can drift. This tolerance accepts a
+    /// warrant or approval whose issuer's clock is slightly ahead. Expiry is
+    /// always strict.
     ///
     /// Default: 30 seconds.
     pub fn clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -1853,7 +2008,7 @@ impl Authorizer {
         self
     }
 
-    /// Set the clock tolerance for expiration checks (chainable).
+    /// Set the clock tolerance for future-issued timestamps (chainable).
     ///
     /// Default: 30 seconds.
     pub fn with_clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
@@ -2460,7 +2615,7 @@ impl Authorizer {
                     )));
                 }
             }
-            if warrant.is_expired_with_tolerance_as_of(self.clock_tolerance, as_of) {
+            if warrant.is_expired_as_of(as_of) {
                 return Err(Error::WarrantExpired {
                     warrant_id: warrant.id().to_string(),
                     expired_at: warrant.expires_at(),
@@ -2621,31 +2776,17 @@ impl Authorizer {
                 if let (Some(parent_caps), Some(child_caps)) =
                     (parent.capabilities(), child.capabilities())
                 {
-                    for (tool, child_constraints) in child_caps {
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in parent's capabilities",
-                                tool
-                            )));
-                        }
-                    }
+                    crate::constraints::validate_tool_map_attenuation(
+                        parent_caps,
+                        child_caps,
+                        "capabilities",
+                    )?;
                 }
-                // Clearance monotonicity: child clearance cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.clearance(), child.clearance())
-                {
-                    if child_trust > parent_trust {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "clearance cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
-                        )));
-                    }
-                }
+                // Clearance may not increase, and may not appear where the parent has none.
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
                 // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
                 // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
                 // attenuate capabilities, not escalate them. Self-delegation is harmless.
@@ -2665,12 +2806,23 @@ impl Authorizer {
                         }
                     }
                 }
-                // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (parent.constraint_bounds(), child.constraint_bounds())
-                {
-                    parent_bounds.validate_attenuation(child_bounds)?;
+                // Constraint bounds must be monotonic. A child that carries none
+                // would issue without the parent's bounds.
+                match (parent.constraint_bounds(), child.constraint_bounds()) {
+                    (Some(parent_bounds), Some(child_bounds)) => {
+                        parent_bounds.validate_attenuation(child_bounds)?;
+                    }
+                    (Some(parent_bounds), None) if !parent_bounds.is_empty() => {
+                        return Err(Error::MonotonicityViolation(
+                            "child issuer warrant drops the parent's constraint_bounds".to_string(),
+                        ));
+                    }
+                    _ => {}
                 }
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
             }
             (WarrantType::Issuer, WarrantType::Execution) => {
                 // ISSUER -> EXECUTION: Validate issuance constraints
@@ -2690,17 +2842,11 @@ impl Authorizer {
                     }
                 }
 
-                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
-                if let Some(parent_trust) = parent.clearance() {
-                    if let Some(child_trust) = child.clearance() {
-                        if child_trust > parent_trust {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "clearance {:?} exceeds issuer's clearance {:?}",
-                                child_trust, parent_trust
-                            )));
-                        }
-                    }
-                }
+                // 2. Child clearance must not exceed, or appear without, the issuer's clearance
+                crate::warrant::validate_clearance_attenuation(
+                    parent.clearance(),
+                    child.clearance(),
+                )?;
 
                 // 3. Child constraints must respect issuer's constraint_bounds
                 if let (Some(bounds), Some(child_caps)) =
@@ -2737,29 +2883,7 @@ impl Authorizer {
         }
 
         // I5: Approval gate monotonicity (wire-level defense-in-depth)
-        // Re-check at verification time what AttenuationBuilder enforces at build time.
-        // A warrant chain forged outside the SDK could weaken or strip approval gates
-        // that the parent warrant established.
-        {
-            use crate::approval_gate::{
-                parse_approval_gate_map, verify_approval_gate_monotonicity,
-                APPROVAL_GATE_EXTENSION_KEY,
-            };
-            let parent_gates =
-                parse_approval_gate_map(parent.extension(APPROVAL_GATE_EXTENSION_KEY))?;
-            let child_gates =
-                parse_approval_gate_map(child.extension(APPROVAL_GATE_EXTENSION_KEY))?;
-            let empty = std::collections::BTreeMap::new();
-            let child_tools = child.capabilities().unwrap_or(&empty);
-            verify_approval_gate_monotonicity(
-                parent_gates.as_ref(),
-                child_gates.as_ref(),
-                child_tools,
-            )
-            .map_err(|e| {
-                Error::ChainVerificationFailed(format!("approval gate monotonicity violation: {e}"))
-            })?;
-        }
+        verify_approval_link(parent, child)?;
 
         // Note: Signature verification is done in batch at the chain level for performance
         // (see verify_chain_with_options). Individual verify_link calls don't re-verify signatures.
@@ -2904,8 +3028,9 @@ impl Authorizer {
                 }
             }
 
-            // Capability, constraint, and PoP verification (split-view)
-            leaf.authorize_with_pop_args_and_config_as_of(
+            // Capability, constraint, and PoP verification (split-view).
+            // Issuance was checked above with this Authorizer's tolerance.
+            leaf.authorize_issuance_checked_as_of(
                 tool,
                 pop_args,
                 constraint_args,
@@ -3136,6 +3261,179 @@ mod receipt_plumbing_tests {
             .expect("chain verifies");
 
         assert_ne!(first.request_hash, second.request_hash);
+    }
+
+    fn verified_with(approvals: &[([u8; 32], [u8; 16])]) -> ChainVerificationResult {
+        ChainVerificationResult {
+            root_issuer: None,
+            chain_length: 1,
+            leaf_depth: 0,
+            verified_steps: Vec::new(),
+            warrant_stack_b64: None,
+            verified_approvals: approvals
+                .iter()
+                .map(|(key, nonce)| VerifiedApproval {
+                    approver_key: *key,
+                    external_id: String::new(),
+                    approved_at: 0,
+                    expires_at: 1,
+                    request_hash: [9u8; 32],
+                    nonce: *nonce,
+                    signed_approval_cbor_b64: None,
+                })
+                .collect(),
+            pop_signature: None,
+            request_hash: Some([9u8; 32]),
+            tool: None,
+        }
+    }
+
+    /// Retries of one authorization must agree on the key, whatever order the
+    /// approvals arrive in; a fresh approval is a new authorization.
+    #[test]
+    fn idempotency_key_names_the_approvals_not_their_order() {
+        let a = ([1u8; 32], [1u8; 16]);
+        let b = ([2u8; 32], [2u8; 16]);
+        assert_eq!(verified_with(&[]).idempotency_key(), None);
+
+        let ab = verified_with(&[a, b]).idempotency_key().unwrap();
+        assert_eq!(verified_with(&[b, a]).idempotency_key(), Some(ab));
+
+        let fresh = ([1u8; 32], [3u8; 16]);
+        assert_ne!(verified_with(&[fresh, b]).idempotency_key(), Some(ab));
+        assert_ne!(verified_with(&[a]).idempotency_key(), Some(ab));
+        assert_ne!(verified_with(&[a]).idempotency_key(), Some([9u8; 32]));
+    }
+
+    /// The nonce has to come out of verification, or the enforcement point has
+    /// nothing to consume.
+    #[test]
+    fn carries_the_approval_nonce_out_of_verification() {
+        use crate::approval::{ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+        use crate::constraints::ConstraintSet;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let approver = SigningKey::generate();
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("transfer".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("transfer", ConstraintSet::new())
+            .holder(holder.public_key())
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .ttl(Duration::from_secs(600))
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let request_hash = crate::approval::compute_request_hash(
+            &warrant.id().to_string(),
+            "transfer",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let nonce: [u8; 16] = rand::random();
+        let approval = SignedApproval::create(
+            ApprovalPayload::new(
+                request_hash,
+                nonce,
+                "approver".into(),
+                now,
+                now + chrono::Duration::seconds(300),
+            ),
+            &approver,
+        );
+        let pop = warrant.sign(&holder, "transfer", &args).unwrap();
+        let result = Authorizer::new()
+            .with_trusted_root(issuer.public_key())
+            .check_chain(&[warrant], "transfer", &args, Some(&pop), &[approval])
+            .expect("approved call verifies");
+
+        assert_eq!(result.verified_approvals.len(), 1);
+        assert_eq!(result.verified_approvals[0].nonce, nonce);
+        assert!(result.idempotency_key().is_some());
+    }
+
+    /// A 1-of-2 gate presented both approvals: whichever order they arrive in,
+    /// verification returns both, sorted, so a reordered retry names the same
+    /// authorization and consumes the same approvals.
+    #[test]
+    fn surplus_approvals_do_not_depend_on_presentation_order() {
+        use crate::approval::{ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+        use crate::constraints::ConstraintSet;
+
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let a = SigningKey::generate();
+        let b = SigningKey::generate();
+        let mut gates = ApprovalGateMap::new();
+        gates.insert("transfer".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("transfer", ConstraintSet::new())
+            .holder(holder.public_key())
+            .required_approvers(vec![a.public_key(), b.public_key()])
+            .min_approvals(1)
+            .extension(
+                "tenuo.approval_gates",
+                encode_approval_gate_map(&gates).unwrap(),
+            )
+            .ttl(Duration::from_secs(600))
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let request_hash = crate::approval::compute_request_hash(
+            &warrant.id().to_string(),
+            "transfer",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let approve = |key: &SigningKey| {
+            SignedApproval::create(
+                ApprovalPayload::new(
+                    request_hash,
+                    rand::random(),
+                    "approver".into(),
+                    now,
+                    now + chrono::Duration::seconds(300),
+                ),
+                key,
+            )
+        };
+        let (pa, pb) = (approve(&a), approve(&b));
+        let authorizer = Authorizer::new().with_trusted_root(issuer.public_key());
+        let check = |approvals: &[SignedApproval]| {
+            let pop = warrant.sign(&holder, "transfer", &args).unwrap();
+            authorizer
+                .check_chain(
+                    std::slice::from_ref(&warrant),
+                    "transfer",
+                    &args,
+                    Some(&pop),
+                    approvals,
+                )
+                .expect("approved call verifies")
+        };
+
+        let ab = check(&[pa.clone(), pb.clone()]);
+        let ba = check(&[pb, pa]);
+        assert_eq!(ab.verified_approvals.len(), 2);
+        let keys = |r: &ChainVerificationResult| {
+            r.verified_approvals
+                .iter()
+                .map(|v| v.consumption_key())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(&ab), keys(&ba));
+        assert!(ab.verified_approvals[0].approver_key < ab.verified_approvals[1].approver_key);
+        assert_eq!(ab.idempotency_key(), ba.idempotency_key());
     }
 
     /// The whole point of building from a verification result: a caller cannot
@@ -3744,19 +4042,104 @@ mod tests {
     }
 
     #[test]
-    fn test_authorizer_rejects_expired_single_root_chain() {
+    fn test_warrant_expiry_is_strict_despite_clock_tolerance() {
         let control_plane = ControlPlane::generate();
         let warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(0))
             .unwrap();
-        std::thread::sleep(Duration::from_millis(1100));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        let error = data_plane
+            .verify_chain(std::slice::from_ref(&warrant))
+            .unwrap_err();
+        assert!(matches!(error, Error::WarrantExpired { .. }));
 
         let authorizer = Authorizer::new()
             .with_trusted_root(control_plane.public_key())
-            .with_clock_tolerance(chrono::Duration::zero());
+            .with_clock_tolerance(chrono::Duration::seconds(60));
 
         let error = authorizer.verify_chain(&[warrant]).unwrap_err();
         assert!(matches!(error, Error::WarrantExpired { .. }));
+    }
+
+    #[test]
+    fn test_verifiers_keep_configured_issuance_tolerance_over_standalone_default() {
+        // 45s ahead: beyond the standalone 30s default, within a configured 60s.
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+        let args = HashMap::new();
+        let pop = warrant.sign(&control_plane.keypair, "test", &args).unwrap();
+
+        assert!(matches!(
+            warrant.authorize("test", &args, Some(&pop)),
+            Err(Error::IssuedInFuture)
+        ));
+
+        let mut data_plane = DataPlane::new_with_issuers([control_plane.public_key()]);
+        data_plane.set_clock_tolerance(Duration::from_secs(60));
+        data_plane
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+
+        let authorizer = Authorizer::new()
+            .with_trusted_root(control_plane.public_key())
+            .with_clock_tolerance(chrono::Duration::seconds(60));
+        authorizer
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "test",
+                &args,
+                Some(&pop),
+                &[],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_set_clock_tolerance_accepts_any_std_duration() {
+        let mut data_plane = DataPlane::new();
+        for secs in [i64::MAX as u64, u64::MAX] {
+            data_plane.set_clock_tolerance(Duration::from_secs(secs));
+        }
+        data_plane.set_clock_tolerance(Duration::MAX);
+    }
+
+    #[test]
+    fn test_data_plane_applies_clock_tolerance_to_future_issuance_only() {
+        let control_plane = ControlPlane::generate();
+        let mut warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(300))
+            .unwrap();
+        let now = chrono::Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now + 45;
+        warrant.payload.expires_at = now + 300;
+        warrant.payload_bytes = crate::wire::to_vec(&warrant.payload).unwrap();
+        warrant.signature = control_plane.keypair.sign_raw(&warrant.signed_message());
+
+        let mut accepts = DataPlane::new_with_issuers([control_plane.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts.verify_chain(std::slice::from_ref(&warrant)).is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([control_plane.public_key()]);
+        rejects.set_clock_tolerance(Duration::from_secs(30));
+        assert!(matches!(
+            rejects.verify_chain(&[warrant]),
+            Err(Error::IssuedInFuture)
+        ));
     }
 
     #[test]
@@ -4110,6 +4493,72 @@ mod tests {
             &[approval],
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn data_plane_check_chain_uses_configured_approval_clock_tolerance() {
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        use crate::approval_gate::{encode_approval_gate_map, ApprovalGateMap, ToolApprovalGate};
+
+        let issuer = SigningKey::generate();
+        let approver = SigningKey::generate();
+        let mut approval_gates = ApprovalGateMap::new();
+        approval_gates.insert("sensitive_action".into(), ToolApprovalGate::whole_tool());
+        let warrant = Warrant::builder()
+            .capability("sensitive_action", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver.public_key()])
+            .min_approvals(1)
+            .holder(issuer.public_key())
+            .extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY,
+                encode_approval_gate_map(&approval_gates).unwrap(),
+            )
+            .build(&issuer)
+            .unwrap();
+        let args = HashMap::new();
+        let pop = warrant.sign(&issuer, "sensitive_action", &args).unwrap();
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "sensitive_action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let now = chrono::Utc::now();
+        let approval = SignedApproval::create(
+            ApprovalPayload::new(
+                request_hash,
+                rand::random(),
+                "approver@example.com".into(),
+                now + chrono::Duration::seconds(45),
+                now + chrono::Duration::seconds(120),
+            ),
+            &approver,
+        );
+
+        let mut accepts = DataPlane::new_with_issuers([issuer.public_key()]);
+        accepts.set_clock_tolerance(Duration::from_secs(60));
+        assert!(accepts
+            .check_chain(
+                std::slice::from_ref(&warrant),
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                std::slice::from_ref(&approval),
+            )
+            .is_ok());
+
+        let mut rejects = DataPlane::new_with_issuers([issuer.public_key()]);
+        rejects.set_clock_tolerance(Duration::ZERO);
+        assert!(rejects
+            .check_chain(
+                &[warrant],
+                "sensitive_action",
+                &args,
+                Some(&pop),
+                &[approval],
+            )
+            .is_err());
     }
 
     #[test]
@@ -6161,6 +6610,41 @@ mod tests {
 
         let result = authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[expired]);
         assert!(result.is_err(), "expired approval must be rejected");
+    }
+
+    #[test]
+    fn test_pin_approval_expiry_is_strict_despite_clock_tolerance() {
+        // Clock tolerance (30s by default) must not extend an approval past the
+        // expiry its approver chose; warrants are already strict at authorization.
+        let (warrant, authorizer, issuer, admin1, _, args) = approval_pin_test_setup();
+        let sig = warrant.sign(&issuer, "action", &args).unwrap();
+
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+        let request_hash = compute_request_hash(
+            &warrant.id().to_string(),
+            "action",
+            &args,
+            Some(warrant.authorized_holder()),
+        );
+        let approved_at = chrono::Utc::now() - chrono::Duration::seconds(20);
+        let payload = ApprovalPayload::new(
+            request_hash,
+            rand::random(),
+            "admin1".to_string(),
+            approved_at,
+            approved_at + chrono::Duration::seconds(10), // expired 10s ago, inside the tolerance
+        );
+        let just_expired = SignedApproval::create(payload, &admin1);
+
+        let result =
+            authorizer.authorize_one(&warrant, "action", &args, Some(&sig), &[just_expired]);
+        let err = result
+            .expect_err("approval past its expiry must be rejected")
+            .to_string();
+        assert!(
+            err.contains("expired"),
+            "expected expiry rejection, got: {err}"
+        );
     }
 
     #[test]

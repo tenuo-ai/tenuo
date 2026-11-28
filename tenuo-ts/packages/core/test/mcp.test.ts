@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ApprovalRequiredError,
   AuthorizationDeniedError,
@@ -154,6 +154,57 @@ describe("tenuo.mcp", () => {
     await expect(server.mcp.verify(other.name, other.arguments, other._meta, { nonceStore: store })).resolves.toEqual({
       path: "/data/other.txt",
     });
+  });
+
+  it("rejects re-encoded replays of the same PoP", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const store = memoryNonceStore();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const signature = call._meta.tenuo.signature;
+    const variants = [
+      `${signature.slice(0, 20)}\n${signature.slice(20)}`,
+      `${signature.slice(0, 20)} ${signature.slice(20)}`,
+      `${signature.slice(0, 20)}\t${signature.slice(20)}`,
+      Buffer.from(signature, "base64").toString("base64url"),
+    ];
+
+    await server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store });
+    for (const reencoded of variants) {
+      const meta = {
+        tenuo: { ...call._meta.tenuo, signature: reencoded },
+      };
+      await expect(
+        server.mcp.verify(call.name, call.arguments, meta, { nonceStore: store }),
+      ).rejects.toMatchObject({
+        code: "TENUO_INVALID_POP",
+        message: expect.stringMatching(/replay/),
+      });
+    }
+  });
+
+  it("passes a canonical signature key to custom nonce stores", async () => {
+    const { issuer, session, server } = issuerAndServer();
+    const call = issuer.mcp.attach(session, "read_file", { path: "/data/q3.pdf" });
+    const keys: string[] = [];
+    const store = {
+      checkAndRecord(key: string) {
+        keys.push(key);
+        return true;
+      },
+    };
+    await server.mcp.verify(call.name, call.arguments, call._meta, { nonceStore: store });
+    const signature = call._meta.tenuo.signature;
+    const meta = {
+      tenuo: {
+        ...call._meta.tenuo,
+        signature: Buffer.from(signature, "base64").toString("base64url"),
+      },
+    };
+    await server.mcp.verify(call.name, call.arguments, meta, { nonceStore: store });
+
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^tenuo-pop-v1:[0-9a-f]{128}$/);
+    expect(keys[1]).toBe(keys[0]);
   });
 
   it("emits a receipt when a nonce store rejects a replay", async () => {
@@ -409,6 +460,45 @@ describe("tenuo.mcp", () => {
       code: "TENUO_INVALID_POP",
       message: expect.stringMatching(/replay/),
     });
+  });
+
+  it("snapshots approvals before async replay admission yields", async () => {
+    const issuer = createTenuo({ root: createTenuo.devRoot() });
+    const session = issuer.session({
+      allow: { read_file: { path: under("/data") } },
+      requireApproval: {
+        approvers: [createTenuo.publicKeyFromHex(APPROVER1_PUB)],
+        min: 1,
+      },
+    });
+    const args = { path: "/data/q3.pdf" };
+    const approval = signApproval(session, "read_file", args, APPROVER1_SECRET);
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const first = issuer.mcp.attach(session, "read_file", args, { approvals: [approval] });
+    const mutableApprovals = first._meta.tenuo.approvals as string[];
+    const backing = memoryNonceStore();
+    let calls = 0;
+    const store = {
+      checkAndRecord: async (key: string) => {
+        calls += 1;
+        if (calls === 1) {
+          mutableApprovals.length = 0;
+          await Promise.resolve();
+        }
+        return backing.checkAndRecord(key);
+      },
+    };
+    const leaked = exportSession(session);
+    const server = createTenuo({ trustedRoots: [createTenuo.publicKeyFromHex(leaked.root_hex)] });
+
+    await expect(server.mcp.verify(first.name, first.arguments, first._meta, { nonceStore: store })).resolves.toEqual(args);
+    vi.mocked(Date.now).mockReturnValue(now + 30_000);
+    const replay = issuer.mcp.attach(session, "read_file", args, { approvals: [approval] });
+    await expect(
+      server.mcp.verify(replay.name, replay.arguments, replay._meta, { nonceStore: store }),
+    ).rejects.toMatchObject({ code: "TENUO_INSUFFICIENT_APPROVALS" });
+    vi.restoreAllMocks();
   });
 
   it("emits receipts on attach and verify without treating them as allow", async () => {

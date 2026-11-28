@@ -62,3 +62,9 @@ pub const SRL_CONTEXT: &[u8] = b"tenuo-srl-v1";
 /// Used when an enforcement point signs a receipt. A future v2 MUST use
 /// `b"tenuo-receipt-v2"` rather than reusing this constant.
 pub const RECEIPT_CONTEXT: &[u8] = b"tenuo-receipt-v1";
+
+/// Domain separation context for approval idempotency keys.
+///
+/// Hashed ahead of the request hash and the approvals that authorized it, so
+/// the key cannot collide with any other Tenuo digest.
+pub const IDEMPOTENCY_CONTEXT: &[u8] = b"tenuo-idempotency-v1";

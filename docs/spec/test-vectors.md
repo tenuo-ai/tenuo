@@ -1,13 +1,18 @@
 # Tenuo Protocol Test Vectors
 
 **Version:** 1.0
-**Documentation Revision:** 2 (2026-01-21)
+**Documentation Revision:** 3 (2026-10-20)
 **Generated:** 2024-01-01 (deterministic timestamps for reproducibility)
 **Specification:** [wire-format-v1.md](wire-format-v1.md)
 
 ---
 
 ## Revision History
+
+- **Rev 3** (2026-10-20): Added `UrlSafe` v1 security-erratum conformance
+  cases: allowlists constrain IP literals, host patterns use canonical form,
+  and malformed patterns fail closed. Existing byte-exact vectors are
+  unchanged.
 
 - **Rev 2** (2026-01-21): Documentation cleanup
   - Regenerated all test vectors to match current generator output
@@ -1866,6 +1871,18 @@ c593a3eee6d6659e2f33b125122d9d55c573d0af0733bbff393b92399dde54e3c3733db4c47a0df7
 
 **Expected:** SSRF-safe URLs succeed, internal/metadata URLs fail.
 
+**Security erratum conformance cases:** These cases do not change the A.25.1
+wire bytes. They are normative evaluator behavior for a decoded type-18
+`UrlSafe` constraint.
+
+| Policy | Input | Expected |
+|--------|-------|----------|
+| `allow_domains = ["api.example.com"]` | `https://api.example.com/data` | Allow |
+| `allow_domains = ["api.example.com"]` | `https://8.8.8.8/` | Deny: the allowlist constrains public IP literals too |
+| `allow_domains = ["8.8.8.8"]` | `https://8.8.8.8/` | Allow, subject to the independent `block_*` flags |
+| `allow_domains = ["bücher.example"]` | `https://xn--bcher-kva.example/` | Allow after IDNA canonicalization |
+| `allow_domains = ["foo.*.example.com"]` | Any URL | Reject the malformed policy; fail closed |
+
 ### A.25.2 Subpath Constraint
 
 **A.25.2 Subpath**
@@ -2408,4 +2425,3 @@ a268656e636f64696e67a2646b696e64656f6e654f666676616c756573826475
 **Policy commitment:**
 
 9b53b570975500172890f86347a3338c8ac4ca2b75501d582a2cc0eef152059d
-

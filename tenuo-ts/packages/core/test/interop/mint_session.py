@@ -84,7 +84,8 @@ def mint(spec: dict[str, Any] | None = None) -> dict[str, Any]:
             capabilities=capabilities_from_narrow(allow, narrow),
             signing_key=holder,
             holder=holder.public_key,
-            ttl_seconds=min(ttl, 200),
+            # These fixtures narrow paths, not time. Inherit the exact parent
+            # expiry rather than racing a second boundary with a repeated TTL.
         )
         chain.append(current)
     return {

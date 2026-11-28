@@ -126,6 +126,8 @@ use moka::sync::Cache;
 #[cfg(feature = "cel")]
 use std::net::IpAddr;
 #[cfg(feature = "cel")]
+use std::panic::{catch_unwind, AssertUnwindSafe};
+#[cfg(feature = "cel")]
 use std::sync::Arc;
 
 // ============================================================================
@@ -196,6 +198,95 @@ pub fn compile(_expression: &str) -> Result<()> {
     Err(Error::FeatureNotEnabled { feature: "cel" })
 }
 
+/// Whether `child` accepts no value that `parent` rejects, by syntax.
+///
+/// True when the parsed `child` equals the parsed `parent`, or is a logical
+/// AND whose left operand equals the parsed `parent`. Expressions are
+/// compared as syntax trees, so formatting and redundant parentheses do not
+/// matter, while string literals, operator precedence and every other part
+/// of the expression do.
+#[cfg(feature = "cel")]
+pub fn is_conjunctive_attenuation(parent: &str, child: &str) -> Result<bool> {
+    use cel_interpreter::common::ast::{operators, Expr};
+
+    let parent = parse_without_ids(parent)?;
+    let child = parse_without_ids(child)?;
+    if child == parent {
+        return Ok(true);
+    }
+    Ok(match &child.expr {
+        Expr::Call(call) => {
+            call.func_name == operators::LOGICAL_AND
+                && call.target.is_none()
+                && call.args.len() == 2
+                && call.args[0] == parent
+        }
+        _ => false,
+    })
+}
+
+/// Syntactic CEL attenuation needs the parser (stub when `cel` is disabled).
+#[cfg(not(feature = "cel"))]
+pub fn is_conjunctive_attenuation(_parent: &str, _child: &str) -> Result<bool> {
+    Err(Error::FeatureNotEnabled { feature: "cel" })
+}
+
+/// Parse an expression and clear node ids, which depend on source position.
+#[cfg(feature = "cel")]
+fn parse_without_ids(expression: &str) -> Result<cel_interpreter::IdedExpr> {
+    let mut expr = cel_interpreter::parser::Parser::default()
+        .parse(expression)
+        .map_err(|e| Error::CelError(format!("compilation failed: {}", e)))?;
+    clear_ids(&mut expr);
+    Ok(expr)
+}
+
+#[cfg(feature = "cel")]
+fn clear_ids(node: &mut cel_interpreter::IdedExpr) {
+    use cel_interpreter::common::ast::{EntryExpr, Expr};
+
+    node.id = 0;
+    match &mut node.expr {
+        Expr::Unspecified | Expr::Ident(_) | Expr::Literal(_) => {}
+        Expr::Call(call) => {
+            if let Some(target) = call.target.as_deref_mut() {
+                clear_ids(target);
+            }
+            call.args.iter_mut().for_each(clear_ids);
+        }
+        Expr::Comprehension(c) => {
+            for e in [
+                &mut c.iter_range,
+                &mut c.accu_init,
+                &mut c.loop_cond,
+                &mut c.loop_step,
+                &mut c.result,
+            ] {
+                clear_ids(e);
+            }
+        }
+        Expr::List(list) => list.elements.iter_mut().for_each(clear_ids),
+        Expr::Select(select) => clear_ids(&mut select.operand),
+        Expr::Map(map) => map.entries.iter_mut().for_each(|entry| {
+            entry.id = 0;
+            if let EntryExpr::MapEntry(e) = &mut entry.expr {
+                clear_ids(&mut e.key);
+                clear_ids(&mut e.value);
+            }
+        }),
+        Expr::Struct(s) => s.entries.iter_mut().for_each(|entry| {
+            entry.id = 0;
+            match &mut entry.expr {
+                EntryExpr::StructField(f) => clear_ids(&mut f.value),
+                EntryExpr::MapEntry(e) => {
+                    clear_ids(&mut e.key);
+                    clear_ids(&mut e.value);
+                }
+            }
+        }),
+    }
+}
+
 /// Evaluate a CEL expression against a context built from constraint values.
 ///
 /// The context contains:
@@ -225,9 +316,7 @@ pub fn evaluate(
             .map_err(|e| Error::CelError(format!("failed to add variable '{}': {}", name, e)))?;
     }
 
-    let result = program
-        .execute(&context)
-        .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
+    let result = execute_program(&program, &context)?;
 
     match result {
         Value::Bool(b) => Ok(b),
@@ -250,7 +339,10 @@ pub fn evaluate(
 
 /// Evaluate a CEL expression with the value as the root context.
 ///
-/// For object values, each field becomes a top-level variable.
+/// For object values, each field becomes a top-level variable, and the whole
+/// object is available through the opt-in `tenuo_object()` function so
+/// expressions can test optional fields with `has(tenuo_object().field)`.
+/// Keeping the object out of `value` preserves existing list-only policies.
 /// For other values, the value is available as `value`.
 ///
 /// # Feature Flag
@@ -264,6 +356,13 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
 
     match value {
         ConstraintValue::Object(map) => {
+            let object = constraint_value_to_cel(value)?;
+            let object_function: Box<
+                dyn Fn(&mut cel_interpreter::FunctionContext) -> cel_interpreter::ResolveResult
+                    + Send
+                    + Sync,
+            > = Box::new(move |_| Ok(object.clone()));
+            context.add_function("tenuo_object", object_function);
             for (key, val) in map {
                 context
                     .add_variable(key, constraint_value_to_cel(val)?)
@@ -279,9 +378,7 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
         }
     }
 
-    let result = program
-        .execute(&context)
-        .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
+    let result = execute_program(&program, &context)?;
 
     match result {
         Value::Bool(b) => Ok(b),
@@ -289,6 +386,161 @@ pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) ->
             "expression must return bool, got {:?}",
             other
         ))),
+    }
+}
+
+/// Execute an untrusted CEL program without allowing interpreter panics to
+/// cross the authorization boundary. A panic is a failed constraint, so the
+/// caller's existing fail-closed error path can deny the request.
+#[cfg(feature = "cel")]
+fn execute_program(program: &Program, context: &Context) -> Result<Value> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut expression = program.expression().clone();
+        rewrite_numeric_comparisons(&mut expression);
+        Value::resolve(&expression, context)
+    }))
+    .map_err(|_| Error::CelError("execution panicked".to_string()))?
+    .map_err(|e| Error::CelError(format!("execution failed: {e}")))
+}
+
+// Rewrite the parsed tree, including macro expansions, rather than source text.
+// CEL 0.13's evaluator uses type-strict equality even though its public Value
+// equality casts integers to floats (which loses precision above 2^53). Neither
+// implements the exact numeric equality required by the signed argument map.
+// Keep literals and arithmetic intact; compare the resulting values instead.
+#[cfg(feature = "cel")]
+fn rewrite_numeric_comparisons(expression: &mut cel_interpreter::IdedExpr) {
+    use cel_interpreter::common::ast::{operators, EntryExpr, Expr};
+    match &mut expression.expr {
+        Expr::Call(call) => {
+            if let Some(target) = &mut call.target {
+                rewrite_numeric_comparisons(target);
+            }
+            for arg in &mut call.args {
+                rewrite_numeric_comparisons(arg);
+            }
+            call.func_name = match call.func_name.as_str() {
+                operators::EQUALS => "tenuo_numeric_eq".into(),
+                operators::NOT_EQUALS => "tenuo_numeric_ne".into(),
+                operators::IN => "tenuo_numeric_in".into(),
+                _ => return,
+            };
+        }
+        Expr::Comprehension(c) => {
+            for expr in [
+                &mut c.iter_range,
+                &mut c.accu_init,
+                &mut c.loop_cond,
+                &mut c.loop_step,
+                &mut c.result,
+            ] {
+                rewrite_numeric_comparisons(expr);
+            }
+        }
+        Expr::List(list) => {
+            for element in &mut list.elements {
+                rewrite_numeric_comparisons(element);
+            }
+        }
+        Expr::Map(map) => rewrite_numeric_entries(&mut map.entries),
+        Expr::Struct(s) => rewrite_numeric_entries(&mut s.entries),
+        Expr::Select(select) => rewrite_numeric_comparisons(&mut select.operand),
+        Expr::Unspecified | Expr::Ident(_) | Expr::Literal(_) => {}
+    }
+
+    fn rewrite_numeric_entries(entries: &mut [cel_interpreter::common::ast::IdedEntryExpr]) {
+        for entry in entries {
+            match &mut entry.expr {
+                EntryExpr::MapEntry(e) => {
+                    rewrite_numeric_comparisons(&mut e.key);
+                    rewrite_numeric_comparisons(&mut e.value);
+                }
+                EntryExpr::StructField(e) => rewrite_numeric_comparisons(&mut e.value),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cel")]
+fn numeric_eq(
+    a: &dyn cel_interpreter::common::value::Val,
+    b: &dyn cel_interpreter::common::value::Val,
+) -> bool {
+    use cel_interpreter::common::types::{CelDouble, CelInt, CelList, CelMap, CelUInt};
+    // Test both directions without casting an integer to f64.
+    for (a, b) in [(a, b), (b, a)] {
+        if let Some(f) = b.downcast_ref::<CelDouble>() {
+            let f = *f.inner();
+            if let Some(i) = a.downcast_ref::<CelInt>() {
+                return crate::meta_envelope::integral_i64(f) == Some(*i.inner());
+            }
+            if let Some(i) = a.downcast_ref::<CelUInt>() {
+                // u64::MAX rounds to 2^64; use an exclusive upper bound.
+                return f.is_finite()
+                    && f.fract() == 0.0
+                    && (0.0..18446744073709551616.0).contains(&f)
+                    && f as u64 == *i.inner();
+            }
+        }
+        if let (Some(i), Some(u)) = (a.downcast_ref::<CelInt>(), b.downcast_ref::<CelUInt>()) {
+            return u64::try_from(*i.inner()).ok() == Some(*u.inner());
+        }
+    }
+    if let (Some(a), Some(b)) = (a.downcast_ref::<CelList>(), b.downcast_ref::<CelList>()) {
+        return a.inner().len() == b.inner().len()
+            && a.inner()
+                .iter()
+                .zip(b.inner())
+                .all(|(a, b)| numeric_eq(a.as_ref(), b.as_ref()));
+    }
+    if let (Some(a), Some(b)) = (a.downcast_ref::<CelMap>(), b.downcast_ref::<CelMap>()) {
+        return a.inner().len() == b.inner().len()
+            && a.inner().iter().all(|(k, v)| {
+                b.inner()
+                    .get(k)
+                    .is_some_and(|other| numeric_eq(v.as_ref(), other.as_ref()))
+            });
+    }
+    // Preserve equality for CEL types that cannot be converted to Value,
+    // such as type descriptors, as well as strings, bytes and timestamps.
+    a.equals(b)
+}
+
+#[cfg(feature = "cel")]
+fn numeric_contains(
+    needle: &dyn cel_interpreter::common::value::Val,
+    container: &dyn cel_interpreter::common::value::Val,
+) -> cel_interpreter::ResolveResult {
+    if let Some(values) = container.downcast_ref::<cel_interpreter::common::types::CelList>() {
+        return Ok(Value::Bool(
+            values
+                .inner()
+                .iter()
+                .any(|v| numeric_eq(needle, v.as_ref())),
+        ));
+    }
+    // Preserve CEL's existing map membership and invalid-container errors.
+    let result = container
+        .as_container()
+        .ok_or(cel_interpreter::ExecutionError::NoSuchOverload)?
+        .contains(needle)?;
+    Ok(Value::Bool(result))
+}
+
+#[cfg(feature = "cel")]
+fn numeric_comparison(
+    ctx: &mut cel_interpreter::FunctionContext,
+) -> cel_interpreter::ResolveResult {
+    if ctx.args.len() != 2 || ctx.this.is_some() {
+        return Err(cel_interpreter::ExecutionError::NoSuchOverload);
+    }
+    let a = Value::resolve_val(&ctx.args[0], ctx.ptx)?;
+    let b = Value::resolve_val(&ctx.args[1], ctx.ptx)?;
+    match ctx.name {
+        "tenuo_numeric_eq" => Ok(Value::Bool(numeric_eq(a.as_ref(), b.as_ref()))),
+        "tenuo_numeric_ne" => Ok(Value::Bool(!numeric_eq(a.as_ref(), b.as_ref()))),
+        "tenuo_numeric_in" => numeric_contains(a.as_ref(), b.as_ref()),
+        _ => Err(cel_interpreter::ExecutionError::NoSuchOverload),
     }
 }
 
@@ -304,7 +556,12 @@ fn constraint_value_to_cel(cv: &ConstraintValue) -> Result<Value> {
     match cv {
         ConstraintValue::String(s) => Ok(Value::String(s.clone().into())),
         ConstraintValue::Integer(i) => Ok(Value::Int(*i)),
-        ConstraintValue::Float(f) => Ok(Value::Float(*f)),
+        // CEL's `==` and `in` do not equate int and double. Give an integral
+        // number one CEL type, the one the signed argument map uses, so the
+        // caller's spelling (`1000` or `1000.0`) cannot change the result.
+        ConstraintValue::Float(f) => {
+            Ok(crate::meta_envelope::integral_i64(*f).map_or(Value::Float(*f), Value::Int))
+        }
         ConstraintValue::Boolean(b) => Ok(Value::Bool(*b)),
         ConstraintValue::Null => Ok(Value::Null),
         ConstraintValue::List(list) => {
@@ -364,6 +621,29 @@ pub fn cache_size() -> u64 {
 #[cfg(feature = "cel")]
 pub fn create_context() -> Context<'static> {
     let mut context = Context::default();
+
+    for name in ["tenuo_numeric_eq", "tenuo_numeric_ne", "tenuo_numeric_in"] {
+        let function: Box<
+            dyn Fn(&mut cel_interpreter::FunctionContext) -> cel_interpreter::ResolveResult
+                + Send
+                + Sync,
+        > = Box::new(numeric_comparison);
+        context.add_function(name, function);
+    }
+    // List.contains uses the public Value equality, so give it the same exact
+    // comparison. Preserve the standard function for strings, bytes and maps.
+    context.add_function(
+        "contains",
+        |this: cel_interpreter::extractors::This<Value>, arg: Value| {
+            if matches!(&this.0, Value::List(_)) {
+                let container: Box<dyn cel_interpreter::common::value::Val> = this.0.try_into()?;
+                let needle: Box<dyn cel_interpreter::common::value::Val> = arg.try_into()?;
+                numeric_contains(needle.as_ref(), container.as_ref())
+            } else {
+                cel_interpreter::functions::contains(this, arg)
+            }
+        },
+    );
 
     // Time Functions
     context.add_function("time_now", |_unused: Value| -> String {
@@ -476,6 +756,81 @@ mod tests {
     }
 
     #[test]
+    fn test_list_macros_fail_closed_on_non_lists() {
+        let values = [
+            ConstraintValue::String("admin".to_string()),
+            ConstraintValue::Integer(5),
+            ConstraintValue::Boolean(true),
+            ConstraintValue::Object(std::collections::BTreeMap::from([
+                ("admin".to_string(), ConstraintValue::Boolean(false)),
+                (
+                    "role".to_string(),
+                    ConstraintValue::String("admin".to_string()),
+                ),
+            ])),
+        ];
+
+        for value in &values {
+            let all = evaluate_with_value_context("value.all(item, item == 'admin')", value);
+            assert!(all.is_err(), "all over {value:?} must fail closed: {all:?}");
+            let exists = evaluate_with_value_context("value.exists(item, item == 'admin')", value);
+            assert!(
+                exists.is_err(),
+                "exists over {value:?} must fail closed: {exists:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_interpreter_rejects_non_iterable_without_panicking() {
+        for expression in [
+            "value.all(item, item == 'admin')",
+            "value.exists(item, item == 'admin')",
+        ] {
+            let program = Program::compile(expression).unwrap();
+            let mut context = create_context();
+            context.add_variable("value", "sensitive-value").unwrap();
+            assert!(matches!(
+                program.execute(&context),
+                Err(cel_interpreter::ExecutionError::NoSuchOverload)
+            ));
+        }
+    }
+
+    #[test]
+    fn test_list_macros_still_accept_lists() {
+        let value = ConstraintValue::List(vec![
+            ConstraintValue::String("admin".to_string()),
+            ConstraintValue::String("admin".to_string()),
+        ]);
+
+        assert!(evaluate_with_value_context("value.all(item, item == 'admin')", &value).unwrap());
+        assert!(
+            evaluate_with_value_context("value.exists(item, item == 'admin')", &value).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_evaluation_recovers_after_macro_error() {
+        let scalar = ConstraintValue::String("admin".to_string());
+        let list = ConstraintValue::List(vec![scalar.clone()]);
+        let vars = HashMap::new();
+        for expression in [
+            "value.all(item, item == 'admin')",
+            "value.exists(item, item == 'admin')",
+        ] {
+            assert!(evaluate(expression, &scalar, &vars).is_err());
+            assert!(evaluate(expression, &list, &vars).unwrap());
+            assert!(evaluate_with_value_context(expression, &scalar).is_err());
+            assert!(evaluate_with_value_context(expression, &list).unwrap());
+        }
+        assert!(evaluate("size(value) < 3", &ConstraintValue::Integer(5), &vars).is_err());
+        assert!(
+            evaluate_with_value_context("size(value) < 3", &ConstraintValue::Integer(5)).is_err()
+        );
+    }
+
+    #[test]
     fn test_object_context() {
         let value = ConstraintValue::Object(
             [
@@ -494,6 +849,53 @@ mod tests {
         assert!(
             evaluate_with_value_context("amount < 10000 && currency == 'USD'", &value).unwrap()
         );
+    }
+
+    #[test]
+    fn test_object_context_exposes_optional_fields_opt_in() {
+        let obj = |approve: Option<bool>| {
+            let mut fields = vec![("amount".to_string(), ConstraintValue::Integer(3600))];
+            if let Some(a) = approve {
+                fields.push(("approve".to_string(), ConstraintValue::Boolean(a)));
+            }
+            ConstraintValue::Object(fields.into_iter().collect())
+        };
+        let expr =
+            "amount <= 4000 && (!has(tenuo_object().approve) || tenuo_object().approve == false)";
+        assert!(evaluate_with_value_context(expr, &obj(None)).unwrap());
+        assert!(evaluate_with_value_context(expr, &obj(Some(false))).unwrap());
+        assert!(!evaluate_with_value_context(expr, &obj(Some(true))).unwrap());
+        // Fields stay available as top-level variables.
+        assert!(
+            evaluate_with_value_context("tenuo_object().amount == amount", &obj(None)).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_tenuo_object_policy_fails_closed_without_function() {
+        let program =
+            Program::compile("!has(tenuo_object().approve) || tenuo_object().approve == false")
+                .unwrap();
+        let context = create_context();
+
+        assert!(program.execute(&context).is_err());
+    }
+
+    #[test]
+    fn test_object_field_named_value_keeps_legacy_precedence() {
+        let value = ConstraintValue::Object(
+            [
+                ("value".to_string(), ConstraintValue::Integer(7)),
+                ("approve".to_string(), ConstraintValue::Boolean(false)),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert!(evaluate_with_value_context(
+            "value == 7 && approve == false && tenuo_object().approve == false",
+            &value
+        )
+        .unwrap());
     }
 
     #[test]

@@ -19,6 +19,7 @@ import mcp.types as mt  # noqa: E402
 
 from tenuo.mcp._compat import (  # noqa: E402
     build_request_params_meta,
+    call_tool_with_meta,
     call_tool_result_is_error,
     call_tool_result_structured_content,
     make_error_call_tool_result,
@@ -105,9 +106,13 @@ class TestRequestParamsMeta:
 
     def test_built_metadata_is_assignable_to_call_tool_params(self) -> None:
         meta = build_request_params_meta({"tenuo": {"warrant": "abc"}})
-        params = mt.CallToolRequestParams(name="read_file", arguments={"path": "/a"})
-        updated = params.model_copy(update={"meta": meta})
-        assert request_params_meta_as_dict(updated.meta)["tenuo"] == {"warrant": "abc"}
+        params = mt.CallToolRequestParams.model_validate(
+            {"name": "read_file", "arguments": {"path": "/a"}, "_meta": meta}
+        )
+        assert request_params_meta_as_dict(params.meta)["tenuo"] == {"warrant": "abc"}
+        assert params.model_dump(by_alias=True)["_meta"]["tenuo"] == {
+            "warrant": "abc"
+        }
 
     def test_metadata_parsed_from_the_wire_is_readable(self) -> None:
         params = mt.CallToolRequestParams.model_validate(
@@ -118,6 +123,69 @@ class TestRequestParamsMeta:
             }
         )
         assert request_params_meta_as_dict(params.meta)["tenuo"] == {"warrant": "abc"}
+
+
+class TestClientCallToolMetadata:
+    @pytest.mark.asyncio
+    async def test_empty_metadata_uses_public_method_without_keyword(self) -> None:
+        class Session:
+            def __init__(self) -> None:
+                self.call = None
+
+            async def call_tool(self, name, arguments):
+                self.call = (name, arguments)
+                return "public"
+
+        session = Session()
+        result = await call_tool_with_meta(session, "read_file", {"path": "/a"}, None)
+
+        assert result == "public"
+        assert session.call == ("read_file", {"path": "/a"})
+
+    @pytest.mark.asyncio
+    async def test_legacy_method_sends_request_with_wire_metadata(self) -> None:
+        class Session:
+            def __init__(self) -> None:
+                self.request = None
+
+            async def call_tool(self, name, arguments):  # pragma: no cover
+                raise AssertionError("legacy metadata must use send_request")
+
+            async def send_request(self, request, result_type):
+                self.request = request
+                assert result_type is mt.CallToolResult
+                return "legacy"
+
+        session = Session()
+        result = await call_tool_with_meta(
+            session,
+            "read_file",
+            {"path": "/a"},
+            {"tenuo": {"warrant": "abc"}},
+        )
+
+        assert result == "legacy"
+        dumped = session.request.model_dump(by_alias=True)
+        assert dumped["params"]["_meta"]["tenuo"] == {"warrant": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_modern_method_receives_metadata_keyword(self) -> None:
+        class Session:
+            def __init__(self) -> None:
+                self.call = None
+
+            async def call_tool(self, name, arguments, *, meta=None):
+                self.call = (name, arguments, meta)
+                return "modern"
+
+        session = Session()
+        meta = {"tenuo": {"warrant": "abc"}}
+        result = await call_tool_with_meta(
+            session, "read_file", {"path": "/a"}, meta
+        )
+
+        assert result == "modern"
+        assert session.call == ("read_file", {"path": "/a"}, meta)
 
 
 class TestVerifierAcceptsEitherMetaShape:

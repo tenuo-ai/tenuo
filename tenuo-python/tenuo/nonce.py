@@ -13,14 +13,14 @@ as replays until the TTL expires.
 
 **Scope**: this is an *in-process* defence.  For multi-process or distributed
 deployments (multiple worker replicas) the store must be backed by a shared
-cache (Redis, Memcached, …).  The :class:`RedisNonceBackend` interface below
+cache (Redis, Memcached, …).  The :class:`NonceBackend` interface below
 provides the extension point.
 
 Usage::
 
     from tenuo.nonce import NonceStore
 
-    store = NonceStore(ttl_seconds=60)
+    store = NonceStore(ttl_seconds=210)
 
     result = enforce_tool_call(
         tool_name, args, bound_warrant,
@@ -33,11 +33,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets
 import threading
 import time
 from typing import Any, Optional, Protocol, runtime_checkable
 
 logger = logging.getLogger("tenuo.nonce")
+
+_DEFAULT_CLOCK_SKEW_SECONDS = 60
+_DEFAULT_RETENTION_SECONDS = 210  # default 150-second PoP interval plus skew
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +53,45 @@ logger = logging.getLogger("tenuo.nonce")
 class NonceBackend(Protocol):
     """Pluggable storage backend for the nonce store.
 
-    Implementations must be thread-safe.
+    Implementations must be thread-safe. ``retention_seconds`` is an
+    immutable floor shared by every client of the backend's nonce namespace.
+    Shared backends must reject inconsistent namespace configurations.
     """
+
+    @property
+    def retention_seconds(self) -> int:
+        """Minimum elapsed-time lifetime of every nonce, fixed before serving.
+
+        Wall-clock expiry backends must pad their TTL for clock advances so
+        the elapsed-time floor remains true within the declared clock bound.
+        """
+        ...
+
+    @property
+    def pop_window_secs(self) -> int:
+        """Immutable time-bucket size shared by every verifier in the namespace."""
+        ...
+
+    @property
+    def max_clock_skew_seconds(self) -> int:
+        """Immutable clock-error bound for verifiers and expiry backends."""
+        ...
+
+    def reserve(self, nonce_hex: str, ttl_seconds: int, owner: str) -> bool:
+        """Atomically insert owner with NX and TTL, rejecting existing entries."""
+        ...
+
+    def release(self, nonce_hex: str, owner: str) -> None:
+        """Atomically delete only an entry whose stored owner still matches."""
+        ...
+
+    def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
+        """Atomically admit and insert an unseen nonce with the given TTL.
+
+        Shared backends must use a single atomic operation, such as Redis
+        SET with NX and EX. A separate exists/set pair is not sufficient.
+        """
+        ...
 
     def seen(self, nonce_hex: str) -> bool:
         """Return ``True`` if ``nonce_hex`` has been recorded (replay)."""
@@ -69,10 +110,45 @@ class NonceBackend(Protocol):
 class _InMemoryBackend:
     """Thread-safe in-process nonce store with TTL eviction."""
 
-    def __init__(self) -> None:
+    def __init__(self, retention_seconds: int = _DEFAULT_RETENTION_SECONDS, pop_window_secs: int = 30, max_clock_skew_seconds: int = _DEFAULT_CLOCK_SKEW_SECONDS) -> None:
+        self._retention_seconds = retention_seconds
+        self._pop_window_secs = pop_window_secs
+        self._max_clock_skew_seconds = max_clock_skew_seconds
+        self._owners: dict[str, str] = {}
         self._lock = threading.Lock()
         # nonce_hex → expiry timestamp (float)
         self._store: dict[str, float] = {}
+
+    @property
+    def retention_seconds(self) -> int:
+        return self._retention_seconds
+
+    @property
+    def pop_window_secs(self) -> int:
+        return self._pop_window_secs
+
+    @property
+    def max_clock_skew_seconds(self) -> int:
+        return self._max_clock_skew_seconds
+
+    def check_and_record(self, nonce_hex: str, ttl_seconds: int) -> bool:
+        return self.reserve(nonce_hex, ttl_seconds, secrets.token_hex(16))
+
+    def reserve(self, nonce_hex: str, ttl_seconds: int, owner: str) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            self._evict(now)
+            if nonce_hex in self._store:
+                return False
+            self._store[nonce_hex] = now + max(ttl_seconds, self.retention_seconds)
+            self._owners[nonce_hex] = owner
+            return True
+
+    def release(self, nonce_hex: str, owner: str) -> None:
+        with self._lock:
+            if self._owners.get(nonce_hex) == owner:
+                self._store.pop(nonce_hex, None)
+                self._owners.pop(nonce_hex, None)
 
     def seen(self, nonce_hex: str) -> bool:
         now = time.monotonic()
@@ -84,12 +160,14 @@ class _InMemoryBackend:
         now = time.monotonic()
         with self._lock:
             self._evict(now)
-            self._store[nonce_hex] = now + ttl_seconds
+            self._store[nonce_hex] = now + max(ttl_seconds, self.retention_seconds)
+            self._owners[nonce_hex] = secrets.token_hex(16)
 
     def _evict(self, now: float) -> None:
         expired = [k for k, exp in self._store.items() if exp < now]
         for k in expired:
             del self._store[k]
+            self._owners.pop(k, None)
 
     def __len__(self) -> int:
         with self._lock:
@@ -107,9 +185,25 @@ class NonceStore:
     Parameters
     ----------
     ttl_seconds:
-        How long to remember a PoP signature.  Should be at least as long as
-        the Authorizer's ``pop_window_secs * pop_max_windows`` (default: 120 s)
-        so every PoP that could be accepted is tracked.
+        How long to remember a PoP signature. Must cover the Authorizer's
+        ``pop_window_secs * pop_max_windows`` plus the namespace clock-skew budget.
+        Defaults to 210 seconds for a new backend (150-second default PoP span
+        plus 60 seconds of skew), or the supplied backend's retention floor.
+        Configure this before serving for every verifier sharing the backend.
+        Wider verifiers cannot consume the reserved skew margin.
+        All verifiers in a namespace must use the same PoP bucket size.
+    pop_window_secs:
+        Immutable PoP bucket size, default 30 seconds for a new backend.
+        When sharing a backend, defaults to its declared bucket size.
+    max_clock_skew_seconds:
+        Maximum clock-error range across verifiers and expiry backends,
+        including clock adjustments during an entry's lifetime. Defaults to 60 seconds for a new
+        backend, or the supplied backend's immutable setting. If each clock is
+        within S seconds of UTC, allow at least 2*S seconds of disagreement.
+        Operators must keep actual clocks within this declared bound. A backend
+        using wall-clock expiry must additionally pad its TTL by its possible
+        forward clock adjustment to guarantee the elapsed-time retention floor.
+        Zero explicitly assumes no disagreement or clock adjustment.
     backend:
         Optional custom :class:`NonceBackend`.  Defaults to an in-process
         ``threading.Lock``-guarded dict.  For multi-process deployments pass a
@@ -118,30 +212,126 @@ class NonceStore:
     Example::
 
         # Single-process worker
-        store = NonceStore(ttl_seconds=120)
+        store = NonceStore(ttl_seconds=210)
 
         # Multi-process — plug in Redis
         class RedisBackend:
-            def seen(self, h): return redis.exists(h)
-            def record(self, h, ttl): redis.setex(h, ttl, "1")
+            retention_seconds = 300  # fixed for every client of this namespace
+            pop_window_secs = 30
+            max_clock_skew_seconds = 60
+            def __init__(self):
+                # Register both settings atomically in persistent namespace metadata.
+                config = f"{self.retention_seconds}:{self.pop_window_secs}:{self.max_clock_skew_seconds}"
+                redis.set("tenuo:nonce-config", config, nx=True)
+                if redis.get("tenuo:nonce-config").decode() != config:
+                    raise ValueError("inconsistent nonce namespace configuration")
+            def reserve(self, h, ttl, owner):
+                # Redis expiry uses wall time. Pad for a bounded cache-clock
+                # advance so retention_seconds remains an elapsed-time floor.
+                expiry = max(ttl, self.retention_seconds) + self.max_clock_skew_seconds
+                return bool(redis.set("tenuo:nonce:" + h, owner, nx=True, ex=expiry))
+            def release(self, h, owner):
+                # Compare and delete in one Redis operation, never DEL blindly.
+                redis.eval("if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0",
+                           1, "tenuo:nonce:" + h, owner)
+            def check_and_record(self, h, ttl):
+                return self.reserve(h, ttl, secrets.token_hex(16))
+            def seen(self, h): return bool(redis.exists("tenuo:nonce:" + h))
+            def record(self, h, ttl):
+                expiry = max(ttl, self.retention_seconds) + self.max_clock_skew_seconds
+                redis.setex("tenuo:nonce:" + h, expiry, secrets.token_hex(16))
 
         store = NonceStore(backend=RedisBackend())
     """
 
     def __init__(
         self,
-        ttl_seconds: int = 120,
+        ttl_seconds: Optional[int] = None,
         backend: Optional[Any] = None,
+        *, pop_window_secs: Optional[int] = None,
+        max_clock_skew_seconds: Optional[int] = None,
     ) -> None:
-        self._ttl = ttl_seconds
-        self._backend: NonceBackend = backend if backend is not None else _InMemoryBackend()
+        if ttl_seconds is not None and (isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0):
+            raise ValueError("nonce TTL must be a positive integer")
+        if max_clock_skew_seconds is not None and (isinstance(max_clock_skew_seconds, bool) or not isinstance(max_clock_skew_seconds, int) or max_clock_skew_seconds < 0):
+            raise ValueError("nonce clock-skew budget must be a nonnegative integer")
+        self._backend: NonceBackend = backend if backend is not None else _InMemoryBackend(
+            ttl_seconds if ttl_seconds is not None else _DEFAULT_RETENTION_SECONDS,
+            pop_window_secs if pop_window_secs is not None else 30,
+            max_clock_skew_seconds if max_clock_skew_seconds is not None else _DEFAULT_CLOCK_SKEW_SECONDS,
+        )
+        if not callable(getattr(self._backend, "check_and_record", None)):
+            raise TypeError("NonceBackend must implement atomic check_and_record(nonce_hex, ttl_seconds)")
+        if not callable(getattr(self._backend, "reserve", None)) or not callable(getattr(self._backend, "release", None)):
+            raise TypeError("NonceBackend must implement atomic owner-aware reserve and release")
+        floor = getattr(self._backend, "retention_seconds", None)
+        if isinstance(floor, bool) or not isinstance(floor, int) or floor <= 0:
+            raise TypeError("NonceBackend must declare an immutable positive retention_seconds floor")
+        if ttl_seconds is not None and ttl_seconds > floor:
+            raise ValueError("Configure the shared backend retention floor before creating a wider nonce store")
+        window = getattr(self._backend, "pop_window_secs", None)
+        if isinstance(window, bool) or not isinstance(window, int) or window <= 0:
+            raise TypeError("NonceBackend must declare an immutable positive pop_window_secs")
+        if pop_window_secs is not None and (isinstance(pop_window_secs, bool) or pop_window_secs != window):
+            raise ValueError("inconsistent nonce namespace PoP window size")
+        skew = getattr(self._backend, "max_clock_skew_seconds", None)
+        if isinstance(skew, bool) or not isinstance(skew, int) or skew < 0:
+            raise TypeError("NonceBackend must declare an immutable nonnegative max_clock_skew_seconds")
+        if max_clock_skew_seconds is not None and max_clock_skew_seconds != skew:
+            raise ValueError("inconsistent nonce namespace clock-skew budget")
+        self._max_clock_skew_seconds = skew
+        self._pop_window_secs = window
+        self._ttl = floor
+
+    @property
+    def retention_seconds(self) -> int:
+        return self._ttl
+
+    @property
+    def pop_window_secs(self) -> int:
+        return self._pop_window_secs
+
+    @property
+    def max_clock_skew_seconds(self) -> int:
+        return self._max_clock_skew_seconds
+
+    def reserve(self, pop_bytes: bytes, *, min_ttl_seconds: int = 0) -> Optional[_NonceReservation]:
+        """Reserve a verified signature until all admission checks succeed.
+
+        The caller must commit before dispatch or release on admission failure.
+        Shared backends require atomic owner-aware reserve/release operations.
+        """
+        if min_ttl_seconds > self.retention_seconds:
+            raise ValueError("nonce reservation exceeds namespace retention floor")
+        if not callable(getattr(self._backend, "reserve", None)) or not callable(getattr(self._backend, "release", None)):
+            raise TypeError("NonceBackend requires atomic owner-aware reserve and release")
+        nonce = hashlib.sha256(pop_bytes).hexdigest()
+        owner = secrets.token_hex(16)
+        reservation = _NonceReservation(self._backend, nonce, owner)
+        try:
+            admitted = self._backend.reserve(nonce, self.retention_seconds, owner)
+        except BaseException:
+            # The insert may have succeeded even if its response was lost.
+            # A conditional release cannot remove another attempt's entry.
+            try:
+                reservation.release()
+            except Exception:
+                logger.warning("Nonce reservation rollback failed: %s…", nonce[:8], exc_info=True)
+            raise
+        if not admitted:
+            return None
+        return reservation
 
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
 
-    def check_and_record(self, pop_bytes: bytes) -> bool:
-        """Admit a PoP if it has not been seen before; record it for TTL.
+    def check_and_record(self, pop_bytes: bytes, *, min_ttl_seconds: int = 0) -> bool:
+        """Atomically admit an unseen PoP for at least ``min_ttl_seconds``.
+
+        Owner-aware admission rolls back a failed backend operation, including
+        an insertion whose reply was lost, without deleting another caller's
+        nonce. A rollback failure remains fail-closed until nonce expiry.
 
         Returns
         -------
@@ -149,14 +339,22 @@ class NonceStore:
             ``True`` if the PoP is fresh (admitted).
             ``False`` if it is a replay (reject the call).
         """
+        if min_ttl_seconds > self.retention_seconds:
+            from .exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                f"Nonce retention floor {self.retention_seconds}s cannot cover a {min_ttl_seconds}s PoP interval; "
+                "configure every client of the shared backend for the longest verifier interval before serving"
+            )
         nonce_hex = hashlib.sha256(pop_bytes).hexdigest()
-        if self._backend.seen(nonce_hex):
+        reservation = self.reserve(pop_bytes, min_ttl_seconds=min_ttl_seconds)
+        if reservation is None:
             logger.warning(
                 "PoP replay detected — nonce %s…%s was already consumed.",
                 nonce_hex[:8], nonce_hex[-4:],
             )
             return False
-        self._backend.record(nonce_hex, self._ttl)
+        reservation.commit()
         return True
 
     def is_replay(self, pop_bytes: bytes) -> bool:
@@ -169,9 +367,73 @@ class NonceStore:
         return self._backend.seen(nonce_hex)
 
 
+class _NonceReservation:
+    def __init__(self, backend: NonceBackend, nonce: str, owner: str) -> None:
+        self._backend, self._nonce, self._owner = backend, nonce, owner
+        self._active = True
+
+    def commit(self) -> None:
+        self._active = False
+
+    def release(self) -> None:
+        if self._active:
+            self._backend.release(self._nonce, self._owner)
+            self._active = False
+
+
 # ---------------------------------------------------------------------------
 # Module-level shared instance (opt-in singleton)
 # ---------------------------------------------------------------------------
+
+
+class _RequestNonceAdmissions:
+    """Reuse nonce admission inside one HTTP request, after each guard verifies."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._admitted: set[tuple[int, bytes]] = set()
+
+    def admit(self, store: Any, signature: bytes, authorizer: Any) -> bool:
+        with self._lock:
+            _validate_retention(store, authorizer)
+            key = (id(store), signature)
+            if key in self._admitted:
+                return True
+            if not _admit_verified_pop(store, signature, authorizer):
+                return False
+            self._admitted.add(key)
+            return True
+
+
+def _admit_verified_pop(store: Any, signature: bytes, authorizer: Any) -> bool:
+    """Retain the signature for every time window the verifier can accept."""
+    validity = _validate_retention(store, authorizer)
+    return bool(store.check_and_record(signature, min_ttl_seconds=validity))
+
+
+def _validate_retention(store: Any, authorizer: Any) -> int:
+    from .exceptions import ConfigurationError
+
+    window, _ = authorizer.pop_window_config()
+    if getattr(store, "pop_window_secs", None) != window:
+        raise ConfigurationError("Nonce namespace PoP window size must match every shared verifier")
+    validity = authorizer.pop_validity_secs()
+    if not isinstance(validity, int) or isinstance(validity, bool) or validity <= 0:
+        raise ValueError("Cannot determine the verifier's PoP validity interval")
+    skew = getattr(store, "max_clock_skew_seconds", None)
+    if isinstance(skew, bool) or not isinstance(skew, int) or skew < 0:
+        raise ConfigurationError("Nonce namespace must declare a nonnegative clock-skew budget")
+    required = validity + skew
+    floor = getattr(store, "retention_seconds", None)
+    if not isinstance(floor, int) or isinstance(floor, bool) or floor < required:
+        from .exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"Nonce retention floor must cover every shared verifier ({required}s required including clock skew); "
+            "configure the shared backend before serving"
+        )
+    return required
+
 
 _default_store: Optional[NonceStore] = None
 
@@ -181,7 +443,7 @@ def get_default_nonce_store() -> Optional[NonceStore]:
     return _default_store
 
 
-def enable_default_nonce_store(ttl_seconds: int = 120, backend: Optional[Any] = None) -> NonceStore:
+def enable_default_nonce_store(ttl_seconds: Optional[int] = None, backend: Optional[Any] = None, *, pop_window_secs: Optional[int] = None, max_clock_skew_seconds: Optional[int] = None) -> NonceStore:
     """Enable the process-wide nonce store and return it.
 
     Call this once at application startup alongside ``tenuo.configure()``:
@@ -196,8 +458,8 @@ def enable_default_nonce_store(ttl_seconds: int = 120, backend: Optional[Any] = 
     ``nonce_store`` will automatically use the shared store.
     """
     global _default_store
-    _default_store = NonceStore(ttl_seconds=ttl_seconds, backend=backend)
-    logger.info("Tenuo nonce store enabled (ttl=%ds, backend=%s)", ttl_seconds, type(_default_store._backend).__name__)
+    _default_store = NonceStore(ttl_seconds=ttl_seconds, backend=backend, pop_window_secs=pop_window_secs, max_clock_skew_seconds=max_clock_skew_seconds)
+    logger.info("Tenuo nonce store enabled (ttl=%ds, backend=%s)", _default_store.retention_seconds, type(_default_store._backend).__name__)
     return _default_store
 
 

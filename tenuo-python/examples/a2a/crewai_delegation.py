@@ -87,7 +87,7 @@ def create_research_agent_server(key: SigningKey, trusted: list, port: int) -> A
         audit_log=io.StringIO(),
     )
 
-    @server.skill("search_web", constraints={"domain": UrlSafe})
+    @server.skill("search_web", constraints={"domain": UrlSafe(allow_domains=["*.wikipedia.org", "*.arxiv.org"])})
     async def search_web(query: str, domain: str) -> Dict[str, Any]:
         """Search the web from allowed domains."""
         # Simulate web search
@@ -101,7 +101,7 @@ def create_research_agent_server(key: SigningKey, trusted: list, port: int) -> A
             ],
         }
 
-    @server.skill("read_source", constraints={"path": Subpath})
+    @server.skill("read_source", constraints={"path": Subpath("/tmp/sources")})
     async def read_source(path: str) -> Dict[str, Any]:
         """Read from allowed source paths."""
         # Simulate reading source
@@ -129,7 +129,7 @@ def create_storage_agent_server(key: SigningKey, trusted: list, port: int) -> A2
         audit_log=io.StringIO(),
     )
 
-    @server.skill("write_content", constraints={"path": Subpath, "content": Pattern})
+    @server.skill("write_content", constraints={"path": Subpath("/tmp/output"), "content": Pattern("*")})
     async def write_content(path: str, content: str) -> Dict[str, Any]:
         """Write content to allowed paths."""
         # Simulate writing
@@ -141,7 +141,7 @@ def create_storage_agent_server(key: SigningKey, trusted: list, port: int) -> A2
             "status": "success",
         }
 
-    @server.skill("read_content", constraints={"path": Subpath})
+    @server.skill("read_content", constraints={"path": Subpath("/tmp/output")})
     async def read_content(path: str) -> Dict[str, Any]:
         """Read content from allowed paths."""
         # Simulate reading

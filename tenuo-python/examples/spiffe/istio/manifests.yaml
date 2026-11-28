@@ -1,0 +1,90 @@
+# An issuer and an agent in an Istio mesh. Applied by check.py; also a starting point for your own.
+apiVersion: v1
+kind: Namespace
+metadata: {name: tenuo, labels: {istio-injection: enabled}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: issuer, namespace: tenuo}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: agent, namespace: tenuo}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: issuer, namespace: tenuo}
+spec:
+  selector: {app: issuer}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
+---
+# Deliver inbound traffic to a Unix socket: the issuer then has no TCP port for
+# anything in the pod to connect to.
+apiVersion: networking.istio.io/v1
+kind: Sidecar
+metadata: {name: issuer, namespace: tenuo}
+spec:
+  workloadSelector: {labels: {app: issuer}}
+  ingress:
+  - port: {number: 8080, protocol: HTTP, name: http}
+    defaultEndpoint: unix:///run/issuer/issuer.sock
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: issuer, namespace: tenuo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: issuer}}
+  template:
+    metadata:
+      labels: {app: issuer}
+      annotations:
+        # Mount the socket's volume into the sidecar as well.
+        sidecar.istio.io/userVolumeMount: '[{"name": "issuer-socket", "mountPath": "/run/issuer"}]'
+    spec:
+      serviceAccountName: issuer
+      containers:
+      - name: issuer
+        image: tenuo-spiffe-demo:istio
+        imagePullPolicy: Never
+        workingDir: /work/tenuo-python/examples/spiffe/istio
+        env:
+        - {name: AUDIENCE, value: "http://issuer.tenuo.svc.cluster.local:8080/warrants"}
+        command:
+        - python
+        - -m
+        - uvicorn
+        - issuer_app:app
+        - --uds=/run/issuer/issuer.sock
+        - --no-proxy-headers
+        ports: [{containerPort: 8080}]
+        volumeMounts:
+        - {name: keys, mountPath: /keys, readOnly: true}
+        - {name: issuer-socket, mountPath: /run/issuer}
+        - {name: work, mountPath: /work, readOnly: true}
+      volumes:
+      - {name: keys, secret: {secretName: issuer-key}}
+      - {name: issuer-socket, emptyDir: {medium: Memory}}
+      - {name: work, hostPath: {path: /work}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: agent, namespace: tenuo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: agent}}
+  template:
+    metadata: {labels: {app: agent}}
+    spec:
+      serviceAccountName: agent
+      containers:
+      - name: agent
+        image: tenuo-spiffe-demo:istio
+        imagePullPolicy: Never
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - {name: pub, mountPath: /pub, readOnly: true}
+        - {name: work, mountPath: /work, readOnly: true}
+      volumes:
+      - {name: pub, configMap: {name: issuer-pub}}
+      - {name: work, hostPath: {path: /work}}

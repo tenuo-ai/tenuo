@@ -186,7 +186,7 @@ class TestMonotonicity:
         """
         Attack: Extend TTL during attenuation.
 
-        Defense: Child TTL is clamped to parent's remaining TTL.
+        Defense: A child TTL beyond the parent's remaining lifetime is rejected.
         """
         print("\n--- Attack 28: TTL Extension ---")
 
@@ -197,19 +197,15 @@ class TestMonotonicity:
         builder = parent.grant_builder()
         builder.inherit_all()  # POLA: explicit inheritance
         builder.ttl(3600)  # Try to extend
+        with pytest.raises(MonotonicityError, match="outlive"):
+            builder.grant(keypair)
+
+        # Omitting the TTL inherits the parent's expiry instead.
+        builder = parent.grant_builder()
+        builder.inherit_all()
         child = builder.grant(keypair)
-
-        # Child's expiration should not be later than parent's
-        parent_exp = parent.expires_at()
-        child_exp = child.expires_at()
-
-        print(f"  [Check] Parent expires: {parent_exp}")
-        print(f"  [Check] Child expires: {child_exp}")
-
-        # If TTL was truly extended, child would expire after parent
-        # The system should clamp it
-        assert child_exp <= parent_exp, "Child TTL should be clamped to parent's"
-        print("  [Result] Attack 28 blocked (TTL clamped to parent's remaining time)")
+        assert child.expires_at() == parent.expires_at()
+        print("  [Result] Attack 28 blocked (TTL beyond the parent's lifetime rejected)")
 
     def test_attack_34_oneof_to_notoneof_escalation(self, keypair):
         """

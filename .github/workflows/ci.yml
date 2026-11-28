@@ -100,6 +100,14 @@ jobs:
         run: cargo test --all-features
         working-directory: tenuo-core
 
+      # --all-features builds the AAT verifier with ES256. This is the build
+      # without it.
+      - name: Test the AAT verifier without ES256
+        run: |
+          cargo test --features aat-jws --lib aat::
+          cargo test --features aat-jws --test aat_jws_vectors
+        working-directory: tenuo-core
+
       - name: Attenuation soundness (proptest)
         run: cargo test --test attenuation_soundness --all-features -- --nocapture
         working-directory: tenuo-core
@@ -186,7 +194,8 @@ jobs:
         # Full Python version testing on Linux x64, key versions on other platforms/archs
         include:
           # Linux x64: full version matrix
-          - os: ubuntu-latest
+          # Python 3.9 has no setup-python build for the Ubuntu 26.04 image (ubuntu-latest).
+          - os: ubuntu-24.04
             python-version: "3.9"
           - os: ubuntu-latest
             python-version: "3.10"
@@ -261,20 +270,20 @@ jobs:
           echo "=== Pip show tenuo ==="
           uv pip show tenuo || echo "tenuo not found in pip"
           echo "=== Site packages ==="
-          ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
+          ls -la "$(python -c 'import site; print(site.getsitepackages()[0])')" | sed -n '1,20p'
           echo "=== Installing other deps ==="
-          uv pip install --system pytest pytest-asyncio ruff mypy
+          uv pip install --system pytest pytest-asyncio hypothesis ruff mypy "cryptography>=42" grpcio "PyJWT>=2.8"
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
-          uv pip install --system types-PyYAML types-requests
+          uv pip install --system types-PyYAML types-requests types-jsonschema
           # OpenAI + Agents SDK (Python 3.10+). Installed before crewai so the
           # matrix exercises openai>=2; crewai may pin openai<3 afterwards.
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
-            && uv pip install --system openai openai-agents \
+            && uv pip install --system '.[openai]' \
             || echo "Skipping openai / openai-agents (requires Python 3.10+)"
           # AutoGen AgentChat (Python 3.10+)
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
-            && uv pip install --system "autogen-agentchat>=0.7.0" "autogen-ext[openai]>=0.7.0" \
+            && uv pip install --system '.[autogen]' \
             || echo "Skipping autogen (requires Python 3.10+)"
           # Google ADK
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" \
@@ -317,6 +326,8 @@ jobs:
 
       - name: Test
         working-directory: tenuo-python
+        env:
+          HYPOTHESIS_PROFILE: ci
         run: |
           if [ "${{ matrix.python-version }}" = "3.14" ]; then
             pytest -v -m "not temporal_live" \
@@ -666,7 +677,7 @@ jobs:
           maturin build --release
           uv pip install --system target/wheels/*.whl
           uv pip install --system langchain langchain-core langgraph fastapi httpx pydantic PyYAML
-          uv pip install --system nbmake pytest ipykernel
+          uv pip install --system nbmake pytest ipykernel "cryptography>=42" "PyJWT>=2.8"
 
       - name: Test Notebooks
         run: |
@@ -822,7 +833,7 @@ jobs:
           fi
           needed=false
           rust=false
-          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/ci\.yml$)' <<<"$files"; then
+          if grep -Eq '^(tenuo-core/|tenuo-wasm/|tenuo-ts/|tenuo-python/|\.github/workflows/(ci|release)\.yml$)' <<<"$files"; then
             needed=true
           fi
           if grep -Eq '^(tenuo-core/|tenuo-wasm/|\.github/workflows/ci\.yml$)' <<<"$files"; then
@@ -906,6 +917,18 @@ jobs:
         working-directory: tenuo-ts
         run: pnpm typecheck
 
+      - name: Test npm release policy
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: pnpm test:release-policy
+
+      # Exercise the checked-in binary before `pnpm test` rebuilds it. This is
+      # the artifact copied into the published @tenuo/core package.
+      - name: Test committed WASM security regressions
+        if: steps.lane.outputs.rust == 'true'
+        working-directory: tenuo-ts
+        run: pnpm --filter @tenuo/core exec vitest run test/parity.test.ts -t "cidr, urlPattern, and urlSafe"
+
       - name: Test (rebuilt WASM)
         if: steps.lane.outputs.rust == 'true'
         working-directory: tenuo-ts
@@ -952,6 +975,17 @@ jobs:
         if: steps.lane.outputs.needed == 'true'
         working-directory: tenuo-ts
         run: node examples/vercel-ai-sdk/scripts/verify-packed.mjs
+
+      - name: LangChain.js example
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: node examples/langchain-js/scripts/verify-packed.mjs
+
+      # Drives the worker's processor with a job double, so this needs no Redis.
+      - name: BullMQ job authorization example
+        if: steps.lane.outputs.needed == 'true'
+        working-directory: tenuo-ts
+        run: node examples/bullmq/scripts/verify-packed.mjs
 
   # Test the committed WASM package on the remaining supported Node lines
   # without rebuilding it. Node 24 is the active LTS.

@@ -39,7 +39,6 @@ def create_mock_warrant(tools: list, constraints: dict = None):
     mock = MagicMock()
     mock.tools.return_value = tools
     mock.is_expired.return_value = False
-    mock.constraint_for.return_value = None
     grant_builder = MagicMock()
     grant_builder.capability = lambda *a, **kw: grant_builder
     grant_builder.holder = lambda *a: grant_builder

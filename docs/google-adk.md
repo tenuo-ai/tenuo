@@ -131,6 +131,8 @@ guard = (GuardBuilder()
     .build())
 ```
 
+A refused approval, a missing handler, or an approval that fails verification denies the call with an `authorization_denied` result; the run continues. `TenuoPlugin` takes the same handler as `approval_handler=`.
+
 ### Delegated warrants
 
 A leaf minted by a delegator is denied when the guard trusts only the original issuer. Pass the parents as `warrant_chain` (root first, excluding the leaf) and set `with_trusted_roots` to that issuer.
@@ -303,6 +305,8 @@ guard = GuardBuilder().with_warrant(warrant, signing_key).build()
 > from tenuo.constraints import Wildcard
 > guard = GuardBuilder().allow("api_call", url=UrlSafe(), timeout=Wildcard()).build()
 > ```
+>
+> `Wildcard()` covers only its own argument. Every listed argument is also required, as in the core: ADK passes only the arguments the model sent, so a call that leaves one out is denied instead of running with the tool's default. Argument names starting with `_` are checked like any other.
 
 ---
 
@@ -352,10 +356,10 @@ strict = UrlSafe(allow_domains=["api.example.com", "*.googleapis.com"])
 Simple glob-style matching for strings:
 
 ```python
-from tenuo.constraints import Pattern
+from tenuo import Pattern, Regex
 
-# Email domain restriction
-guard = GuardBuilder().allow("send_email", to=Pattern("*@company.com")).build()
+# Email recipients: use Regex, since a glob * also matches "," and ";"
+guard = GuardBuilder().allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$")).build()
 
 # Query filtering
 guard = GuardBuilder().allow("search", query=Pattern("product:*")).build()
@@ -430,7 +434,7 @@ session = await runner.session_service.create_session(
 )
 ```
 
-Register `TenuoPlugin` on the Runner. Assigning `before_agent_callback` on the `Agent` does not install the plugin. The plugin drops a `ScopedWarrant` when `callback_context.agent_name` does not match.
+Register `TenuoPlugin` on the Runner. Assigning `before_agent_callback` on the `Agent` does not install the plugin. The plugin drops a `ScopedWarrant` when `callback_context.agent_name` does not match, and a `TenuoGuard` used as an agent's `before_tool_callback` denies a `ScopedWarrant` scoped to another agent. ADK copies session state, so a `ScopedWarrant` is copied around the warrant's base64 form; store a bare warrant as `warrant.to_base64()`.
 
 ### Argument Remapping
 
@@ -515,6 +519,7 @@ guard = (GuardBuilder()
 
 **Event fields** (JSON lines written to the audit log):
 - `event`: `"tool_allowed"`, `"tool_denied"`, or `"tool_dry_run_denied"`
+- `observed`: `true` on `tool_dry_run_denied` events, which a dry run or observe mode let through
 - `tool`: Name of the tool
 - `args`: Tool arguments (values truncated to 100 chars)
 - `warrant`: Warrant ID and issuer (if available)
@@ -576,22 +581,37 @@ guard = GuardBuilder().allow("read_file").audit_log("audit.jsonl").build()
 
 ## Advanced: Dynamic Warrants
 
-For per-request warrants (e.g., user-specific capabilities):
+For per-request warrants (e.g., user-specific capabilities), give the guard a `warrant_resolver`. It is called for every tool call with the ADK `ToolContext` and returns the warrant from a source the model cannot write:
 
 ```python
-# Configure guard to look up warrant from session state
-guard = (GuardBuilder()
-    .with_warrant_key("user_warrant")  # Key in ToolContext.session_state
-    .build())
+# Server-side store, filled by your request handler after authenticating the user
+warrants_by_user: dict[str, str] = {}
 
-# At runtime, inject user-specific warrant
+def resolve_warrant(tool_context):
+    return warrants_by_user.get(tool_context.user_id)  # None means no warrant: the call is denied
+
+guard = TenuoGuard(
+    signing_key=agent_key,
+    trusted_roots=[issuer_key.public_key],
+    warrant_resolver=resolve_warrant,
+)
+
 def handle_request(user_id):
-    warrant = issue_warrant_for_user(user_id)
-    session_state["user_warrant"] = warrant
-    
-    # Agent uses the injected warrant
+    warrants_by_user[user_id] = issue_warrant_for_user(user_id).to_base64()
     agent.run(...)
 ```
+
+`TenuoPlugin` and `GuardBuilder` accept the same resolver (`warrant_resolver=` / `.warrant_resolver(fn)`). When a resolver is set, session state is not consulted. Combining a static warrant with a resolver is rejected at construction. A resolver that raises or returns `None` denies the call, including when local constraints or allow rules are configured.
+
+Resolver failures produce generic tool denials without backend exception details. Authorization resolves once per call, including the asynchronous local-policy path. Completion callbacks skip resolution when audit logging is disabled; each new authorization still resolves afresh.
+
+### Session-state warrants
+
+`warrant_key="user_warrant"` reads the warrant from session state instead. Session state can be written by any tool (`tool_context.state[...] = ...`) and by whoever starts the run (`state_delta`), and the guard signs proof-of-possession with its own key for whichever valid warrant it finds there. Anything that can write the key can therefore replace the warrant with another one issued to the same agent key. Use it only when nothing untrusted can write session state; the guard logs a warning the first time it reads a warrant from state.
+
+### Code executors
+
+An agent's `code_executor` runs code the model writes without calling tool callbacks, so no warrant constrains it. `TenuoPlugin` refuses to run an agent that has one; pass `allow_code_execution=True` only when the executor is confined by other means. Gemini built-in tools (search, built-in code execution) also run without tool callbacks.
 
 ---
 
@@ -871,9 +891,11 @@ default_guard = GuardBuilder().on_denial("return").build()
 test_guard = TenuoGuard(
     warrant=warrant,
     signing_key=key,
-    dry_run=True,  # Logs with "DRY RUN", never blocks
+    dry_run=True,  # Logs "OBSERVE: would deny ...", never blocks
 )
 ```
+
+`dry_run` is observe mode scoped to one guard. To observe every integration at once, use `tenuo.configure(mode="observe")`: ADK guards honor it the same way, logging the shared `OBSERVE: would deny <tool>: <reason>` warning (argument keys and types, never values) and auditing a `tool_dry_run_denied` event with `observed: true`.
 
 ### Chain Multiple Callbacks
 

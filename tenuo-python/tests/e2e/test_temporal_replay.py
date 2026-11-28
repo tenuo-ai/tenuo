@@ -21,6 +21,8 @@ at record time; see ``test_temporal_live.py`` for that coverage.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 from datetime import timedelta
 
@@ -448,3 +450,86 @@ async def test_tenuo_plugin_replay_clock_boundary_crossing():
         f"Clock-boundary workflow did not replay deterministically: "
         f"{replay_results.replay_failure}"
     )
+
+
+@workflow.defn
+class SignalDropWorkflow:
+    def __init__(self) -> None:
+        self.done = False
+
+    @workflow.signal
+    async def finish(self) -> None:
+        self.done = True
+
+    @workflow.signal
+    async def off_list(self) -> None:
+        raise AssertionError("an off-list signal must not reach the workflow")
+
+    @workflow.run
+    async def run(self) -> str:
+        await workflow.wait_condition(lambda: self.done)
+        return "finished"
+
+
+@pytest.mark.temporal_live
+@pytest.mark.asyncio
+async def test_dropped_signal_is_audited_once_and_not_on_replay():
+    """A dropped signal emits one audit event and one denied metric, a raising
+    callback does not change the drop, and replaying the history emits nothing."""
+    from tenuo.temporal import TenuoMetrics
+
+    events = []
+    delivered = threading.Event()
+
+    def raising_callback(event):
+        assert not workflow.in_workflow()
+        events.append(event)
+        delivered.set()
+        raise RuntimeError("audit sink down")
+
+    metrics = TenuoMetrics(prefix=f"sigdrop_{uuid.uuid4().hex[:8]}")
+    signing_key = SigningKey.generate()
+    config = TenuoPluginConfig(
+        key_resolver=DictKeyResolver({KEY_ID: signing_key}),
+        trusted_roots=[signing_key.public_key],
+        authorized_signals=["finish"],
+        audit_callback=raising_callback,
+        metrics=metrics,
+    )
+    task_queue = f"replay-signal-{uuid.uuid4().hex[:8]}"
+
+    async with await WorkflowEnvironment.start_local() as env:
+        async with Worker(
+            env.client,
+            task_queue=task_queue,
+            workflows=[SignalDropWorkflow],
+            interceptors=[TenuoWorkerInterceptor(config)],
+            workflow_runner=_tenuo_sandbox_runner(),
+        ):
+            # A failing workflow task retries forever; the timeout turns that into a failure.
+            handle = await env.client.start_workflow(
+                SignalDropWorkflow.run,
+                id=task_queue,
+                task_queue=task_queue,
+                run_timeout=timedelta(seconds=20),
+            )
+            await handle.signal(SignalDropWorkflow.off_list)
+            await handle.signal(SignalDropWorkflow.finish)
+            assert await handle.result() == "finished"
+            assert await asyncio.to_thread(delivered.wait, 2)
+            history = await handle.fetch_history()
+
+    assert [(e.decision, e.tool, e.warrant_id) for e in events] == [
+        ("DENY", "signal:off_list", "<no-warrant>")
+    ]
+    assert sum(metrics.get_stats()["denied"].values()) == 1
+
+    replayer = Replayer(
+        workflows=[SignalDropWorkflow],
+        interceptors=[TenuoWorkerInterceptor(config)],
+        workflow_runner=_tenuo_sandbox_runner(),
+    )
+    result = await replayer.replay_workflow(history, raise_on_replay_failure=False)
+    assert result.replay_failure is None
+    assert len(events) == 1
+    assert sum(metrics.get_stats()["denied"].values()) == 1

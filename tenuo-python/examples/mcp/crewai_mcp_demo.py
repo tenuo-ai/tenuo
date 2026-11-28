@@ -29,6 +29,7 @@ Usage:
 
 import asyncio
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,18 @@ except ImportError:
     print("⚠️  CrewAI not installed. Install with: uv pip install crewai")
     print("   Running in simulation mode...\n")
 
-from tenuo import Pattern, SigningKey, Subpath, Warrant
+from tenuo import (
+    Pattern,
+    SigningKey,
+    Subpath,
+    Warrant,
+    Wildcard,
+    chain_scope,
+    configure,
+    key_scope,
+    warrant_scope,
+)
+from tenuo.exceptions import ConstraintViolation, ToolNotAuthorized
 from tenuo.mcp import MCP_AVAILABLE, SecureMCPClient
 
 
@@ -113,15 +125,19 @@ async def run_demo():
     crew_orchestrator_key = SigningKey.generate()
     log("   ✓ Control Plane, Crew Orchestrator")
 
+    # Trust the control plane key as the root of every warrant chain
+    configure(issuer_key=control_key, trusted_roots=[control_key.public_key])
+
     # Setup test environment
     log("\n📁 Setting up test environment...")
-    test_dir = Path("/tmp/crewai_mcp_test")
+    test_dir = Path("/tmp/research")
     sources_dir = test_dir / "sources"
     output_dir = test_dir / "output"
     sources_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    (sources_dir / "reference.txt").write_text("AI agent security: Best practices include...")
+    reference_content = "AI agent security: Best practices include..."
+    (sources_dir / "reference.txt").write_text(reference_content)
     log(f"   ✓ Created test directories in {test_dir}")
 
     # Find MCP research server
@@ -135,7 +151,7 @@ async def run_demo():
 
     # Create MCP client
     mcp_client = SecureMCPClient(
-        command="python",
+        command=sys.executable,
         args=[str(mcp_server_script)],
         register_config=True,
     )
@@ -152,9 +168,9 @@ async def run_demo():
         # Issue crew orchestrator warrant
         log("\n📜 Control Plane issues warrant to Crew Orchestrator...")
         orchestrator_warrant = (Warrant.mint_builder()
-            .capability("web_search", domain=Pattern("*"), query=Pattern("*"))
-            .capability("read_file", path=Subpath("/tmp/research"))
-            .capability("write_file", path=Subpath("/tmp/research"), content=Pattern("*"))
+            .capability("web_search", domain=Wildcard(), query=Pattern("*"))
+            .capability("read_file", path=Subpath("/"))
+            .capability("write_file", path=Subpath("/"), content=Pattern("*"))
             .holder(crew_orchestrator_key.public_key)
             .ttl(3600)
             .mint(control_key))
@@ -166,39 +182,45 @@ async def run_demo():
         log("\n🔐 Crew Orchestrator attenuates warrants for crew members...")
 
         # Researcher: search + read only
-        researcher_warrant = orchestrator_warrant.attenuate(  # noqa: F841
+        researcher_warrant = orchestrator_warrant.attenuate(
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,  # Same holder for demo
             capabilities={
                 "web_search": {"domain": Pattern("*.org"), "query": Pattern("*")},
-                "read_file": {"path": Subpath("/tmp/research/sources")},
+                "read_file": {"path": Subpath("/sources")},
             },
             ttl_seconds=1800,
         )
         log("   ✓ Researcher: web_search (*.org only), read_file (sources only)")
 
         # Writer: write only
-        writer_warrant = orchestrator_warrant.attenuate(  # noqa: F841
+        writer_warrant = orchestrator_warrant.attenuate(
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
-                "write_file": {"path": Subpath("/tmp/research/output"), "content": Pattern("*")},
-                "read_file": {"path": Subpath("/tmp/research/sources")},  # For reference
+                "write_file": {"path": Subpath("/output"), "content": Pattern("*")},
+                "read_file": {"path": Subpath("/sources")},  # For reference
             },
             ttl_seconds=1800,
         )
         log("   ✓ Writer: write_file (output only), read_file (sources for reference)")
 
         # Editor: read only
-        editor_warrant = orchestrator_warrant.attenuate(  # noqa: F841
+        editor_warrant = orchestrator_warrant.attenuate(
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
-                "read_file": {"path": Subpath("/tmp/research/output")},
+                "read_file": {"path": Subpath("/output")},
             },
             ttl_seconds=1800,
         )
         log("   ✓ Editor: read_file (output only)")
+
+        @contextmanager
+        def crew_member(warrant: Warrant):
+            """Put a crew member's warrant, its parent chain and holder key in scope."""
+            with chain_scope([orchestrator_warrant]), warrant_scope(warrant), key_scope(crew_orchestrator_key):
+                yield
 
         # =================================================================
         # Research Workflow (Simulated CrewAI)
@@ -210,18 +232,18 @@ async def run_demo():
         log("📚 Phase 1: Researcher gathers information...")
         log("   Using warrant: web_search + read_file (sources)")
 
-        # Search web
-        search_result = await mcp_client.tools["web_search"](  # noqa: F841
-            query="AI agent security best practices",
-            domain="arxiv.org"
-        )
-        log("   ✓ Web search complete", C.GREEN)
-        log("   Found research on AI security", C.BLUE)
+        with crew_member(researcher_warrant):
+            # Search web
+            search_result = await mcp_client.tools["web_search"](  # noqa: F841
+                query="AI agent security best practices", domain="arxiv.org"
+            )
+            log("   ✓ Web search complete", C.GREEN)
+            log("   Found research on AI security", C.BLUE)
 
-        # Read reference
-        read_result = await mcp_client.tools["read_file"](  # noqa: F841
-            path="/tmp/research/sources/reference.txt"
-        )
+            # Read reference
+            read_result = await mcp_client.tools["read_file"](path="/sources/reference.txt")
+        if not read_result or read_result[0].text != reference_content:
+            raise RuntimeError("MCP server returned unexpected reference content")
         log("   ✓ Read reference file", C.GREEN)
 
         # Phase 2: Writer
@@ -251,10 +273,10 @@ Modern AI agents require robust security frameworks to prevent unauthorized acti
 Security must be built into agent architectures from the ground up.
 """
 
-        write_result = await mcp_client.tools["write_file"](
-            path="/tmp/research/output/article.md",
-            content=article_content
-        )
+        with crew_member(writer_warrant):
+            write_result = await mcp_client.tools["write_file"](
+                path="/output/article.md", content=article_content
+            )
         log("   ✓ Article written to output/article.md", C.GREEN)
         log(f"   {write_result[0].text}", C.BLUE)
 
@@ -262,10 +284,11 @@ Security must be built into agent architectures from the ground up.
         log("\n📝 Phase 3: Editor reviews content...")
         log("   Using warrant: read_file (output only)")
 
-        editor_read = await mcp_client.tools["read_file"](
-            path="/tmp/research/output/article.md"
-        )
+        with crew_member(editor_warrant):
+            editor_read = await mcp_client.tools["read_file"](path="/output/article.md")
         content = editor_read[0].text
+        if content != article_content:
+            raise RuntimeError("MCP server returned unexpected article content")
         log(f"   ✓ Retrieved article ({len(content)} bytes)", C.GREEN)
         log(f"   Preview: {content[:80]}...", C.BLUE)
         log("   ✅ Content approved for publication", C.GREEN)
@@ -279,44 +302,37 @@ Security must be built into agent architectures from the ground up.
         log("🔒 Attack 1: Researcher tries to write (privilege escalation)")
         try:
             # Researcher only has read access, tries write
-            await mcp_client.tools["write_file"](
-                path="/tmp/research/output/malicious.txt",
-                content="pwned"
-            )
+            with crew_member(researcher_warrant):
+                await mcp_client.tools["write_file"](path="/output/malicious.txt", content="pwned")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ToolNotAuthorized as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Researcher warrant doesn't include write_file")
 
-        log("\n🔒 Attack 2: Writer tries path traversal")
+        log("\n🔒 Attack 2: Writer tries to write outside its output subtree")
         try:
-            await mcp_client.tools["write_file"](
-                path="/etc/passwd",
-                content="malicious"
-            )
+            with crew_member(writer_warrant):
+                await mcp_client.tools["write_file"](path="/etc/passwd", content="malicious")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
-            log("   Subpath constraint restricts to /tmp/research/output")
+            log("   Subpath constraint restricts to /output")
 
         log("\n🔒 Attack 3: Editor tries to read sources (out of scope)")
         try:
-            await mcp_client.tools["read_file"](
-                path="/tmp/research/sources/reference.txt"
-            )
+            with crew_member(editor_warrant):
+                await mcp_client.tools["read_file"](path="/sources/reference.txt")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Editor warrant only allows output directory")
 
         log("\n🔒 Attack 4: Researcher tries unauthorized domain")
         try:
-            await mcp_client.tools["web_search"](
-                query="hacking tools",
-                domain="evil.com"
-            )
+            with crew_member(researcher_warrant):
+                await mcp_client.tools["web_search"](query="hacking tools", domain="evil.com")
             log("   ❌ Should have been blocked!", C.YELLOW)
-        except Exception as e:
+        except ConstraintViolation as e:
             log(f"   ✅ BLOCKED: {str(e)[:60]}...", C.GREEN)
             log("   Pattern constraint only allows *.org domains")
 

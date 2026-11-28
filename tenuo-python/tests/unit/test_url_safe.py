@@ -11,6 +11,7 @@ Tests cover:
 
 import pytest
 
+from tenuo.exceptions import ValidationError
 from tenuo.openai import UrlSafe
 
 
@@ -277,11 +278,24 @@ class TestUrlSafeDomainAllowlist:
 
     def test_domain_allowlist_still_blocks_ssrf(self):
         """Domain allowlist doesn't bypass IP blocking."""
-        # IP addresses are checked before domain allowlist
-        constraint = UrlSafe(allow_domains=["*"])
-        # Even with wildcard domain, IPs are checked separately
+        constraint = UrlSafe(allow_domains=["*.example.com"])
         assert not constraint.matches("http://169.254.169.254/")
         assert not constraint.matches("http://127.0.0.1/")
+        assert not constraint.matches("http://8.8.8.8/")
+
+    @pytest.mark.parametrize(
+        "pattern",
+        ["", "*", "*.", "*..example.com", "foo.*.com", "https://example.com"],
+    )
+    def test_rejects_invalid_domain_pattern(self, pattern):
+        """Invalid allowlist patterns fail when policy is constructed."""
+        with pytest.raises(ValidationError):
+            UrlSafe(allow_domains=[pattern])
+
+    def test_accepts_deployment_specific_host_supported_by_url_parser(self):
+        """Core does not impose stricter DNS-label rules than its URL parser."""
+        constraint = UrlSafe(allow_domains=["_service.internal"])
+        assert constraint.matches("https://_service.internal/")
 
 
 class TestUrlSafePortBlocking:

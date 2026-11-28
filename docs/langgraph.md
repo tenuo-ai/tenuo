@@ -211,7 +211,7 @@ warrant = (
 with runtime.bind():
     result = agent.invoke({
         "messages": [HumanMessage("Search customer records for customers:acme")],
-        "warrant": str(warrant),  # base64 token; safe to checkpoint
+        "warrant": str(warrant),  # base64 token; no secret in it
     })
 
 signed_receipts = runtime.peek_receipts()
@@ -241,6 +241,16 @@ graph.invoke(state, config=config)
 # WRONG: Key in state (gets persisted to database!)
 state = {"warrant": warrant, "key": signing_key}  # Security risk!
 ```
+
+### Restored and Forked Checkpoints
+
+Keeping the key out of state stops it leaking through the checkpoint store. It does not make the warrant single-use: the warrant in a restored checkpoint is still valid until it expires, and the key is still in `KeyRegistry`, so resuming or forking a checkpoint re-runs its tool calls with full authority.
+
+That matters for gated calls. Fork from a checkpoint taken *before* an approved `transfer`, or resume a run that crashed after it, and the node runs again with the same approval in state. The rerun signs a fresh PoP, so the approval passes again while it is within its TTL. One-time state cannot live in graph state, because rewinding the graph rewinds it too. It has to live at the enforcement point:
+
+- **Give warrants short, per-task TTLs.** A restored checkpoint can only act while its warrant is valid.
+- **Enable the consumption store for gated actions.** `tenuo.enable_approval_consumption()` lets each approval authorize one call. The rerun is denied with `approval_consumed`. Use a shared backend when several workers resume threads. See [Single-Use Approvals](approvals.md#single-use-approvals).
+- **Carry the idempotency key downstream.** Inside the tool, `tenuo.current_idempotency_key()` is stable across reruns of the same approved call. Passing it to the system that performs the action is the only way to make the action itself happen once, including after a crash between the authorization and the side effect.
 
 ### Convention Over Configuration
 
@@ -391,7 +401,7 @@ registry.register("worker", key2, namespace="tenant-b")
 
 ### `guard_node(node, key_id=None, inject_warrant=False)`
 
-Wrap a pure node function with Tenuo authorization.
+Wrap a pure node function with Tenuo authorization. Before the node runs, the warrant in state must chain to a trusted root (`trusted_roots=[...]` or `tenuo.configure(trusted_roots=[...])`), be unexpired, and be held by the bound key; otherwise `ConfigurationError` is raised. Calls the node makes itself are not authorized here; use `TenuoToolNode` for those.
 
 ```python
 from tenuo.langgraph import guard_node

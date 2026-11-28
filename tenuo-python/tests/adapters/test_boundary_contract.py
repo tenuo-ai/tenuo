@@ -60,6 +60,7 @@ from tenuo.temporal._interceptors import (  # noqa: E402
 from tenuo.temporal._workflow import _fail_workflow_non_retryable  # noqa: E402
 from tenuo.temporal.exceptions import (  # noqa: E402
     _build_non_retryable_application_error,
+    _build_retryable_application_error,
 )
 
 
@@ -118,6 +119,10 @@ def _instantiate(cls: Type[BaseException]) -> BaseException:
         (
             (),
             {"warrant_id": "w", "expired_at": datetime(2030, 1, 1, tzinfo=timezone.utc)},
+        ),
+        (
+            (),
+            {"stale_for_seconds": 61.0, "max_staleness_seconds": 60.0},
         ),
         ((), {"reason": "sweep", "depth": 0}),
         ((), {"key_id": "k"}),
@@ -250,6 +255,17 @@ class TestBuilderContract:
             f"exception that actually rejected the action."
         )
 
+    def test_retryable_dependency_builder_preserves_wire_contract(self) -> None:
+        from tenuo.temporal.exceptions import RevocationStateStale
+
+        exc = RevocationStateStale(61.0, 60.0)
+        app = _build_retryable_application_error(exc)
+
+        assert isinstance(app, ApplicationError)
+        assert app.non_retryable is False
+        assert app.type == "REVOCATION_STATE_STALE"
+        assert app.__cause__ is exc
+
 
 # ── Wrapper smoke tests: each call site actually reaches the builder ─────
 
@@ -281,6 +297,17 @@ class TestWrappersDelegateToBuilder:
             assert app.__cause__ is original
         else:  # pragma: no cover — helper always raises
             pytest.fail("_raise_non_retryable must raise")
+
+    def test_revocation_dependency_wrapper_is_retryable(self) -> None:
+        from tenuo.temporal.exceptions import RevocationStateStale
+
+        original = RevocationStateStale(61.0, 60.0)
+        app = TenuoActivityInboundInterceptor._wrap_as_retryable(original)
+
+        assert isinstance(app, ApplicationError)
+        assert app.non_retryable is False
+        assert app.type == original.error_code
+        assert app.__cause__ is original
 
     def test_wrap_as_non_retryable_delegates(self) -> None:
         original = self._representative_exception()
@@ -348,7 +375,7 @@ class TestCausePreservation:
 class TestNoRawApplicationErrorInTemporalPackage:
     """AST-scan ``tenuo/temporal/**/*.py`` and fail if any
     ``ApplicationError(...)`` constructor call lives outside
-    ``_build_non_retryable_application_error``.
+    one of the dedicated application-error builders.
 
     This is the *structural* half of the wire-contract enforcement.
     The data sweep (``TestBuilderContract``) only covers what it can
@@ -358,7 +385,7 @@ class TestNoRawApplicationErrorInTemporalPackage:
     ``AuthorizedWorkflow.__init__`` historically drifted from the
     contract). Adding this guard means:
 
-      * Every existing and future wrapper must funnel through the
+      * Every existing and future wrapper must funnel through a dedicated
         builder (enforced at test time by this scan).
       * The builder is then the *only* thing the data sweep has to
         cover — one construction site, one test, impossible to
@@ -371,7 +398,10 @@ class TestNoRawApplicationErrorInTemporalPackage:
     the builder. If no, you're weakening the wire contract — don't.
     """
 
-    _BUILDER_NAME = "_build_non_retryable_application_error"
+    _BUILDER_NAMES = {
+        "_build_non_retryable_application_error",
+        "_build_retryable_application_error",
+    }
 
     def _temporal_package_py_files(self) -> list[Path]:
         """Every .py file in the ``tenuo/temporal`` package tree."""
@@ -401,13 +431,13 @@ class TestNoRawApplicationErrorInTemporalPackage:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     enclosing_func = node.name
                 if isinstance(node, ast.Call) and _is_application_error_call(node.func):
-                    if enclosing_func != self._BUILDER_NAME:
+                    if enclosing_func not in self._BUILDER_NAMES:
                         rel = py_path.relative_to(py_path.parents[2])
                         violations.append(
                             f"{rel}:{node.lineno}: ApplicationError(...) "
                             f"constructed inside "
                             f"{enclosing_func or '<module>'}() — must go "
-                            f"through {self._BUILDER_NAME}() so the "
+                            "through a dedicated application-error builder so the "
                             f"three-leg wire contract "
                             f"(non_retryable + error_code + __cause__) "
                             f"is enforced by construction."
@@ -424,7 +454,7 @@ class TestNoRawApplicationErrorInTemporalPackage:
         assert not violations, (
             "Direct ApplicationError(...) constructions detected in "
             "tenuo/temporal. Route them through "
-            f"{self._BUILDER_NAME}() in tenuo/temporal/exceptions.py:\n\n"
+            "an application-error builder in tenuo/temporal/exceptions.py:\n\n"
             + "\n".join(violations)
         )
 

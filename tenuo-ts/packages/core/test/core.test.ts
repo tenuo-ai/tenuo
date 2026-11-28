@@ -10,6 +10,7 @@ import {
   cidr,
   contains,
   createTenuo,
+  diagnoseConstraints,
   email,
   evaluateApprovalGates,
   exact,
@@ -325,7 +326,9 @@ describe("createTenuo", () => {
       { allow: {} },
     );
 
-    expect(tenuo.session({ tools: [named, identified] }).inspect().tools).toEqual([
+    expect(
+      tenuo.session({ tools: [named, identified], allow: { read_file: {}, search: {} } }).inspect().tools,
+    ).toEqual([
       "read_file",
       "search",
     ]);
@@ -375,6 +378,47 @@ describe("actionable delegation diagnostics", () => {
 });
 
 describe("constraints", () => {
+  it("returns deterministic core-owned diagnostics without argument values", () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    const session = tenuo.session({
+      allow: { transfer: { amount: max(200), currency: exact("USD") } },
+    });
+
+    const diagnostics = diagnoseConstraints(session.toWire()[0]!, "transfer", {
+      amount: 300,
+      z_extra: "secret-z",
+      a_extra: "secret-a",
+    });
+
+    expect(diagnostics).toEqual({
+      closedWorld: true,
+      violations: [
+        {
+          field: "a_extra",
+          kind: "unknown_field",
+          reason: "unknown field not allowed (zero-trust mode)",
+        },
+        {
+          field: "z_extra",
+          kind: "unknown_field",
+          reason: "unknown field not allowed (zero-trust mode)",
+        },
+        {
+          field: "amount",
+          kind: "constraint_mismatch",
+          reason: "value does not match constraint",
+        },
+        {
+          field: "currency",
+          kind: "missing_required",
+          reason: "missing required argument",
+        },
+      ],
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain("secret-a");
+    expect(JSON.stringify(diagnostics)).not.toContain("secret-z");
+  });
+
   it("builds marker objects for the WASM mapping", () => {
     expect(under("/data")).toEqual({ kind: "under", root: "/data" });
     expect(email({ domain: "acme.com" })).toEqual({ kind: "email", domain: "acme.com" });
@@ -558,6 +602,21 @@ describe("errors", () => {
 });
 
 describe("authorize through WASM", () => {
+  it("rejects off-kind exclusion inputs before executing the tool", async () => {
+    const tenuo = createTenuo({ root: createTenuo.devRoot() });
+    let executions = 0;
+    const tool = tenuo.tool(
+      { execute: async ({ value }: { value: unknown }) => { executions += 1; return value; } },
+      { capability: "check_value", allow: { value: notOneOf(["prod"]) } },
+    );
+    const session = tenuo.session({ tools: [tool] });
+    await expect(tool.execute({ value: "staging" }, { session })).resolves.toBe("staging");
+    for (const value of ["prod", ["prod"], [], 5, false, {}, null]) {
+      await expect(tool.execute({ value }, { session })).rejects.toThrow(TenuoError);
+    }
+    expect(executions).toBe(1);
+  });
+
   it("allows a path under the session and denies /etc/passwd without calling execute", async () => {
     const tenuo = createTenuo({ root: createTenuo.devRoot() });
     tenuo.ready();
@@ -806,7 +865,7 @@ describe("tool allow and session({ tools })", () => {
       { execute: async (_args: Record<string, never>) => "pong" },
       { capability: "ping", allow: {} },
     );
-    const session = tenuo.session({ tools: [ping] });
+    const session = tenuo.session({ tools: [ping], allow: { ping: {} } });
     await expect(tenuo.withSession(session, () => ping.execute({} as Record<string, never>))).resolves.toBe(
       "pong",
     );
@@ -917,6 +976,49 @@ describe("toWire", () => {
 });
 
 describe("revocation and receipts", () => {
+  it("matches Python's large integer host-policy commitment", () => {
+    // The native expression API also accepts nested exact values, which the
+    // public TypeScript exact() helper does not expose yet.
+    const ctx = devContext();
+    const session = ctx.mint({ large: {} }, 300);
+    const value = 2 ** 53;
+    const allow = {
+      exact: exact(value), nested: { kind: "exact", value: { nested: [value] } },
+      contains: contains([value]), subset: subset([value]),
+    };
+    const decision = ctx.authorize(session, "large", {
+      exact: 0, nested: { nested: [0] }, contains: [0], subset: [0],
+    }, undefined, allow);
+    expect(decision.outcome).toBe("deny");
+    if (!decision.receipt) throw new Error("expected signed denial receipt");
+    expect(verifyReceipt(decision.receipt).policy_definition_hash).toBe("a5b8f98978bbbec65c5f05d6015a6bb5425c101f2caeefccda7c8c842208682f");
+  });
+
+  it.each(["/data/reports", "/data/reports/", "/data/./reports/"])(
+    "normalizes host-policy receipts consistently with Python for %s", async (root) => {
+      const tenuo = createTenuo({ root: createTenuo.devRoot() });
+      const allow = {
+        path: under(root, { caseSensitive: true, allowEqual: true }),
+        name: pattern("*.pdf"),
+        id: regex("^[a-z]+$"),
+      };
+      const session = tenuo.session({ allow: { read_file: {} } });
+      const tool = tenuo.tool({ execute: async (args: { path: string; name: string; id: string }) => args.path }, {
+        capability: "read_file", allow,
+      });
+      for (const path of ["/data/reports/q3.pdf", "/etc/passwd"]) {
+        let wire = "";
+        const call = tenuo.withSession(session, () => tool.execute({ path, name: "q3.pdf", id: "report" }, {
+          onReceipt: (receipt: string) => { wire = receipt; },
+        }));
+        if (path === "/etc/passwd") await expect(call).rejects.toThrow();
+        else await call;
+        const receipt = verifyReceipt(wire);
+        expect(receipt.policy_definition_hash).toBe("3a9650ba739a196f3c89002df971134793368dc4406f9264cb85d7b27d6b1386");
+      }
+    },
+  );
+
   it("commits to the revocation list in force at decision time", async () => {
     const ctx = devContext();
     const victim = wrapSession(ctx.mint({ read_file: { path: { kind: "under", root: "/data" } } }, 300));

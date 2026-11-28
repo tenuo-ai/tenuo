@@ -29,6 +29,7 @@ CANONICAL_ERROR_TYPES: FrozenSet[Optional[str]] = frozenset(
         "untrusted_issuer",
         "approval_gate_misconfigured",
         "insufficient_approvals",
+        "approval_consumed",
         "revoked",
     }
 )

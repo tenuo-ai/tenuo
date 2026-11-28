@@ -98,6 +98,7 @@ from tenuo_core import (  # type: ignore
     UrlPattern,
     Warrant,
     Wildcard,
+    validate_attenuation,
     verify_receipt,
 )
 from tenuo_core import (
@@ -119,6 +120,7 @@ from tenuo_core import (
     encode_warrant_stack,
 )
 
+from ._native_patch import patch_native as _patch_native
 from .arguments import parse_strict_json
 
 # Wildcard: allow any value for a field in a closed-world constraint set.
@@ -136,6 +138,7 @@ from .config import (
     is_audit_mode,
     is_configured,
     is_enforce_mode,
+    is_observe_mode,
     reset_config,
     resolve_trusted_roots,
     should_block_violation,
@@ -147,6 +150,15 @@ from .nonce import (
     disable_default_nonce_store,
     enable_default_nonce_store as enable_nonce_store,
     get_default_nonce_store,
+)
+
+# At-most-once use of approvals
+from .consumption import (
+    ApprovalConsumptionStore,
+    current_idempotency_key,
+    disable_default_consumption_store,
+    enable_default_consumption_store as enable_approval_consumption,
+    get_default_consumption_store,
 )
 
 # Constraints
@@ -227,7 +239,7 @@ from .langchain import (
 # Validation result
 from .validation import ValidationResult
 
-Warrant.bind = BoundWarrant.bind_warrant
+_patch_native(Warrant, "bind", BoundWarrant.bind_warrant)
 
 # Ensure guard refers to the decorator function, not the guard module
 # The guard module is available as auto_guard
@@ -313,6 +325,7 @@ __all__ = [
     "auto_configure",
     "reset_config",
     "is_configured",
+    "is_observe_mode",
     "is_audit_mode",
     "is_enforce_mode",
     "should_block_violation",
@@ -335,6 +348,7 @@ __all__ = [
     # Common constraints
     "Pattern",
     "Exact",
+    "validate_attenuation",
     "OneOf",
     "Range",
     "Contains",
@@ -410,9 +424,15 @@ __all__ = [
     "enable_nonce_store",
     "disable_default_nonce_store",
     "get_default_nonce_store",
+    # At-most-once approvals
+    "ApprovalConsumptionStore",
+    "enable_approval_consumption",
+    "disable_default_consumption_store",
+    "get_default_consumption_store",
+    "current_idempotency_key",
 ]
 
-__version__ = "0.3.2"
+__version__ = "0.3.8"
 
 
 def __getattr__(name: str):

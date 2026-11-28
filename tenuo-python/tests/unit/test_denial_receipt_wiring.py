@@ -111,6 +111,12 @@ def test_key_10_uses_the_canonical_vocabulary():
     assert _DECISION_CODE_BY_ERROR_TYPE["approval_gate_misconfigured"] == "approval-invalid"
 
 
+def test_approval_required_is_known_to_follow_verified_pop():
+    from tenuo.control_plane import _POP_ESTABLISHED_ERROR_TYPES
+
+    assert "approval_required" in _POP_ESTABLISHED_ERROR_TYPES
+
+
 def test_a_split_view_denial_commits_to_what_the_holder_signed(bound, signing_key):
     """Key 7 must hash the PoP view the core signed, including JSON null."""
     from tenuo.receipts import InMemoryReceiptSink

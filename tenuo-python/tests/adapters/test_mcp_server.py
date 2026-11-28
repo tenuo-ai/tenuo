@@ -21,6 +21,7 @@ from tenuo.mcp.server import (
     MCPVerificationResult,
     MCPVerifier,
     verify_mcp_call,
+    _mcp_result_from_enforcement,
 )
 
 
@@ -603,6 +604,27 @@ class TestDenialScenarios:
 
 
 class TestApprovalGateTriggered:
+    def test_observed_approval_is_not_an_actionable_jsonrpc_error(self):
+        from types import SimpleNamespace
+
+        result = _mcp_result_from_enforcement(
+            SimpleNamespace(
+                allowed=True,
+                observed=True,
+                error_type="approval_required",
+                denial_reason="approval required",
+                approval_metadata={},
+            ),
+            tool_name="transfer",
+            clean_arguments={"amount": 100},
+            constraints={},
+            warrant_id="w-1",
+        )
+
+        assert result.allowed and result.observed
+        assert result.jsonrpc_error_code is None
+        assert not result.is_approval_required
+
     def test_gate_fires_returns_minus_32002(
         self,
         issuer_key: SigningKey,
@@ -992,7 +1014,7 @@ class TestNonceReplayPrevention:
         """Second call with the exact same PoP bytes is rejected."""
         from tenuo.nonce import NonceStore
 
-        ns = NonceStore(ttl_seconds=120)
+        ns = NonceStore()
         verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
 
         tool_args = {"path": "/data/f.txt"}
@@ -1037,7 +1059,7 @@ class TestNonceReplayPrevention:
         """Two calls with different args produce distinct PoPs — both pass."""
         from tenuo.nonce import NonceStore
 
-        ns = NonceStore(ttl_seconds=120)
+        ns = NonceStore()
         verifier = MCPVerifier(authorizer=authorizer, nonce_store=ns)
 
         args1 = {"path": "/data/a.txt"}
@@ -1063,7 +1085,7 @@ class TestNonceReplayPrevention:
         from tenuo.nonce import NonceStore
         from tenuo import nonce as nonce_mod
 
-        default_ns = NonceStore(ttl_seconds=120)
+        default_ns = NonceStore()
         monkeypatch.setattr(nonce_mod, "_default_store", default_ns)
 
         verifier = MCPVerifier(authorizer=authorizer)

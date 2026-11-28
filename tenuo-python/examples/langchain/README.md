@@ -24,6 +24,7 @@ python integration.py         # Advanced callback patterns
 python protect_tools.py       # Securing third-party tools
 python mcp_integration.py     # LangChain + MCP + Tenuo
 python langgraph_protected.py # State-aware agents
+python langgraph_parallel_workers.py # Send fan-out, no API key
 ```
 
 ## Examples
@@ -89,6 +90,14 @@ Advanced LangGraph integration with checkpointing. Shows:
 - Memory persistence with `MemorySaver`
 
 **Use when**: Building stateful agents with LangGraph.
+
+### [langgraph_parallel_workers.py](langgraph_parallel_workers.py) - Parallel Worker Authority
+
+A deterministic `Send` fan-out to researcher and writer workers. The orchestrator
+grants each worker a separate, narrower warrant. Both workers attempt their own
+tool and the other worker's tool; `TenuoToolNode` allows only the former. No LLM,
+credentials, or server is required. Install `tenuo[langgraph]` with a LangGraph
+version whose `ToolNode` supports `wrap_tool_call` (langgraph-prebuilt >= 1.0.2).
 
 ### [langgraph_mcp_integration.py](langgraph_mcp_integration.py) - LangGraph + MCP
 

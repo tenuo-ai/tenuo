@@ -12,9 +12,12 @@ Tests the "Trust Cliff" behavior:
 import pytest
 
 from tenuo import (
+    Cidr,
+    Exact,
     Pattern,
     Range,
     SigningKey,
+    UrlPattern,
     Warrant,
     Wildcard,
 )
@@ -120,6 +123,115 @@ class TestAllowUnknownOptOut:
         args = {"url": "https://evil.com/attack", "timeout": 30}
         assert warrant.check_constraints("api_call", args) is not None
 
+
+class TestConstraintDiagnostics:
+    """Core-owned structured diagnostics exposed through Python."""
+
+    def test_reports_all_field_failures_without_values(self, keypair):
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "transfer",
+                amount=Range(0, 200),
+                currency=Exact("USD"),
+                memo=Wildcard(),
+            )
+            .holder(keypair.public_key)
+            .ttl(3600)
+            .mint(keypair)
+        )
+
+        diagnostics = warrant.diagnose_constraints(
+            "transfer",
+            {"amount": 300, "z_extra": "secret-z", "a_extra": "secret-a"},
+        )
+
+        assert diagnostics == {
+            "closed_world": True,
+            "violations": [
+                {
+                    "field": "a_extra",
+                    "kind": "unknown_field",
+                    "reason": "unknown field not allowed (zero-trust mode)",
+                },
+                {
+                    "field": "z_extra",
+                    "kind": "unknown_field",
+                    "reason": "unknown field not allowed (zero-trust mode)",
+                },
+                {
+                    "field": "amount",
+                    "kind": "constraint_mismatch",
+                    "reason": "value does not match constraint",
+                },
+                {
+                    "field": "currency",
+                    "kind": "missing_required",
+                    "reason": "missing required argument",
+                },
+                {
+                    "field": "memo",
+                    "kind": "missing_required",
+                    "reason": "missing required argument",
+                },
+            ],
+        }
+        assert "secret-a" not in repr(diagnostics)
+        assert "secret-z" not in repr(diagnostics)
+
+    def test_allow_unknown_is_reported_as_open(self, keypair):
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call",
+                {"url": Pattern("https://api.example.com/*"), "_allow_unknown": True},
+            )
+            .holder(keypair.public_key)
+            .ttl(3600)
+            .mint(keypair)
+        )
+
+        diagnostics = warrant.diagnose_constraints(
+            "api_call", {"url": "https://api.example.com/v1", "extra": 1}
+        )
+        assert diagnostics == {"closed_world": False, "violations": []}
+
+    def test_tool_denial_is_structured(self, keypair):
+        warrant = Warrant.mint_builder().tool("read").mint(keypair)
+
+        diagnostics = warrant.diagnose_constraints("write", {})
+        assert diagnostics["closed_world"] is False
+        assert diagnostics["violations"][0]["kind"] == "tool_not_authorized"
+        assert diagnostics["violations"][0]["field"] == "tool"
+
+    def test_invalid_network_values_are_redacted_and_aggregated(self, keypair):
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "connect",
+                ip=Cidr("10.0.0.0/8"),
+                url=UrlPattern("https://*.example.com/*"),
+                required=Exact("present"),
+            )
+            .holder(keypair.public_key)
+            .ttl(3600)
+            .mint(keypair)
+        )
+        invalid_ip = "secret-invalid-ip"
+        invalid_url = "secret invalid url"
+
+        diagnostics = warrant.diagnose_constraints(
+            "connect",
+            {"ip": invalid_ip, "url": invalid_url},
+        )
+
+        assert [item["kind"] for item in diagnostics["violations"]] == [
+            "constraint_mismatch",
+            "missing_required",
+            "constraint_mismatch",
+        ]
+        assert invalid_ip not in repr(diagnostics)
+        assert invalid_url not in repr(diagnostics)
 
 class TestWildcardVsAllowUnknown:
     """Tests for Wildcard() vs _allow_unknown difference."""

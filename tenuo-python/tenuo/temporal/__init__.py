@@ -67,6 +67,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "execute_workflow_authorized": ("tenuo.temporal._workflow", "execute_workflow_authorized"),
     "start_workflow_authorized": ("tenuo.temporal._workflow", "start_workflow_authorized"),
     "tenuo_execute_activity": ("tenuo.temporal._workflow", "tenuo_execute_activity"),
+    "framework_args": ("tenuo.temporal._pop", "framework_args"),
     "tenuo_execute_child_workflow": ("tenuo.temporal._workflow", "tenuo_execute_child_workflow"),
     "AuthorizedWorkflow": ("tenuo.temporal._workflow", "AuthorizedWorkflow"),
     "current_warrant": ("tenuo.temporal._workflow", "current_warrant"),
@@ -98,6 +99,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "tenuo_bootstrap_nexus_workflow": ("tenuo.temporal._nexus", "tenuo_bootstrap_nexus_workflow"),
     # _state — public escape hatch for manual worker setup
     "register_worker_config": ("tenuo.temporal._state", "register_worker_config"),
+    # _idempotency — retry-stable key for Activity side effects
+    "current_idempotency_key": (
+        "tenuo.temporal._idempotency",
+        "current_idempotency_key",
+    ),
     # _workflow — manual-setup helper: Tenuo-owned activities every worker must register
     "TENUO_TEMPORAL_ACTIVITIES": ("tenuo.temporal._workflow", "TENUO_TEMPORAL_ACTIVITIES"),
     # _client
@@ -122,6 +128,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "WarrantExpired": ("tenuo.temporal.exceptions", "WarrantExpired"),
     "ChainValidationError": ("tenuo.temporal.exceptions", "ChainValidationError"),
     "PopVerificationError": ("tenuo.temporal.exceptions", "PopVerificationError"),
+    "RevocationStateStale": ("tenuo.temporal.exceptions", "RevocationStateStale"),
     "LocalActivityError": ("tenuo.temporal.exceptions", "LocalActivityError"),
     "KeyResolutionError": ("tenuo.temporal.exceptions", "KeyResolutionError"),
     # _constants

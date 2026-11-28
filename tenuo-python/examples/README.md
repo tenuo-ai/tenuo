@@ -129,6 +129,7 @@ This demo shows Tenuo's key capabilities:
   - **[protect_tools.py](langchain/protect_tools.py)**: Securing third-party tools from `langchain_community`
   - **[mcp_integration.py](langchain/mcp_integration.py)**: LangChain + MCP + Tenuo complete integration
   - **[langgraph_protected.py](langchain/langgraph_protected.py)**: State-aware agents with checkpointing (serialization, key binding, TenuoToolNode)
+  - **[langgraph_parallel_workers.py](langchain/langgraph_parallel_workers.py)**: `Send` fan-out with distinct child warrants and allowed/denied tool calls (offline)
   - **[langgraph_mcp_integration.py](langchain/langgraph_mcp_integration.py)**: LangGraph + MCP multi-agent graph with context-based authorization
 
 ### OpenAI Integration
@@ -137,6 +138,8 @@ This demo shows Tenuo's key capabilities:
   - **[warrant.py](openai/warrant.py)**: Tier 2 cryptographic authorization with PoP
   - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
   - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
+- **[handoff.py](openai/handoff.py)**: Native Agents SDK handoff to a refund specialist with a narrower warrant (offline test)
+- **[token_budget.py](openai/token_budget.py)**: Token budgets for model calls, shared between a lead and two workers (local stand-in provider, no API key)
 
 ### CrewAI Integration
 - **[crewai/](crewai/)**: Complete CrewAI integration examples
@@ -155,6 +158,7 @@ This demo shows Tenuo's key capabilities:
 - **[autogen_demo_protected_attenuation.py](autogen_demo_protected_attenuation.py)**: Per-agent attenuation + escalation blocking.
 - **[autogen_demo_guardbuilder_tier1.py](autogen_demo_guardbuilder_tier1.py)**: GuardBuilder (constraints-only) with on_denial raise/log/skip.
 - **[autogen_demo_guardbuilder_tier2.py](autogen_demo_guardbuilder_tier2.py)**: GuardBuilder with warrant + PoP (Tier 2).
+- **[autogen_round_robin_group_chat.py](autogen_round_robin_group_chat.py)**: Offline `RoundRobinGroupChat` with researcher and reviewer warrants; cross-role calls are denied.
 
 ### Google ADK Integration
 - **[google_adk_incident_response/](google_adk_incident_response/)**: **Multi-Agent Security Demo** - Detector, Analyst, and Responder agents with warrant-based authorization. Shows Tier 2 protection with monotonic attenuation.
@@ -245,6 +249,7 @@ python langchain/mcp_integration.py
 
 # LangGraph examples (requires: uv pip install langgraph)
 python langchain/langgraph_protected.py
+python langchain/langgraph_parallel_workers.py
 python langchain/langgraph_mcp_integration.py
 
 # OpenAI examples (requires: uv pip install openai)

@@ -1,0 +1,36 @@
+{
+  "realm": "tenuo-gateway",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "clientScopes": [
+    {"name": "basic", "protocol": "openid-connect", "protocolMappers": [
+      {"name": "subject", "protocol": "openid-connect", "protocolMapper": "oidc-sub-mapper",
+       "config": {"access.token.claim": "true"}}
+    ]},
+    {"name": "refunds:write", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "true"}}
+  ],
+  "clients": [
+    {"clientId": "support-agent", "protocol": "openid-connect", "publicClient": false,
+     "secret": "local-recipe-secret-support",
+     "serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+     "defaultClientScopes": ["basic", "refunds:write"],
+     "protocolMappers": [
+       {"name": "api-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+        "config": {"included.custom.audience": "payments-api", "access.token.claim": "true", "id.token.claim": "false"}},
+       {"name": "authority-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+        "config": {"included.custom.audience": "tenuo-authority", "access.token.claim": "true", "id.token.claim": "false"}}
+     ]},
+    {"clientId": "reports-agent", "protocol": "openid-connect", "publicClient": false,
+     "secret": "local-recipe-secret-reports",
+     "serviceAccountsEnabled": true, "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+     "defaultClientScopes": ["basic"],
+     "protocolMappers": [
+       {"name": "api-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+        "config": {"included.custom.audience": "payments-api", "access.token.claim": "true", "id.token.claim": "false"}},
+       {"name": "authority-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+        "config": {"included.custom.audience": "tenuo-authority", "access.token.claim": "true", "id.token.claim": "false"}}
+     ]}
+  ]
+}

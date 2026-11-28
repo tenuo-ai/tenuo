@@ -24,8 +24,7 @@ use wasm_bindgen::prelude::*;
 use crate::init_panic_hook;
 use crate::sdk::{
     constraint_from_expr, cv_to_json, error_field, js_to_args, map_code, parse_holder_secret,
-    parse_public_key_hex, parse_srl_bytes, signed_approval_from_text, to_js_value, SdkContext,
-    SdkSession,
+    parse_one_approval, parse_public_key_hex, parse_srl_bytes, to_js_value, SdkContext, SdkSession,
 };
 
 const DEFAULT_TTL_SECS: u64 = 300;
@@ -504,10 +503,38 @@ impl SdkContext {
         if let Some(set) = set {
             for (field, constraint) in set.iter() {
                 let expr = serde_json::to_value(constraint).unwrap_or(serde_json::Value::Null);
+                if set.is_optional(field) {
+                    // Use the core's omission check to validate support before
+                    // explaining either an omitted or a supplied optional value.
+                    let mut field_set = ConstraintSet::new();
+                    field_set.insert_optional(field, constraint.clone());
+                    if let Err(error) = field_set.matches(&HashMap::new()) {
+                        fields.push(ExplainFieldDto {
+                            field: field.clone(),
+                            kind: constraint.type_name().to_string(),
+                            constraint: expr,
+                            value: args.get(field).map(cv_to_json),
+                            satisfied: false,
+                            reason_code: Some(map_code(&error).to_string()),
+                            reason: Some(error.to_string()),
+                        });
+                        continue;
+                    }
+                }
                 match args.get(field) {
+                    None if set.is_optional(field) => {
+                        fields.push(ExplainFieldDto {
+                            field: field.clone(),
+                            kind: constraint.type_name().to_string(),
+                            constraint: expr,
+                            value: None,
+                            satisfied: true,
+                            reason_code: None,
+                            reason: None,
+                        });
+                    }
                     None => {
-                        // Every named field is required, wildcard included:
-                        // wildcard admits any value, not the absence of one.
+                        // A required wildcard admits every value, not absence.
                         missing.push(field.clone());
                         fields.push(ExplainFieldDto {
                             field: field.clone(),
@@ -816,6 +843,7 @@ pub fn sdk_sign_approval_for_request(
 struct ApprovalInspectDto {
     approver_public_key: String,
     request_hash: String,
+    nonce: String,
     external_id: String,
     approved_at: i64,
     expires_at: i64,
@@ -827,15 +855,16 @@ struct ApprovalInspectDto {
 
 /// Decode and check an approval envelope. Not authorization.
 #[wasm_bindgen(js_name = sdkInspectApproval)]
-pub fn sdk_inspect_approval(envelope: &str) -> Result<JsValue, JsError> {
+pub fn sdk_inspect_approval(envelope: JsValue) -> Result<JsValue, JsError> {
     init_panic_hook();
-    let signed = signed_approval_from_text(envelope).map_err(|e| JsError::new(&e))?;
+    let signed = parse_one_approval(&envelope).map_err(|e| JsError::new(&e))?;
     let approver = hex::encode(signed.approver_key.to_bytes());
     let now = Utc::now().timestamp();
     match signed.verify() {
         Ok(payload) => Ok(to_js_value(&ApprovalInspectDto {
             approver_public_key: approver,
             request_hash: hex::encode(payload.request_hash),
+            nonce: hex::encode(payload.nonce),
             external_id: payload.external_id,
             approved_at: payload.approved_at as i64,
             expires_at: payload.expires_at as i64,
@@ -846,6 +875,7 @@ pub fn sdk_inspect_approval(envelope: &str) -> Result<JsValue, JsError> {
         Err(e) => Ok(to_js_value(&ApprovalInspectDto {
             approver_public_key: approver,
             request_hash: String::new(),
+            nonce: String::new(),
             external_id: String::new(),
             approved_at: 0,
             expires_at: 0,

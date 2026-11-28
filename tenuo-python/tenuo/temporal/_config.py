@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple
@@ -49,6 +50,7 @@ class _ProviderSnapshots:
 
     trusted_roots: Tuple[Any, ...] = ()
     revocation_list: Optional[Any] = None
+    revocation_refreshed_at: Optional[float] = None
 
     @property
     def ready(self) -> bool:
@@ -280,10 +282,9 @@ class TenuoPluginConfig:
     authorized_signals: Optional[List[str]] = None
     """
     When set, only signals whose name is in this list are accepted.
-    An unrecognized signal raises ``TemporalConstraintViolation`` during
-    signal handling. The plugin registers that type as a workflow failure,
-    so the signal fails the workflow run. When None (default), all signals
-    pass through. One worker shares this list across every workflow it runs.
+    An unrecognized signal is logged and dropped; the workflow run continues.
+    When None (default), all signals pass through. One worker shares this
+    list across every workflow it runs.
     """
 
     authorized_updates: Optional[List[str]] = None
@@ -367,28 +368,28 @@ class TenuoPluginConfig:
     retried more than ~90 s after its first scheduling will fail PoP
     verification.
 
-    **Default ``40`` (±1200 s ≈ ±20 min)** is sized against Temporal's default
-    retry policy (``initial_interval=1s``, ``backoff_coefficient=2``,
-    ``max_interval=100s``), which places the Nth retry at roughly
-    ``1 + 2 + 4 + … + min(2^(N-1), 100)`` seconds. Concretely: ten retries
-    land at ~800 s and fifteen retries at ~1300 s, so 20 min of slack covers
-    the long-tail of flaky-backend scenarios without giving an attacker an
-    hour of replay headroom. A ``PopVerificationError`` on retry becomes
-    non-retryable, so too-tight a window silently turns transient failures
-    into permanent ones — that is precisely what this default prevents.
+    **Default ``40``** checks 20 windows of 30 s on the past side, about 10
+    minutes. Temporal's default retry policy (``initial_interval=1s``,
+    ``backoff_coefficient=2``, maximum interval 100× the initial interval)
+    waits about 7 minutes across ten retries that fail immediately
+    (1+2+4+8+16+32+64+100+100+100 seconds). That fits. Queue time and attempt
+    runtime use the remaining slack. A ``PopVerificationError`` on retry
+    becomes non-retryable, so a window that is too tight turns a transient
+    failure into a permanent one.
 
-    Set higher to accommodate longer retry windows:
+    The past side is ``(retry_pop_max_windows // 2) * 30`` seconds. To cover
+    ``T`` seconds of backoff, set ``retry_pop_max_windows`` to about
+    ``2 * ceil(T / 30)``:
 
-        # 120 × 30 s = 3600 s — covers up to 1 hour of Temporal retries
-        retry_pop_max_windows=120
+        # about 1 hour on the past side
+        retry_pop_max_windows=240
 
-        # 480 × 30 s = 14400 s — covers up to 4 hours
+        # about 2 hours on the past side
         retry_pop_max_windows=480
 
     **Security trade-off:** A wider window means a captured PoP is valid for
     longer on retried tasks (already a lesser concern since dedup is also
-    skipped for attempt > 1).  For most deployments the correct value is
-    ``ceil(max_retry_window_seconds / 30)``.
+    skipped for attempt > 1).
 
     Set to ``None`` to use the same strict window for all attempts, which
     preserves the tightest security guarantee but will cause retry failures for
@@ -466,12 +467,37 @@ class TenuoPluginConfig:
     Requires ``revocation_list_provider`` to be set.
     """
 
+    max_revocation_refresh_staleness_secs: Optional[float] = None
+    """Maximum age of the last successful provider refresh.
+
+    When set, activity authorization fails closed once the provider has not
+    returned and installed a non-``None`` revocation list within this many
+    monotonic-clock seconds.  The resulting Temporal failure is retryable so
+    work can resume after the revocation provider recovers.
+
+    ``None`` (default) preserves the availability-oriented behavior of using
+    the last known-good revocation list indefinitely.  A positive
+    ``revocation_refresh_secs`` value and ``revocation_list_provider`` are
+    required, and the staleness bound must be at least the refresh interval.
+    """
+
     _provider_snapshots: _ProviderSnapshots = field(
         default=_EMPTY_PROVIDER_SNAPSHOTS, init=True, repr=False, compare=False
     )
     _provider_state_lock: Any = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _last_trusted_roots_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+    _last_revocation_refresh_attempt_monotonic: float = field(
+        default_factory=time.monotonic, init=False, repr=False, compare=False
+    )
+
+    def _provider_snapshot(self) -> _ProviderSnapshots:
+        """Return one coherent immutable provider snapshot."""
+        with self._provider_state_lock:
+            return self._provider_snapshots
 
     @property
     def _provider_snapshots_ready(self) -> bool:
@@ -487,6 +513,11 @@ class TenuoPluginConfig:
     def _last_good_revocation_list(self) -> Optional[Any]:
         """Last-known-good SRL. Update via ``_record_provider_snapshot``."""
         return self._provider_snapshots.revocation_list
+
+    @property
+    def _last_good_revocation_refresh_monotonic(self) -> Optional[float]:
+        """Monotonic timestamp of the last installed provider SRL."""
+        return self._provider_snapshots.revocation_refreshed_at
 
     def _record_provider_snapshot(
         self,
@@ -511,6 +542,11 @@ class TenuoPluginConfig:
                     current.revocation_list
                     if revocation_list is None
                     else revocation_list
+                ),
+                revocation_refreshed_at=(
+                    time.monotonic()
+                    if revocation_list is not None
+                    else current.revocation_refreshed_at
                 ),
             )
 
@@ -599,6 +635,30 @@ class TenuoPluginConfig:
                     "revocation_refresh_secs requires revocation_list_provider."
                 )
 
+        if self.max_revocation_refresh_staleness_secs is not None:
+            from tenuo.exceptions import ConfigurationError
+
+            max_staleness = self.max_revocation_refresh_staleness_secs
+            if max_staleness <= 0:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs must be positive when set."
+                )
+            if self.revocation_list_provider is None:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs requires "
+                    "revocation_list_provider."
+                )
+            if self.revocation_refresh_secs is None:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs requires "
+                    "revocation_refresh_secs so stale state can be refreshed."
+                )
+            if max_staleness < self.revocation_refresh_secs:
+                raise ConfigurationError(
+                    "max_revocation_refresh_staleness_secs must be greater than or "
+                    "equal to revocation_refresh_secs."
+                )
+
         if self.revocation_list_provider is not None:
             if snapshots.ready:
                 initial_srl = snapshots.revocation_list
@@ -616,6 +676,17 @@ class TenuoPluginConfig:
                         "SRL endpoint availability, credentials, and timeout settings, "
                         "or pass a static revocation_list for bootstrap."
                     ) from exc
+            if (
+                initial_srl is None
+                and self.max_revocation_refresh_staleness_secs is not None
+            ):
+                from tenuo.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    "TenuoPluginConfig: revocation_list_provider returned None "
+                    "during startup, but max_revocation_refresh_staleness_secs "
+                    "requires an initial revocation snapshot."
+                )
         else:
             # Static values may have been explicitly overridden through
             # dataclasses.replace(), so they take precedence over a carried
@@ -628,6 +699,16 @@ class TenuoPluginConfig:
         self._provider_snapshots = _ProviderSnapshots(
             trusted_roots=tuple(roots),
             revocation_list=initial_srl,
+            revocation_refreshed_at=(
+                snapshots.revocation_refreshed_at
+                if self.revocation_list_provider is not None and snapshots.ready
+                else (
+                    time.monotonic()
+                    if self.revocation_list_provider is not None
+                    and initial_srl is not None
+                    else None
+                )
+            ),
         )
 
         if self.signing_key is not None and self.key_resolver is None:
@@ -643,13 +724,6 @@ class TenuoPluginConfig:
                     return self._sk
 
             self.key_resolver = _StaticSigningKeyResolver(self.signing_key)
-
-        if self.key_resolver is None:
-            from tenuo.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "TenuoPluginConfig requires key_resolver= or signing_key= (worker signing material)."
-            )
 
         if self.approval_handler is not None:
             # Only bump for values at-or-below the field default (currently 40).

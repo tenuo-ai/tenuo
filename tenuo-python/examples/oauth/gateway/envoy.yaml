@@ -1,0 +1,155 @@
+# An OAuth gateway with one filter and one route added.
+#
+# Before: jwt_authn checks every request's access token against Keycloak, and
+# /refunds goes to the payments service. A valid token is all a caller needs.
+#
+# Added: (1) the /warrants route, to the warrant issuer, and (2) the ext_authz
+# filter, which asks the Tenuo authorizer whether this request is inside the
+# caller's warrant. The token check is unchanged and still comes first.
+static_resources:
+  listeners:
+  - name: main
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          # Authorize the same path the backend will see.
+          normalize_path: true
+          merge_slashes: true
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: api
+              domains: ["*"]
+              routes:
+              # (1) Added: the warrant issuer is one more service behind the gateway.
+              # It checks the token again itself, so it is not a warrant-protected route.
+              - match:
+                  path: "/warrants"
+                route:
+                  cluster: warrant-issuer
+                typed_per_filter_config:
+                  envoy.filters.http.ext_authz:
+                    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                    disabled: true
+              - match:
+                  path: "/refunds"
+                route:
+                  cluster: payments
+                  prefix_rewrite: "/anything/refunds"
+          http_filters:
+          # Unchanged: the gateway's own OAuth check.
+          - name: envoy.filters.http.jwt_authn
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+              providers:
+                keycloak:
+                  issuer: http://127.0.0.1:18190/realms/tenuo-gateway
+                  audiences: ["payments-api"]
+                  # Keep the token on the request: the warrant issuer needs it.
+                  forward: true
+                  remote_jwks:
+                    http_uri:
+                      uri: http://keycloak:8080/realms/tenuo-gateway/protocol/openid-connect/certs
+                      cluster: keycloak
+                      timeout: 2s
+                    cache_duration: 300s
+              rules:
+              - match:
+                  prefix: "/"
+                requires:
+                  provider_name: keycloak
+          # (2) Added: ask the Tenuo authorizer about every request the token check let through.
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              # If the authorizer is down or slow, deny.
+              failure_mode_allow: false
+              # Send the JSON body, so the authorizer can read the arguments from it.
+              with_request_body:
+                max_request_bytes: 65536
+                allow_partial_message: false
+              # The access token is not among them: the authorizer never sees it.
+              allowed_headers:
+                patterns:
+                - exact: x-tenuo-warrant
+                - exact: x-tenuo-pop
+                - exact: x-tenuo-approvals
+                - exact: content-type
+              http_service:
+                server_uri:
+                  uri: http://tenuo-authorizer:9090
+                  cluster: tenuo-authorizer
+                  timeout: 1s
+                path_prefix: /ext_authz
+                authorization_response:
+                  allowed_client_headers:
+                    patterns:
+                    - exact: x-tenuo-deny-reason
+                    - exact: content-type
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: keycloak
+    connect_timeout: 1s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: keycloak
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: keycloak
+                port_value: 8080
+  - name: tenuo-authorizer
+    connect_timeout: 0.5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: tenuo-authorizer
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: tenuo-authorizer
+                port_value: 9090
+  - name: warrant-issuer
+    connect_timeout: 1s
+    type: STRICT_DNS
+    # host.docker.internal also has an IPv6 address that does not reach the host.
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: warrant-issuer
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: host.docker.internal
+                port_value: 18181
+  - name: payments
+    connect_timeout: 0.5s
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: payments
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: payments
+                port_value: 8080

@@ -117,7 +117,7 @@ child = (parent.grant_builder()
 
 ## Revocation
 
-Tenuo's protocol includes signed revocation lists (SRLs) for emergency warrant cancellation. The authorizer checks an SRL locally: Python via `Authorizer.set_revocation_list()` / Temporal `revocation_list` + `revocation_list_provider`, Rust via `RevocationMode::SignedSrl` and `RevocationTracker`. Issuers sign the list; verifiers do not fetch it on the hot path.
+Tenuo's protocol includes signed revocation lists (SRLs) for emergency warrant cancellation. The authorizer checks an SRL locally: Python via `Authorizer.set_revocation_list()` / Temporal `revocation_list` + `revocation_list_provider`, Rust via `RevocationMode::SignedSrl` and `RevocationTracker`. Issuers sign the list; verifiers do not fetch it on the hot path. Temporal deployments that require bounded revocation freshness can set `max_revocation_refresh_staleness_secs`; once the last successful provider refresh exceeds that bound, activity authorization fails closed with a retryable dependency error until the provider recovers.
 
 **Design philosophy**: Tenuo favors **short TTLs (5-15 minutes) over revocation**. A warrant that expires naturally is simpler than one that requires emergency cancellation. Use revocation when TTL alone cannot meet your security requirements (e.g., long-lived sessions where key compromise must be handled mid-session).
 

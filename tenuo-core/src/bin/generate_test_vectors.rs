@@ -89,13 +89,18 @@ fn main() {
     println!("# Tenuo Protocol Test Vectors");
     println!();
     println!("**Version:** 1.0");
-    println!("**Documentation Revision:** 2 (2026-01-21)");
+    println!("**Documentation Revision:** 3 (2026-10-20)");
     println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)");
     println!("**Specification:** [wire-format-v1.md](wire-format-v1.md)");
     println!();
     println!("---");
     println!();
     println!("## Revision History");
+    println!();
+    println!("- **Rev 3** (2026-10-20): Added `UrlSafe` v1 security-erratum conformance");
+    println!("  cases: allowlists constrain IP literals, host patterns use canonical form,");
+    println!("  and malformed patterns fail closed. Existing byte-exact vectors are");
+    println!("  unchanged.");
     println!();
     println!("- **Rev 2** (2026-01-21): Documentation cleanup");
     println!("  - Regenerated all test vectors to match current generator output");
@@ -2641,6 +2646,20 @@ fn main() {
     println!("| Invalid Input | `url = \"http://169.254.169.254/\"` (AWS metadata) |");
     println!();
     println!("**Expected:** SSRF-safe URLs succeed, internal/metadata URLs fail.");
+    println!();
+    println!("**Security erratum conformance cases:** These cases do not change the A.25.1");
+    println!("wire bytes. They are normative evaluator behavior for a decoded type-18");
+    println!("`UrlSafe` constraint.");
+    println!();
+    println!("| Policy | Input | Expected |");
+    println!("|--------|-------|----------|");
+    println!(
+        "| `allow_domains = [\"api.example.com\"]` | `https://api.example.com/data` | Allow |"
+    );
+    println!("| `allow_domains = [\"api.example.com\"]` | `https://8.8.8.8/` | Deny: the allowlist constrains public IP literals too |");
+    println!("| `allow_domains = [\"8.8.8.8\"]` | `https://8.8.8.8/` | Allow, subject to the independent `block_*` flags |");
+    println!("| `allow_domains = [\"bücher.example\"]` | `https://xn--bcher-kva.example/` | Allow after IDNA canonicalization |");
+    println!("| `allow_domains = [\"foo.*.example.com\"]` | Any URL | Reject the malformed policy; fail closed |");
     println!();
 
     // A.25.2 Subpath Constraint

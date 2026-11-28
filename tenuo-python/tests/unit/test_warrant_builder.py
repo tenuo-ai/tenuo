@@ -244,3 +244,38 @@ class TestWarrantBuilderMethodChaining:
 
         assert w1.tools == ["read"]
         assert w2.tools == ["write"]
+
+
+class TestMintDepthCeiling:
+    @pytest.mark.parametrize("depth", [0, 3, 64])
+    @pytest.mark.parametrize("issuer", [False, True])
+    def test_ceiling_is_signed_and_round_trips(self, depth, issuer):
+        key = SigningKey.generate()
+        builder = Warrant.mint_builder().max_depth(depth)
+        if issuer:
+            builder.issuer().issuable_tools(["read"]).max_issue_depth(min(2, depth))
+        else:
+            builder.tool("read")
+        assert builder.preview()["max_depth"] == depth
+        warrant = builder.mint(key)
+        decoded = Warrant.from_base64(warrant.to_base64())
+        assert decoded.max_depth == depth
+        assert decoded.is_terminal() == (depth == 0)
+        if issuer:
+            assert decoded.max_issue_depth == min(2, depth)
+
+    @pytest.mark.parametrize("depth", [-1, 1.5, True])
+    def test_invalid_builder_depth(self, depth):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            Warrant.mint_builder().max_depth(depth)
+
+    def test_native_api_enforces_ceiling(self):
+        from tenuo.exceptions import TenuoError
+
+        key = SigningKey.generate()
+        terminal = Warrant.issue(keypair=key, capabilities={"read": {}}, max_depth=0)
+        assert terminal.is_terminal()
+        with pytest.raises(TenuoError):
+            terminal.grant_builder().inherit_all().holder(key.public_key).grant(key)
+        with pytest.raises(TenuoError):
+            Warrant.mint_builder().tool("read").max_depth(65).mint(key)

@@ -44,6 +44,13 @@ export class SdkContext {
      */
     explain(session: SdkSession, tool: string, args_json: any): any;
     /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     */
+    explainWarrant(warrants: any, tool: string, args_json: any, approvals_json: any): any;
+    /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public
      * key is trusted; `extra_roots` (hex) are trusted as well, so one
      * process can verify chains from several control planes.
@@ -323,9 +330,30 @@ export function parse_connect_token(token: string): any;
 export function parse_strict_json(json_text: string): void;
 
 /**
+ * Decode an MCP proof-of-possession signature with the same parser used by
+ * authorization and return its canonical bytes as lowercase hex.
+ *
+ * Replay stores must key on the verified signature bytes, not on the wire
+ * spelling: whitespace, padding, and the standard/URL-safe base64 alphabets
+ * can encode the same Ed25519 signature.
+ */
+export function sdkCanonicalMetaSignature(signature: string): string;
+
+/**
+ * Decode a warrant chain (stack string, single token, or token array), root
+ * first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+ */
+export function sdkDecodeChain(warrants: any): any;
+
+/**
+ * Diagnose all capability-constraint failures without authorizing the call.
+ */
+export function sdkDiagnoseConstraints(wire: string, tool: string, args_json: any): any;
+
+/**
  * Decode and check an approval envelope. Not authorization.
  */
-export function sdkInspectApproval(envelope: string): any;
+export function sdkInspectApproval(envelope: any): any;
 
 export function sdkInspectParts(payload_hex: string, signature_hex: string): any;
 
@@ -392,6 +420,15 @@ export function sdkVerifyReceipt(wire: string): any;
  * does not evaluate those.
  */
 export function sdkVerifyReceiptChain(wire: string, roots: any): any;
+
+/**
+ * The core's Shlex decision for `command`.
+ *
+ * `allow` is a list of binary names or paths. The returned object has
+ * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+ * `binary_allowed`.
+ */
+export function shlex_inspect(allow: any, command: string): any;
 
 /**
  * Create a Proof-of-Possession signature for a warrant

@@ -84,6 +84,7 @@ class TestApprovalRequestForWarrantGate:
         mock_warrant.required_approvers = MagicMock(return_value=None)
         mock_warrant.approval_threshold = MagicMock(return_value=1)
         mock_warrant.expires_at = None
+        mock_warrant.approval_gate_message = MagicMock(return_value=None)
 
         request = ApprovalRequest.for_warrant_gate(
             tool, args, mock_warrant,
@@ -104,6 +105,7 @@ class TestApprovalRequestForWarrantGate:
         mock_warrant.required_approvers = MagicMock(return_value=None)
         mock_warrant.approval_threshold = MagicMock(return_value=1)
         mock_warrant.expires_at = None
+        mock_warrant.approval_gate_message = MagicMock(return_value=None)
 
         holder = MagicMock()
         request = ApprovalRequest.for_warrant_gate(
@@ -122,6 +124,7 @@ class TestApprovalRequestForWarrantGate:
         mock_warrant.required_approvers = MagicMock(return_value=None)
         mock_warrant.approval_threshold = MagicMock(return_value=1)
         mock_warrant.expires_at = None
+        mock_warrant.approval_gate_message = MagicMock(return_value=None)
 
         request = ApprovalRequest.for_warrant_gate(
             tool, args, mock_warrant,

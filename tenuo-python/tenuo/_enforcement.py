@@ -112,6 +112,17 @@ class EnforcementResult:
             Contains ``{"got": int, "need": int}`` so callers can tell "re-submit
             with more approvals" from a flat scope denial without parsing the
             human-readable ``denial_reason``.
+        idempotency_key: Hex key naming this approved authorization (request
+            hash plus approvals), for downstream deduplication. ``None`` unless
+            approvals were verified. Also kept on ``approval_consumed`` denials
+            so a retry can look the action up downstream. This is the reliable
+            source; ``current_idempotency_key()`` is a convenience for paths
+            that enforce one call and then run it.
+        approval_reservation: :class:`~tenuo.consumption.ApprovalReservation`
+            when a consumption store reserved this call's approvals.
+        observed: True when the decision was a denial that observe mode let
+            through. ``allowed`` is then True, the denial fields stay populated,
+            and receipts / control-plane events still record the denial.
     """
 
     allowed: bool
@@ -125,8 +136,9 @@ class EnforcementResult:
     authorizer: Optional[Any] = None
     # The chain that was presented, kept on denials as well as allows.
     # check_chain raises for expiry, revocation, an untrusted root or a
-    # constraint miss, so a denial has no chain_result to build a receipt from
-    # — but the chain was still presented, and a refusal over presented
+    # warrant constraint miss, so those denials have no chain_result. Host-policy
+    # denials retain the verified chain and immutable policy commitment.
+    # The chain was still presented, and a refusal over presented
     # authority is the decision most worth recording.
     presented_chain: Optional[Any] = None
     # The holder's PoP, kept only when possession was established before the
@@ -140,6 +152,14 @@ class EnforcementResult:
     # receipt fail a later check against the wire payload.
     pop_auth_args: Optional[Dict[str, Any]] = None
     approval_metadata: Optional[Dict[str, Any]] = None
+    observed: bool = False
+    # Stable hex key for an approved call, derived by the core from the request
+    # hash and the approvals that authorized it. Same on every retry of the
+    # same authorization; pass it downstream to deduplicate the action.
+    idempotency_key: Optional[str] = None
+    # Set when a consumption store reserved this call's approvals. Commit once
+    # the action ran, or release when it certainly did not.
+    approval_reservation: Optional[Any] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -167,7 +187,7 @@ class EnforcementResult:
                 detail=self.denial_reason or "",
             )
 
-        if error_type == "invalid_approval":
+        if error_type in ("invalid_approval", "approval_consumed"):
             raise InvalidApproval(self.denial_reason or "Invalid approval")
 
         if error_type == "approval_required":
@@ -550,6 +570,7 @@ def _enforcement_result_from_chain_error_with_logging(
     # every refusal silently missing.
     result.presented_chain = presented_chain
     result.authorizer = authorizer
+    result.chain_result = getattr(exc, "_chain_result", None)
     result.verified_pop = verified_pop
     result.pop_auth_args = pop_auth_args
     _log_chain_enforcement_denial(tool_name, exc, result.error_type)
@@ -668,6 +689,193 @@ def _denial_before_approval(
     argument = req.argument or (reason.split(":", 1)[0] if error_type == "constraint_violation" and ": " in reason else None)
     return error_type, reason, argument
 
+
+def _observed_approval_gate(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    threshold: int,
+    approvals: Optional[List[Any]],
+    presented_chain: List[Any],
+    pop_auth_args: Dict[str, Any],
+    constraint_auth_args: Dict[str, Any],
+    authorizer: Optional[Any],
+    *,
+    warrant: Any,
+    bound_warrant: Any,
+    verify_mode: str,
+    precomputed_signature: Optional[Any],
+) -> Optional[EnforcementResult]:
+    """In observe mode, record would-require-approval instead of prompting.
+
+    Mirrors Rust ``WouldRequireApproval``: no handler is called and nothing
+    blocks. Chain and PoP are still verified, so an integrity failure is
+    reported instead of the missing approval. Approvals already presented with
+    the call are verified normally, so ``None`` is returned for them and in
+    enforce mode.
+    """
+    from .config import should_block_violation
+
+    if approvals or should_block_violation():
+        return None
+    if verify_mode == "sign":
+        import time as _time
+
+        pop = bytes(warrant.sign(bound_warrant._key, tool_name, pop_auth_args, int(_time.time())))
+    else:
+        pop = bytes(precomputed_signature or b"")
+    integrity_error = _approval_gate_integrity_error(
+        authorizer, presented_chain, tool_name, pop_auth_args, constraint_auth_args, pop,
+    )
+    if integrity_error is not None:
+        return _enforcement_result_from_chain_error_with_logging(
+            integrity_error,
+            tool_name,
+            tool_args,
+            warrant_id,
+            constraint_auth_args=constraint_auth_args,
+            warrant=warrant,
+            presented_chain=presented_chain,
+            authorizer=authorizer,
+            pop_auth_args=pop_auth_args,
+            verified_pop=pop,
+        )
+    return EnforcementResult(
+        allowed=False,
+        tool=tool_name,
+        arguments=tool_args,
+        denial_reason=f"approval required for '{tool_name}' ({threshold} approval(s))",
+        error_type="approval_required",
+        warrant_id=warrant_id,
+        presented_chain=presented_chain,
+        pop_auth_args=pop_auth_args,
+        authorizer=authorizer,
+        approval_metadata={"min_approvals": threshold},
+        verified_pop=pop,
+    )
+
+
+def _sign_path_trusted_roots(trusted_roots: Optional[List[Any]], bound_warrant: Any) -> Optional[List[Any]]:
+    """Trusted roots for the sign path: explicit, then bind-time, then configured, then the runtime's.
+
+    Returns ``None`` when none is configured; callers fail closed.
+    """
+    if trusted_roots is not None:
+        return trusted_roots
+    bound_roots = getattr(bound_warrant, "_trusted_roots", None)
+    if bound_roots is not None:
+        return bound_roots
+    from .config import resolve_trusted_roots
+
+    roots = resolve_trusted_roots(None)
+    if roots is None:
+        from .runtime import get_runtime
+
+        runtime = get_runtime()
+        if runtime is not None:
+            roots = list(runtime.trusted_roots)
+    return roots
+
+
+def _chain_validity_error(full_chain: List[Any], authorizer: Any) -> Optional[BaseException]:
+    """Return the error when the chain is expired, revoked or untrusted, else ``None``.
+
+    Deny-only and used before an approval gate asks anyone: ``None`` allows
+    nothing, and the full authorization, including PoP, still runs. Expiry is
+    checked exactly, as authorization does; ``Authorizer.verify_chain`` alone
+    would allow its clock tolerance. Trust and revocation use ``authorizer``
+    as the caller configured it; without one only expiry is checked.
+    """
+    for warrant in full_chain:
+        if warrant.is_expired():
+            return ExpiredError(str(warrant.id))
+    if authorizer is None:
+        return None
+    try:
+        authorizer.verify_chain(list(full_chain))
+    except TenuoError as exc:
+        return exc
+    return None
+
+
+def _preflight_authorizer(
+    *, verify_mode: str, authorizer: Any, trusted_roots: Optional[List[Any]], bound_warrant: Any,
+) -> Any:
+    """The authorizer ``enforce_tool_call`` will authorize with: same roots, runtime revocation applied.
+
+    ``None`` when the sign path has no trusted roots (it then fails closed).
+    """
+    if verify_mode == "verify":
+        auth = authorizer
+    else:
+        roots = _sign_path_trusted_roots(trusted_roots, bound_warrant)
+        if roots is None:
+            return None
+        from tenuo_core import Authorizer
+
+        auth = Authorizer(trusted_roots=roots)
+    if auth is not None:
+        from .runtime import apply_runtime_revocation
+
+        apply_runtime_revocation(auth)
+    return auth
+
+
+def _refusal_before_approval(
+    warrant: Any, tool_name: str, constraint_args: Dict[str, Any], *, chain: List[Any], authorizer: Any,
+) -> "Optional[BaseException | Tuple[str, str, Optional[str]]]":
+    """Why a gated call is refused before anyone is asked to approve it, else ``None``.
+
+    The sync and async in-process enforcement paths call this before collecting
+    approvals. Temporal performs the equivalent (and stronger PoP) preflight in
+    its activity interceptor. Checked in the order authorization checks them:
+    an expired, revoked or untrusted chain (returned as the exception), then a
+    call the warrant does not grant (returned as ``(error_type, reason,
+    argument)``). Deny-only: ``None`` allows nothing.
+    """
+    invalid = _chain_validity_error(chain, authorizer)
+    if invalid is not None:
+        return invalid
+    return _denial_before_approval(warrant, tool_name, constraint_args)
+
+
+def _approval_gate_integrity_error(
+    authorizer: Any,
+    chain: List[Any],
+    tool_name: str,
+    pop_args: Dict[str, Any],
+    constraint_args: Dict[str, Any],
+    signature: bytes,
+) -> Optional[BaseException]:
+    """Verify chain and PoP before observing a missing approval.
+
+    Reaching an approval exception is the expected outcome: it proves the
+    integrity checks that precede the gate succeeded. Any other exception is
+    the real denial that observe mode should report.
+    """
+    try:
+        if pop_args != constraint_args and hasattr(authorizer, "check_chain_with_pop_args"):
+            authorizer.check_chain_with_pop_args(
+                chain,
+                tool_name,
+                pop_args,
+                constraint_args,
+                signature=signature,
+                approvals=[],
+            )
+        else:
+            authorizer.check_chain(
+                chain,
+                tool_name,
+                constraint_args,
+                signature=signature,
+                approvals=[],
+            )
+    except (ApprovalGateTriggered, ApprovalRequired, InsufficientApprovals):
+        return None
+    except Exception as exc:
+        return exc
+    return None
 
 def _collect_approvals_for_approval_gate(
     tool_name: str,
@@ -860,6 +1068,73 @@ def _resolve_presented_parents(
     return list(parents) if parents else []
 
 
+def _allowed_result(
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    warrant_id: Optional[str],
+    chain_result: Any,
+    authorizer: Any,
+    *,
+    consumption_store: Optional[Any],
+    presented_chain: List[Any],
+    pop_auth_args: Dict[str, Any],
+    verified_pop: Any,
+) -> EnforcementResult:
+    """Result for a call the core authorized, after at-most-once approval use.
+
+    Verification is stateless, so a holder rewound to before an approved call
+    (restored checkpoint, fork, retried worker) passes again under a fresh PoP.
+    The consumption store, when enabled, is what refuses the second use.
+    """
+    raw_key = getattr(chain_result, "idempotency_key", None)
+    idempotency_key = bytes(raw_key).hex() if raw_key is not None else None
+
+    # False: a preflight check (e.g. an MCP client before sending) that must
+    # not consume; the final enforcement point does.
+    store = consumption_store
+    if store is None:
+        from .consumption import get_default_consumption_store
+
+        store = get_default_consumption_store()
+    reservation = None
+    if store is not None and store is not False:
+        reservation, denial = store.reserve(chain_result, idempotency_key)
+        if denial is not None:
+            state = denial.state
+            return EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=tool_args,
+                denial_reason=(
+                    "approval already used"
+                    if state == "consumed"
+                    else "approval already in use (in flight)"
+                ),
+                error_type="approval_consumed",
+                warrant_id=warrant_id,
+                presented_chain=presented_chain,
+                pop_auth_args=pop_auth_args,
+                authorizer=authorizer,
+                verified_pop=verified_pop,
+                approval_metadata={"state": state},
+                # The key the first use stored, so a retry after a crash can
+                # look the action up downstream even if fewer approvals
+                # verified this time.
+                idempotency_key=denial.idempotency_key,
+            )
+
+    return EnforcementResult(
+        allowed=True,
+        tool=tool_name,
+        arguments=tool_args,
+        warrant_id=warrant_id,
+        chain_result=chain_result,
+        authorizer=authorizer,
+        idempotency_key=idempotency_key,
+        approval_reservation=reservation,
+    )
+
+
 def _enforce_tool_call_impl(
     tool_name: str,
     tool_args: Dict[str, Any],
@@ -878,6 +1153,9 @@ def _enforce_tool_call_impl(
     approval_handler: Optional[ApprovalHandler] = None,
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
+    consumption_store: Optional[Any] = None,
+    verify_replay: bool = False,
+    replay_admissions: Optional[Any] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -930,6 +1208,16 @@ def _enforce_tool_call_impl(
             ``approvals`` are provided.
         approvals: Pre-obtained ``SignedApproval`` objects for gate-satisfied calls
             (out-of-band / control plane). Checked before ``approval_handler``.
+        nonce_store: Optional :class:`~tenuo.nonce.NonceStore` rejecting exact
+            PoP replays. Defaults to the process-wide store, if enabled. On
+            the verify path it is consulted only when ``verify_replay`` is set.
+        consumption_store: Optional
+            :class:`~tenuo.consumption.ApprovalConsumptionStore`. An approval
+            it has seen is denied with ``error_type="approval_consumed"``, even
+            under a fresh PoP. Defaults to the process-wide store, if enabled.
+            Pass ``False`` for a preflight check that is not the final
+            enforcement point (e.g. a client before sending to a server that
+            enforces), so the approval is not consumed twice.
 
     Returns:
         EnforcementResult with allowed status and denial details.
@@ -1065,6 +1353,7 @@ def _enforce_tool_call_impl(
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
+    _preflight_auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
     # except arms reached before that point from seeing an unbound local.
     _pop_auth_args = tool_args
@@ -1077,7 +1366,7 @@ def _enforce_tool_call_impl(
         # with the PoP check.
         # =================================================================
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
-        from ._pop_canonicalize import strip_none_values as _strip_none_values
+        from ._pop_canonicalize import constraint_view
 
         _warrant_obj = bound_warrant.warrant
         # Transport approvals (MCP _approvals, headers) are only consumed when
@@ -1088,16 +1377,41 @@ def _enforce_tool_call_impl(
             constraint_args if constraint_args is not None else tool_args
         )
         # The proof covers the argument map the caller passed, including None.
-        # Constraint matching still drops None so an omitted optional field and
-        # an extracted constraint view stay the same shape.
+        # Signed optional fields retain every supplied value for Rust to check.
         _pop_auth_args = _raw_pop_args
-        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
+        _constraint_auth_args = constraint_view(
+            _raw_constraint_args, tool_name, _presented_chain
+        )
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
-            # Deny calls the warrant does not grant before asking anyone.
-            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
-            if _not_granted is not None:
-                _err, _reason, _arg = _not_granted
+            # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _preflight_auth = _preflight_authorizer(
+                verify_mode=verify_mode,
+                authorizer=authorizer,
+                trusted_roots=trusted_roots,
+                bound_warrant=bound_warrant,
+            )
+            _refusal = _refusal_before_approval(
+                _warrant_obj,
+                tool_name,
+                _constraint_auth_args,
+                chain=_presented_chain,
+                authorizer=_preflight_auth,
+            )
+            if isinstance(_refusal, BaseException):
+                return _enforcement_result_from_chain_error_with_logging(
+                    _refusal,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant_obj,
+                    presented_chain=_presented_chain,
+                    authorizer=_preflight_auth,
+                    pop_auth_args=_pop_auth_args,
+                )
+            if _refusal is not None:
+                _err, _reason, _arg = _refusal
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
@@ -1108,7 +1422,7 @@ def _enforce_tool_call_impl(
                     warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             _gate_approvers = _warrant_obj.required_approvers()
@@ -1127,11 +1441,23 @@ def _enforce_tool_call_impl(
                     warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             # Collect and verify approvals — raises if missing or invalid.
             # Returns verified SignedApproval objects to pass to validate().
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
+                _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
+            )
+            if _would_require is not None:
+                return _would_require
+
             _gate_approvals = _collect_approvals_for_approval_gate(
                 tool_name, _pop_auth_args, bound_warrant,
                 _gate_approvers, _gate_threshold,
@@ -1147,26 +1473,16 @@ def _enforce_tool_call_impl(
             #   4. Fail-closed — raise ConfigurationError
             # ─────────────────────────────────────────────────────────────────
             if trusted_roots is None:
-                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
-                if _bound_roots is not None:
-                    trusted_roots = _bound_roots
-                else:
-                    from .config import resolve_trusted_roots as _resolve_roots
-                    trusted_roots = _resolve_roots(None)
-                    if trusted_roots is None:
-                        from .runtime import get_runtime
-                        _rt = get_runtime()
-                        if _rt is not None:
-                            trusted_roots = list(_rt.trusted_roots)
-                    if trusted_roots is None:
-                        raise ConfigurationError(
-                            "enforce_tool_call requires trusted_roots in the sign path. "
-                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
-                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
-                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
-                            "Accepting self-signed warrants is not permitted (fail-closed). "
-                            "See tenuo_core.Authorizer for details."
-                        )
+                trusted_roots = _sign_path_trusted_roots(None, bound_warrant)
+                if trusted_roots is None:
+                    raise ConfigurationError(
+                        "enforce_tool_call requires trusted_roots in the sign path. "
+                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                        "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                        "Accepting self-signed warrants is not permitted (fail-closed). "
+                        "See tenuo_core.Authorizer for details."
+                    )
 
             # ─────────────────────────────────────────────────────────────────
             # VERIFIED SIGN PATH — sign PoP locally, then verify issuer
@@ -1179,9 +1495,10 @@ def _enforce_tool_call_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(
-                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                )
+                if _pop is None:
+                    _pop = bytes(
+                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                    )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
@@ -1200,6 +1517,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -1218,6 +1536,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -1236,7 +1555,8 @@ def _enforce_tool_call_impl(
                 if _ns is None:
                     from .nonce import get_default_nonce_store as _get_ns
                     _ns = _get_ns()
-                if _ns is not None and not _ns.check_and_record(_pop):
+                from .nonce import _admit_verified_pop
+                if _ns is not None and not _admit_verified_pop(_ns, _pop, _auth):
                     return EnforcementResult(
                         allowed=False,
                         tool=tool_name,
@@ -1306,6 +1626,7 @@ def _enforce_tool_call_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -1323,6 +1644,7 @@ def _enforce_tool_call_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(
@@ -1346,24 +1668,67 @@ def _enforce_tool_call_impl(
                     verified_pop=precomputed_signature,
                 )
 
-        # Success - log for audit trail
+        allowed = _allowed_result(
+            tool_name,
+            tool_args,
+            warrant_id,
+            _chain_result,
+            _auth if verify_mode == "sign" else authorizer,
+            consumption_store=consumption_store,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            verified_pop=_pop if verify_mode == "sign" else precomputed_signature,
+        )
+        if not allowed.allowed:
+            return allowed
+
+        # Reserve approvals before admitting the nonce. An approval-backend
+        # failure must not consume the presented PoP. If nonce
+        # admission fails, release only this attempt's approval reservation.
+        admission_complete = False
+        try:
+            if verify_mode == "verify" and verify_replay and precomputed_signature is not None:
+                _ns = nonce_store
+                if _ns is None:
+                    from .nonce import get_default_nonce_store as _get_ns
+                    _ns = _get_ns()
+                from .nonce import _admit_verified_pop
+                admitted = True
+                if _ns is not None:
+                    admitted = (
+                        replay_admissions.admit(_ns, precomputed_signature, authorizer)
+                        if replay_admissions is not None
+                        else _admit_verified_pop(_ns, precomputed_signature, authorizer)
+                    )
+                if not admitted:
+                    return EnforcementResult(
+                        allowed=False,
+                        tool=tool_name,
+                        arguments=tool_args,
+                        denial_reason="PoP replay detected — this exact authorization token was already consumed.",
+                        error_type="invalid_pop",
+                        warrant_id=warrant_id,
+                        presented_chain=_presented_chain,
+                        pop_auth_args=_pop_auth_args,
+                        authorizer=authorizer,
+                        verified_pop=precomputed_signature,
+                    )
+
+            admission_complete = True
+        finally:
+            if not admission_complete:
+                if allowed.approval_reservation is not None:
+                    try:
+                        allowed.approval_reservation.release()
+                    except Exception:
+                        logger.exception("Failed to release approvals after inbound nonce denial")
+                _clear_idempotency_key()
+
         logger.info(
             f"Tool authorized: {tool_name}",
-            extra={
-                "tool": tool_name,
-                "warrant_id": bound_warrant.id,
-                "args_keys": list(tool_args.keys()),
-            }
+            extra={"tool": tool_name, "warrant_id": bound_warrant.id, "args_keys": list(tool_args.keys())},
         )
-
-        return EnforcementResult(
-            allowed=True,
-            tool=tool_name,
-            arguments=tool_args,
-            warrant_id=warrant_id,
-            chain_result=_chain_result,
-            authorizer=_auth if verify_mode == "sign" else authorizer,
-        )
+        return allowed
 
     except InsufficientApprovals as e:
         # Multi-sig threshold not met — structurally different from a scope
@@ -1385,7 +1750,24 @@ def _enforce_tool_call_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired) as e:
+        from .config import should_block_violation
+
+        if should_block_violation():
+            raise
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(e),
+            error_type="approval_verification_failed",
+            warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=_preflight_auth or authorizer or _auth,
+            verified_pop=_pop,
+        )
+    except ApprovalGateTriggered:
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
@@ -1477,6 +1859,7 @@ async def _enforce_tool_call_async_impl(
     approval_handler: "Optional[ApprovalHandler]" = None,
     approvals: Optional[List[Any]] = None,
     nonce_store: Optional[Any] = None,
+    consumption_store: Optional[Any] = None,
 ) -> EnforcementResult:
     """Async variant of :func:`enforce_tool_call`.
 
@@ -1553,12 +1936,13 @@ async def _enforce_tool_call_async_impl(
     _presented_chain = list(warrant_chain) + [bound_warrant.warrant]
     _pop = None
     _auth = None
+    _preflight_auth = None
     # Overwritten with the stripped PoP view once derived; the fallback keeps
     # except arms reached before that point from seeing an unbound local.
     _pop_auth_args = tool_args
     try:
         from tenuo_core import evaluate_approval_gates as _evaluate_approval_gates
-        from ._pop_canonicalize import strip_none_values as _strip_none_values
+        from ._pop_canonicalize import constraint_view
 
         _warrant_obj = bound_warrant.warrant
         # Transport approvals (MCP _approvals, headers) are only consumed when
@@ -1569,22 +1953,52 @@ async def _enforce_tool_call_async_impl(
             constraint_args if constraint_args is not None else tool_args
         )
         # The proof covers the argument map the caller passed, including None.
-        # Constraint matching still drops None.
+        # Signed optional fields retain every supplied value for Rust to check.
         _pop_auth_args = _raw_pop_args
-        _constraint_auth_args = _strip_none_values(_raw_constraint_args)
+        _constraint_auth_args = constraint_view(
+            _raw_constraint_args, tool_name, _presented_chain
+        )
 
         if _evaluate_approval_gates(_warrant_obj, tool_name, _pop_auth_args):
-            # Deny calls the warrant does not grant before asking anyone.
-            _not_granted = _denial_before_approval(_warrant_obj, tool_name, _constraint_auth_args)
-            if _not_granted is not None:
-                _err, _reason, _arg = _not_granted
+            # Refuse, before asking anyone, a call authorization would refuse anyway.
+            _preflight_auth = _preflight_authorizer(
+                verify_mode=verify_mode,
+                authorizer=authorizer,
+                trusted_roots=trusted_roots,
+                bound_warrant=bound_warrant,
+            )
+            _refusal = _refusal_before_approval(
+                _warrant_obj,
+                tool_name,
+                _constraint_auth_args,
+                chain=_presented_chain,
+                authorizer=_preflight_auth,
+            )
+            if isinstance(_refusal, BaseException):
+                return _enforcement_result_from_chain_error_with_logging(
+                    _refusal,
+                    tool_name,
+                    tool_args,
+                    warrant_id,
+                    constraint_auth_args=_constraint_auth_args,
+                    warrant=_warrant_obj,
+                    presented_chain=_presented_chain,
+                    authorizer=_preflight_auth,
+                    pop_auth_args=_pop_auth_args,
+                )
+            if _refusal is not None:
+                _err, _reason, _arg = _refusal
                 return EnforcementResult(
-                    allowed=False, tool=tool_name, arguments=tool_args,
-                    denial_reason=_reason, constraint_violated=_arg,
-                    error_type=_err, warrant_id=warrant_id,
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=_reason,
+                    constraint_violated=_arg,
+                    error_type=_err,
+                    warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
 
             _gate_approvers = _warrant_obj.required_approvers()
@@ -1600,8 +2014,20 @@ async def _enforce_tool_call_async_impl(
                     error_type="approval_gate_misconfigured", warrant_id=warrant_id,
                     presented_chain=_presented_chain,
                     pop_auth_args=_pop_auth_args,
-                    authorizer=authorizer if authorizer is not None else _auth,
+                    authorizer=_preflight_auth,
                 )
+
+            _would_require = _observed_approval_gate(
+                tool_name, tool_args, warrant_id, _gate_threshold, approvals,
+                _presented_chain, _pop_auth_args, _constraint_auth_args,
+                _preflight_auth,
+                warrant=_warrant_obj,
+                bound_warrant=bound_warrant,
+                verify_mode=verify_mode,
+                precomputed_signature=precomputed_signature,
+            )
+            if _would_require is not None:
+                return _would_require
 
             _gate_approvals = await _collect_approvals_for_approval_gate_async(
                 tool_name, _pop_auth_args, bound_warrant,
@@ -1613,26 +2039,16 @@ async def _enforce_tool_call_async_impl(
 
         if verify_mode == "sign":
             if trusted_roots is None:
-                _bound_roots = getattr(bound_warrant, "_trusted_roots", None)
-                if _bound_roots is not None:
-                    trusted_roots = _bound_roots
-                else:
-                    from .config import resolve_trusted_roots as _resolve_roots
-                    trusted_roots = _resolve_roots(None)
-                    if trusted_roots is None:
-                        from .runtime import get_runtime
-                        _rt = get_runtime()
-                        if _rt is not None:
-                            trusted_roots = list(_rt.trusted_roots)
-                    if trusted_roots is None:
-                        raise ConfigurationError(
-                            "enforce_tool_call requires trusted_roots in the sign path. "
-                            "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
-                            "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
-                            "or call tenuo.configure(trusted_roots=[...]) at application startup. "
-                            "Accepting self-signed warrants is not permitted (fail-closed). "
-                            "See tenuo_core.Authorizer for details."
-                        )
+                trusted_roots = _sign_path_trusted_roots(None, bound_warrant)
+                if trusted_roots is None:
+                    raise ConfigurationError(
+                        "enforce_tool_call requires trusted_roots in the sign path. "
+                        "Pass trusted_roots=[issuer_public_key] to enforce_tool_call, "
+                        "set BoundWarrant(warrant, key, trusted_roots=[...]) at bind time, "
+                        "or call tenuo.configure(trusted_roots=[...]) at application startup. "
+                        "Accepting self-signed warrants is not permitted (fail-closed). "
+                        "See tenuo_core.Authorizer for details."
+                    )
 
             import time as _time
             from tenuo_core import Authorizer as _Authorizer
@@ -1640,9 +2056,10 @@ async def _enforce_tool_call_async_impl(
             try:
                 _warrant = bound_warrant.warrant
                 _key = bound_warrant._key
-                _pop = bytes(
-                    _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
-                )
+                if _pop is None:
+                    _pop = bytes(
+                        _warrant.sign(_key, tool_name, _pop_auth_args, int(_time.time()))
+                    )
                 _auth = _Authorizer(trusted_roots=trusted_roots)
                 from .runtime import apply_runtime_revocation
                 apply_runtime_revocation(_auth)
@@ -1661,6 +2078,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.check_chain(
@@ -1679,6 +2097,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=_pop,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = _auth.authorize_one(
@@ -1692,7 +2111,8 @@ async def _enforce_tool_call_async_impl(
                 if _ns is None:
                     from .nonce import get_default_nonce_store as _get_ns
                     _ns = _get_ns()
-                if _ns is not None and not _ns.check_and_record(_pop):
+                from .nonce import _admit_verified_pop
+                if _ns is not None and not _admit_verified_pop(_ns, _pop, _auth):
                     return EnforcementResult(
                         allowed=False, tool=tool_name, arguments=tool_args,
                         denial_reason="PoP replay detected — this exact authorization token was already consumed.",
@@ -1747,6 +2167,7 @@ async def _enforce_tool_call_async_impl(
                             _constraint_auth_args,
                             signature=precomputed_signature,
                             approvals=_gate_approvals or [],
+                            host_policy_args=_raw_constraint_args,
                         )
                     else:
                         _chain_result = authorizer.check_chain(
@@ -1764,6 +2185,7 @@ async def _enforce_tool_call_async_impl(
                         _constraint_auth_args,
                         signature=precomputed_signature,
                         approvals=_gate_approvals or [],
+                        host_policy_args=_raw_constraint_args,
                     )
                 else:
                     _chain_result = authorizer.authorize_one(
@@ -1791,10 +2213,16 @@ async def _enforce_tool_call_async_impl(
             f"Tool authorized: {tool_name}",
             extra={"tool": tool_name, "warrant_id": bound_warrant.id, "args_keys": list(tool_args.keys())}
         )
-        return EnforcementResult(
-            allowed=True, tool=tool_name, arguments=tool_args,
-            warrant_id=warrant_id, chain_result=_chain_result,
-            authorizer=_auth if verify_mode == "sign" else authorizer,
+        return _allowed_result(
+            tool_name,
+            tool_args,
+            warrant_id,
+            _chain_result,
+            _auth if verify_mode == "sign" else authorizer,
+            consumption_store=consumption_store,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            verified_pop=_pop if verify_mode == "sign" else precomputed_signature,
         )
 
     except InsufficientApprovals as e:
@@ -1813,7 +2241,24 @@ async def _enforce_tool_call_async_impl(
                 "need": e.details.get("required", 0) if hasattr(e, "details") else 0,
             },
         )
-    except (InvalidApproval, ApprovalExpired, ApprovalGateTriggered):
+    except (InvalidApproval, ApprovalExpired) as e:
+        from .config import should_block_violation
+
+        if should_block_violation():
+            raise
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=str(e),
+            error_type="approval_verification_failed",
+            warrant_id=warrant_id,
+            presented_chain=_presented_chain,
+            pop_auth_args=_pop_auth_args,
+            authorizer=_preflight_auth or authorizer or _auth,
+            verified_pop=_pop,
+        )
+    except ApprovalGateTriggered:
         raise
     except ApprovalRequired as e:
         if verify_mode == "sign":
@@ -1947,17 +2392,84 @@ def _collect_runtime_receipt(result: EnforcementResult) -> EnforcementResult:
     return result
 
 
+def _apply_observe_mode(result: EnforcementResult) -> EnforcementResult:
+    """Observe mode: log what would have been denied and let the call proceed.
+
+    The full decision has already run. Denial fields (including integrity
+    error types such as ``invalid_pop``) stay on the result and ``observed`` is
+    set, so receipts and control-plane events still record a denial. Argument
+    values are never logged, only keys and value type names.
+    """
+    from .config import should_block_violation
+
+    if result.allowed or should_block_violation():
+        return result
+    _log_observed_denial(result)
+    result.observed = True
+    result.allowed = True
+    return result
+
+
+def _log_observed_denial(result: EnforcementResult) -> None:
+    """Log one ``OBSERVE: would deny ...`` warning for a denial that proceeds.
+
+    Shared by observe mode and adapter-level equivalents (e.g. a guard's
+    ``dry_run``) so every integration reports would-deny decisions the same
+    way. Argument values are never logged, only keys and value type names.
+    """
+    args = result.arguments or {}
+    reason_code = result.error_type or "authorization_denied"
+    logger.warning(
+        "OBSERVE: would deny %s (%s)",
+        result.tool,
+        reason_code,
+        extra={
+            "tool": result.tool,
+            "args_keys": list(args.keys()),
+            "arg_types": {k: type(v).__name__ for k, v in args.items()},
+            "error_type": result.error_type,
+            "constraint_violated": result.constraint_violated,
+            "warrant_id": result.warrant_id,
+            "observed": True,
+        },
+    )
+
+
 from functools import wraps as _wraps  # noqa: E402
+
+
+def _clear_idempotency_key() -> None:
+    # Cleared first so a call that raises (e.g. ApprovalRequired) cannot leave
+    # an earlier call's key in place for the handler.
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(None)
+
+
+def _publish_idempotency_key(result: EnforcementResult) -> EnforcementResult:
+    """Expose the key to the tool handler that runs next in this context."""
+    from .consumption import _set_current_idempotency_key
+
+    _set_current_idempotency_key(result.idempotency_key if result.allowed else None)
+    return result
 
 
 @_wraps(_enforce_tool_call_impl)
 def enforce_tool_call(*args, **kwargs):
-    return _collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs))
+    _clear_idempotency_key()
+    return _publish_idempotency_key(
+        _apply_observe_mode(_collect_runtime_receipt(_enforce_tool_call_impl(*args, **kwargs)))
+    )
 
 
 @_wraps(_enforce_tool_call_async_impl)
 async def enforce_tool_call_async(*args, **kwargs):
-    return _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+    _clear_idempotency_key()
+    return _publish_idempotency_key(
+        _apply_observe_mode(
+            _collect_runtime_receipt(await _enforce_tool_call_async_impl(*args, **kwargs))
+        )
+    )
 
 
 def parents_from_presented_chain(
@@ -2124,19 +2636,48 @@ def verify_inbound_call(
     pop_args: Optional[Dict[str, Any]] = None,
     constraint_args: Optional[Dict[str, Any]] = None,
     approval_handler: Optional[Any] = None,
+    apply_observe: bool = True,
+    consumption_store: Optional[Any] = None,
+    check_replay: bool = False,
+    nonce_store: Optional[Any] = None,
+    replay_admissions: Optional[Any] = None,
 ) -> EnforcementResult:
-    """Shared inbound PEP. Adapters must not call Authorizer directly."""
+    """Shared inbound PEP. Adapters must not call Authorizer directly.
+
+    ``check_replay`` rejects a PoP signature the nonce store has already
+    admitted (``nonce_store``, else the process-wide store when enabled).
+    Set it once per request: callers that verify the same request more than
+    once can share a request-scoped ``replay_admissions`` object. Every call
+    still performs full authorization. Adapters with later local gates must
+    defer nonce admission until those gates succeed.
+    """
+    _clear_idempotency_key()
     if authorizer is None:
         raise ConfigurationError("verify_inbound_call requires an Authorizer")
     if pop_signature is None:
-        raise MissingSignature(
+        missing = MissingSignature(
             "precomputed_signature is required when verify_mode='verify'"
         )
+        result = _enforcement_result_from_chain_error_with_logging(
+            missing,
+            tool_name,
+            tool_args,
+            getattr(warrant, "id", None),
+            constraint_auth_args=constraint_args or tool_args,
+            warrant=warrant,
+            presented_chain=[*(warrant_chain or []), warrant],
+            authorizer=authorizer,
+            pop_auth_args=pop_args or tool_args,
+        )
+        observed = _apply_observe_mode(result) if apply_observe else result
+        if observed.observed:
+            return _publish_idempotency_key(observed)
+        raise missing
     bind = getattr(warrant, "bind", None)
     if not callable(bind):
         raise ConfigurationError("verify_inbound_call requires a Warrant with bind()")
     bound = bind(VerificationOnlyKey())
-    return _enforce_tool_call_impl(
+    result = _enforce_tool_call_impl(
         tool_name=tool_name,
         tool_args=tool_args,
         bound_warrant=bound,
@@ -2148,7 +2689,12 @@ def verify_inbound_call(
         pop_args=pop_args,
         constraint_args=constraint_args,
         approval_handler=approval_handler,
+        consumption_store=consumption_store,
+        nonce_store=nonce_store,
+        verify_replay=check_replay,
+        replay_admissions=replay_admissions,
     )
+    return _publish_idempotency_key(_apply_observe_mode(result) if apply_observe else result)
 
 
 __all__ = [

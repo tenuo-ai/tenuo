@@ -22,7 +22,7 @@ Multi-Tenant Safety:
     Use ScopedWarrant to prevent warrant leaks between agents:
 
     # Inject warrant scoped to specific agent
-    session.state["tenuo_warrant"] = ScopedWarrant(warrant, "researcher")
+    session.state["__tenuo_warrant__"] = ScopedWarrant(warrant, "researcher")
 
     # If the warrant is accessed by a different agent, it will be rejected
 """
@@ -30,7 +30,7 @@ Multi-Tenant Safety:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,26 @@ if TYPE_CHECKING:
     from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
     from tenuo_core import SigningKey, Warrant
 
+from tenuo.exceptions import ConfigurationError  # noqa: E402
+
 from .guard import TenuoGuard  # noqa: E402
+
+
+def _portable_warrant(warrant: Any) -> Any:
+    """A copyable, picklable form of a warrant or root-first warrant list."""
+    if isinstance(warrant, ScopedWarrant):
+        return warrant
+    if isinstance(warrant, (list, tuple)):
+        from tenuo._enforcement import split_presented_warrant
+        from tenuo_core import encode_warrant_stack
+
+        leaf, parents = split_presented_warrant(warrant)
+        leaf = getattr(leaf, "warrant", leaf)
+        return encode_warrant_stack([*(parents or []), leaf])
+    to_base64 = getattr(warrant, "to_base64", None)
+    if callable(to_base64):
+        return to_base64()
+    return warrant
 
 
 class ScopedWarrant:
@@ -77,6 +96,18 @@ class ScopedWarrant:
 
     def valid_for_agent(self, agent_name: str) -> bool:
         return self.agent_name == agent_name
+
+    def __reduce__(self) -> Any:
+        """Copy and pickle through the warrant's encoded form.
+
+        ADK deep-copies session state (``InMemoryRunner``) and pickles it in
+        some session services. ``Warrant`` objects support neither, so a
+        ScopedWarrant around one is rebuilt around its base64 encoding, and
+        one around a root-first list around the encoded WarrantStack. Both
+        forms are accepted wherever a session warrant is read.
+        """
+        return (ScopedWarrant, (_portable_warrant(object.__getattribute__(self, "warrant")),
+                                object.__getattribute__(self, "agent_name")))
 
     def __getattr__(self, name: str) -> Any:
         """
@@ -117,6 +148,10 @@ class TenuoPlugin(BasePlugin):
         name: str = "tenuo",
         *,
         warrant_chain: Optional[List["Warrant"]] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
+        warrant_resolver: Optional[Callable[[Any], Any]] = None,
+        allow_code_execution: bool = False,
     ):
         """
         Initialize TenuoPlugin.
@@ -138,6 +173,18 @@ class TenuoPlugin(BasePlugin):
                   root-first list; see ``TenuoGuard``. Verified only when
                   ``require_pop=True``; with ``require_pop=False`` the plugin
                   stays Tier 1 and does not cryptographically verify the chain.
+            approval_handler: Called when a warrant's approval gate fires
+                  (e.g. ``cli_prompt(approver_key=...)``). Without one, or
+                  when the approver refuses, the call is denied.
+            approvals: Pre-obtained ``SignedApproval`` objects for gated calls.
+            warrant_resolver: Callable ``(tool_context) -> warrant`` returning the
+                  warrant from a source the model cannot write. When set,
+                  session state is not consulted; see ``TenuoGuard``.
+            allow_code_execution: An agent's ``code_executor`` runs code the
+                  model writes without calling tool callbacks, so no warrant
+                  constrains it. By default the plugin refuses to run such an
+                  agent; set True only when the executor is confined by other
+                  means.
         """
         if BasePlugin is object:
             self.name = name
@@ -152,8 +199,13 @@ class TenuoPlugin(BasePlugin):
             require_pop=require_pop,
             trusted_roots=trusted_roots,
             warrant_chain=warrant_chain,
+            approval_handler=approval_handler,
+            approvals=approvals,
+            warrant_resolver=warrant_resolver,
         )
         self._warrant_key = warrant_key
+        self._warrant_resolver = warrant_resolver
+        self._allow_code_execution = allow_code_execution
 
     async def before_agent_callback(  # type: ignore[override]
         self,
@@ -172,6 +224,20 @@ class TenuoPlugin(BasePlugin):
             2. Clears expired warrants from state
             3. Prevents cross-agent warrant access
         """
+        if not self._allow_code_execution:
+            # ADK passes the agent being run as ``agent=``.
+            agent = kwargs.get("agent")
+            if getattr(agent, "code_executor", None) is not None:
+                raise ConfigurationError(
+                    f"Agent '{getattr(agent, 'name', callback_context.agent_name)}' has a "
+                    "code_executor. Code it runs does not pass through tool callbacks, so "
+                    "Tenuo cannot authorize it. Remove the executor, or pass "
+                    "allow_code_execution=True if it is confined by other means."
+                )
+
+        if self._warrant_resolver is not None:
+            return None  # The resolver supplies the warrant; state holds none.
+
         # Check session_state (standard) then state (fallback)
         if hasattr(callback_context, "session_state"):
             state = callback_context.session_state

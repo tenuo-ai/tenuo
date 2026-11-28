@@ -471,7 +471,7 @@ result = executor.invoke({"input": "Read /tmp/test.txt"})
 
 ### `auto_protect()` (Zero Config)
 
-The fastest way to add protection - defaults to **audit mode** so you can deploy without breaking anything:
+The fastest way to add protection - when Tenuo is not configured yet, it defaults to **observe mode** so you can deploy without breaking anything. The mode applies to the whole process, and an existing configuration keeps its mode unless you pass `mode`:
 
 ```python
 from tenuo.langchain import auto_protect
@@ -489,11 +489,11 @@ protected_executor = auto_protect(executor, mode="enforce")
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `agent_or_tools` | `Any` | required | AgentExecutor, list of tools, or single tool |
-| `mode` | `str` | `"audit"` | `"audit"` (log only), `"enforce"` (block), `"permissive"` (warn) |
+| `mode` | `str` | `None` | `"observe"` (log only) or `"enforce"` (block); `"audit"` and `"permissive"` are aliases of `"observe"`. `None` keeps the configured mode, or uses `"observe"` when Tenuo is not configured |
 
 ### `SecureAgentExecutor` (Drop-in Replacement)
 
-A drop-in replacement for LangChain's `AgentExecutor` with built-in protection:
+A drop-in replacement for LangChain's `AgentExecutor` with built-in protection. On LangChain 1.x, `AgentExecutor` lives in the `langchain-classic` package (`uv pip install langchain-classic`):
 
 ```python
 from tenuo.langchain import SecureAgentExecutor
@@ -575,7 +575,7 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `agent_or_executor` | `Any` | AgentExecutor, RunnableAgent, or agent with tools |
+| `agent_or_executor` | `Any` | An `AgentExecutor` (from `langchain_classic.agents` on LangChain 1.x). Other agents, including `create_agent()` graphs, raise `ConfigurationError`; use `TenuoMiddleware` for those |
 | `issuer_key` | `SigningKey` | Signing key (enables dev_mode if provided) |
 | `capabilities` | `List[Capability]` | Capabilities to scope the agent to |
 | `strict` | `bool` | Require constraints for critical tools |

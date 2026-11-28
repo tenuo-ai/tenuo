@@ -89,7 +89,7 @@ class MockMessage:
 
 
 @pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
-@pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="LangGraph >= 0.3 required for TenuoToolNode (wrap_tool_call)")
+@pytest.mark.skipif(not WRAP_TOOL_CALL_SUPPORTED, reason="langgraph-prebuilt >= 1.0.2 required for TenuoToolNode (wrap_tool_call)")
 class TestTenuoToolNode:
     """Tests for TenuoToolNode (requires langgraph)."""
 

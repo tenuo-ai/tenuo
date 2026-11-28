@@ -105,6 +105,9 @@ describe("constraint set", () => {
     const s = probe(tenuo, "fetch2", { url: urlSafe({ allowDomains: ["*.example.com"] }) });
     await expect(s.ok({ url: "https://api.example.com/x" })).resolves.toEqual({ url: "https://api.example.com/x" });
     await s.denied({ url: "http://169.254.169.254/latest/meta-data" });
+    // Public IP literals are constrained by allowDomains too. This specifically
+    // guards the committed WASM artifact used by the published package.
+    await s.denied({ url: "https://8.8.8.8/" });
     await s.denied({ url: "https://evil.net/" });
   });
 
@@ -148,6 +151,15 @@ describe("constraint set", () => {
     await expect(c.ok({ amount: 500 })).resolves.toEqual({ amount: 500 });
     await c.denied({ amount: 50000 });
     await c.denied({ amount: -1 });
+  });
+
+  it.each(["all", "exists"])("cel %s rejects non-iterables without trapping", async (macro) => {
+    const tenuo = dev();
+    const c = probe(tenuo, "send", { recipients: cel(`value.${macro}(r, r == 'a')`) });
+    for (const recipients of ["sensitive-value", 5, true]) {
+      await expect(c.ok({ recipients })).rejects.toBeInstanceOf(AuthorizationDeniedError);
+    }
+    await expect(c.ok({ recipients: ["a"] })).resolves.toEqual({ recipients: ["a"] });
   });
 
   it("under() takes case and equality options", async () => {
@@ -411,6 +423,8 @@ describe("approvals end to end", () => {
     expect(request.requiredApprovers).toHaveLength(2);
     const envelope = createTenuo.signApproval(request, approverA, { externalId: "alice@example.com" });
     const info = createTenuo.inspectApproval(envelope);
+    const bytesInfo = createTenuo.inspectApproval(new Uint8Array(Buffer.from(envelope, "base64")));
+    expect(bytesInfo).toEqual(info);
     expect(info).toMatchObject({
       signatureValid: true,
       expired: false,
@@ -454,9 +468,10 @@ describe("approvals end to end", () => {
     });
     expect(stricter.inspect().requiredApprovers).toHaveLength(2);
     expect(stricter.inspect().minApprovals).toBe(2);
-    // The threshold only rises: asking for less leaves it where it was.
-    const attempt = tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 });
-    expect(attempt.inspect().minApprovals).toBe(2);
+    // The threshold only rises: asking for less is refused, not ignored.
+    expect(() => tenuo.narrow(stricter, { path: under("/data") }, { minApprovals: 1 })).toThrow(
+      /below the parent's 2/,
+    );
   });
 
   it("produces the control-plane v1 body Python emits, with an attestation the holder signed", () => {

@@ -141,6 +141,23 @@ class SdkContext {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
+     * Diagnose a warrant and proposed call without a holder secret.
+     * Reports chain, constraint and approval evidence independently. Possession
+     * is never checked, no authorization verdict or receipt is produced, and
+     * execution must still use authorizePresented with a valid PoP.
+     * @param {any} warrants
+     * @param {string} tool
+     * @param {any} args_json
+     * @param {any} approvals_json
+     * @returns {any}
+     */
+    explainWarrant(warrants, tool, args_json, approvals_json) {
+        const ptr0 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkcontext_explainWarrant(this.__wbg_ptr, warrants, ptr0, len0, args_json, approvals_json);
+        return ret;
+    }
+    /**
      * Issuer context from a stable 32-byte Ed25519 secret. Its own public
      * key is trusted; `extra_roots` (hex) are trusted as well, so one
      * process can verify chains from several control planes.
@@ -970,14 +987,79 @@ function parse_strict_json(json_text) {
 exports.parse_strict_json = parse_strict_json;
 
 /**
+ * Decode an MCP proof-of-possession signature with the same parser used by
+ * authorization and return its canonical bytes as lowercase hex.
+ *
+ * Replay stores must key on the verified signature bytes, not on the wire
+ * spelling: whitespace, padding, and the standard/URL-safe base64 alphabets
+ * can encode the same Ed25519 signature.
+ * @param {string} signature
+ * @returns {string}
+ */
+function sdkCanonicalMetaSignature(signature) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(signature, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdkCanonicalMetaSignature(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+exports.sdkCanonicalMetaSignature = sdkCanonicalMetaSignature;
+
+/**
+ * Decode a warrant chain (stack string, single token, or token array), root
+ * first. Not authorization: no trusted root, linkage, expiry, or revocation check.
+ * @param {any} warrants
+ * @returns {any}
+ */
+function sdkDecodeChain(warrants) {
+    const ret = wasm.sdkDecodeChain(warrants);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkDecodeChain = sdkDecodeChain;
+
+/**
+ * Diagnose all capability-constraint failures without authorizing the call.
+ * @param {string} wire
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+function sdkDiagnoseConstraints(wire, tool, args_json) {
+    const ptr0 = passStringToWasm0(wire, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.sdkDiagnoseConstraints(ptr0, len0, ptr1, len1, args_json);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.sdkDiagnoseConstraints = sdkDiagnoseConstraints;
+
+/**
  * Decode and check an approval envelope. Not authorization.
- * @param {string} envelope
+ * @param {any} envelope
  * @returns {any}
  */
 function sdkInspectApproval(envelope) {
-    const ptr0 = passStringToWasm0(envelope, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.sdkInspectApproval(ptr0, len0);
+    const ret = wasm.sdkInspectApproval(envelope);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -1280,6 +1362,27 @@ function sdkVerifyReceiptChain(wire, roots) {
 exports.sdkVerifyReceiptChain = sdkVerifyReceiptChain;
 
 /**
+ * The core's Shlex decision for `command`.
+ *
+ * `allow` is a list of binary names or paths. The returned object has
+ * `allowed`, `reason`, `tokens`, `operators`, `expansion`, `controls`, and
+ * `binary_allowed`.
+ * @param {any} allow
+ * @param {string} command
+ * @returns {any}
+ */
+function shlex_inspect(allow, command) {
+    const ptr0 = passStringToWasm0(command, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.shlex_inspect(allow, ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+exports.shlex_inspect = shlex_inspect;
+
+/**
  * Create a Proof-of-Possession signature for a warrant
  * @param {string} private_key_hex
  * @param {string} warrant_b64
@@ -1482,6 +1585,10 @@ function __wbg_get_imports() {
             const ret = arg0.call(arg1);
             return ret;
         }, arguments); },
+        __wbg_create_bbb3d4d06ce19ed3: function(arg0) {
+            const ret = Object.create(arg0);
+            return ret;
+        },
         __wbg_done_b62d4a7d2286852a: function(arg0) {
             const ret = arg0.done;
             return ret;
@@ -1505,6 +1612,18 @@ function __wbg_get_imports() {
             const ret = Array.from(arg0);
             return ret;
         },
+        __wbg_getOwnPropertyDescriptor_e402786ff1bd109b: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.getOwnPropertyDescriptor(arg0, arg1);
+            return ret;
+        }, arguments); },
+        __wbg_getPrototypeOf_d5e0141f1be4b298: function(arg0) {
+            const ret = Object.getPrototypeOf(arg0);
+            return ret;
+        },
+        __wbg_getPrototypeOf_ee0df86efdc0c196: function() { return handleError(function (arg0) {
+            const ret = Reflect.getPrototypeOf(arg0);
+            return ret;
+        }, arguments); },
         __wbg_getRandomValues_a697888e9ba1eee3: function() { return handleError(function (arg0, arg1) {
             globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
         }, arguments); },
@@ -1573,6 +1692,10 @@ function __wbg_get_imports() {
             const ret = Number.isSafeInteger(arg0);
             return ret;
         },
+        __wbg_is_de5b366c746e004c: function(arg0, arg1) {
+            const ret = Object.is(arg0, arg1);
+            return ret;
+        },
         __wbg_iterator_cc47ba25a2be735a: function() {
             const ret = Symbol.iterator;
             return ret;
@@ -1582,6 +1705,10 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbg_length_589238bdcf171f0e: function(arg0) {
+            const ret = arg0.length;
+            return ret;
+        },
+        __wbg_length_acba77017a0d3d38: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
@@ -1625,9 +1752,21 @@ function __wbg_get_imports() {
             const ret = Date.now();
             return ret;
         }, arguments); },
+        __wbg_ownKeys_9c0857bab4917919: function() { return handleError(function (arg0) {
+            const ret = Reflect.ownKeys(arg0);
+            return ret;
+        }, arguments); },
+        __wbg_parse_1f9d3f9cbc8a7da2: function() { return handleError(function (arg0, arg1) {
+            const ret = JSON.parse(getStringFromWasm0(arg0, arg1));
+            return ret;
+        }, arguments); },
         __wbg_prototypesetcall_d721637c7ca66eb8: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
         },
+        __wbg_set_4564f7dc44fcb0c9: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = Reflect.set(arg0, arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             arg0[arg1] = arg2;
         },

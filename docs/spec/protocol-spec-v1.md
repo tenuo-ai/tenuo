@@ -791,11 +791,11 @@ Verifiers receiving an SRL MUST:
 ### 12.4 Common Misconfigurations
 
 > [!CAUTION]
-> The following configurations create security vulnerabilities:
+> The following configurations create security or availability failures:
 
 | Misconfiguration | Risk | Mitigation |
 |------------------|------|------------|
-| Empty `trusted_roots` | Accepts any chain | Always configure trusted root keys |
+| Empty `trusted_roots` | Every warrant is rejected (`UntrustedRoot`). The verifier fails closed, so a missing trust anchor is an outage, not a bypass | Always configure trusted root keys. `AuthorizerBuilder::build()` refuses to build without one |
 | Missing PoP verification | Token theft | Require PoP for all agent requests |
 | TTL > 1 hour | Revocation window too large | Use 5-15 minute TTLs |
 | Ignoring unknown fields | Forward compatibility issues | Fail closed on unknown |

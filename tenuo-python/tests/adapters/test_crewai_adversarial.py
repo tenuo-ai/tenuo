@@ -540,31 +540,6 @@ class TestSecurityRegressions:
                 attenuations={"read": {"path": Subpath("/data")}},
             )
 
-    def test_delegation_attenuation_requires_subset_support(self):
-        """
-        REGRESSION: Constraints without is_subset_of must be rejected.
-        Previously: Warning logged but delegation allowed (bypass).
-        """
-        from tenuo.crewai import EscalationAttempt, WarrantDelegator
-
-        delegator = WarrantDelegator()
-
-        mock_parent = MagicMock()
-        mock_parent.is_expired.return_value = False
-        mock_parent.tools.return_value = ["read"]
-        mock_parent.constraint_for.return_value = MagicMock()  # Returns constraint
-
-        # Child constraint without is_subset_of
-        child_constraint = MagicMock(spec=[])  # Empty spec = no methods
-
-        with pytest.raises(EscalationAttempt, match="is_subset_of"):
-            delegator.delegate(
-                parent_warrant=mock_parent,
-                parent_key=MagicMock(),
-                child_holder=MagicMock(),
-                attenuations={"read": {"path": child_constraint}},
-            )
-
     @pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - crew.kickoff() requires real crewai")
     def test_unguarded_agents_fail_closed(self):
         """
@@ -661,31 +636,6 @@ class TestSecurityRegressions:
                 parent_key=MagicMock(),
                 child_holder=MagicMock(),
                 attenuations={"read": {"path": Subpath("/data")}},
-            )
-
-    def test_delegation_parent_constraint_query_failure(self):
-        """
-        REGRESSION: If parent.constraint_for() fails unexpectedly, must deny.
-        Previously: Set to None and skipped subset validation.
-        """
-        from tenuo.crewai import EscalationAttempt, WarrantDelegator
-
-        delegator = WarrantDelegator()
-
-        mock_parent = MagicMock()
-        mock_parent.is_expired.return_value = False
-        mock_parent.tools.return_value = ["read"]
-        mock_parent.constraint_for.side_effect = RuntimeError("Constraint store corrupted")
-
-        child_constraint = MagicMock()
-        child_constraint.is_subset_of.return_value = True
-
-        with pytest.raises(EscalationAttempt, match="Cannot verify parent constraint"):
-            delegator.delegate(
-                parent_warrant=mock_parent,
-                parent_key=MagicMock(),
-                child_holder=MagicMock(),
-                attenuations={"read": {"path": child_constraint}},
             )
 
     def test_holder_verification_via_rust_core(self):
@@ -1096,7 +1046,6 @@ class TestWarrantChainDepth:
         parent_warrant = MagicMock()
         parent_warrant.is_expired.return_value = False
         parent_warrant.tools.return_value = ["read"]
-        parent_warrant.constraint_for.return_value = None
         # Simulate max depth reached
         parent_warrant.grant_builder = MagicMock(side_effect=ValueError("Max delegation depth (5) exceeded"))
         parent_key = MagicMock()
@@ -1122,7 +1071,6 @@ class TestWarrantChainDepth:
         parent_warrant = MagicMock()
         parent_warrant.is_expired.return_value = False
         parent_warrant.tools.return_value = ["read"]
-        parent_warrant.constraint_for.return_value = None
 
         mock_grant_builder = MagicMock()
         mock_child_warrant = MagicMock()

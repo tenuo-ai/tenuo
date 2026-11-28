@@ -287,9 +287,11 @@ def _explain_urlsafe(constraint: Any, value: Any) -> UrlAnalysis:
 
 
 def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
-    """Explain Shlex constraint check."""
-    import shlex as shlex_module
+    """Explain a Shlex check from the core's own decision.
 
+    The character sets and the operator list live in the core. Copying them
+    here would let the explanation drift from the warrant.
+    """
     if not isinstance(value, str):
         return CommandAnalysis(
             input=str(value),
@@ -303,94 +305,18 @@ def _explain_shlex(constraint: Any, value: Any) -> CommandAnalysis:
             reason=f"Value must be a string, got {type(value).__name__}",
         )
 
-    # Check for control characters
-    control_chars_found = [c for c in constraint.CONTROL_CHARS if c in value]
-    if control_chars_found:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=control_chars_found,
-            safe=False,
-            reason=f"Contains control characters: {control_chars_found!r}",
-        )
-
-    # Check for expansion characters
-    expansion_chars_found = [c for c in constraint.EXPANSION_CHARS if c in value]
-    if expansion_chars_found:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=expansion_chars_found,
-            control_chars=[],
-            safe=False,
-            reason=f"Contains shell expansion characters: {expansion_chars_found!r}",
-        )
-
-    # Parse the command
-    try:
-        lex = shlex_module.shlex(value, posix=True, punctuation_chars=True)
-        tokens = list(lex)
-    except ValueError as e:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=[],
-            safe=False,
-            reason=f"Parse error: {e}",
-        )
-
-    if not tokens:
-        return CommandAnalysis(
-            input=value,
-            tokens=[],
-            binary="",
-            binary_allowed=False,
-            dangerous_tokens=[],
-            expansion_chars=[],
-            control_chars=[],
-            safe=False,
-            reason="Empty command",
-        )
-
-    binary = tokens[0]
-    bin_name = posixpath.basename(binary)
-    binary_allowed = binary in constraint.allowed_bins or bin_name in constraint.allowed_bins
-
-    # Check for dangerous tokens
-    dangerous_tokens_found = [t for t in tokens if t in constraint.DANGEROUS_TOKENS]
-
-    # Determine safety
-    safe = True
-    reason = "Command is safe"
-
-    if not binary_allowed:
-        safe = False
-        reason = f"Binary '{binary}' not in allowlist: {sorted(constraint.allowed_bins)}"
-    elif dangerous_tokens_found:
-        safe = False
-        reason = f"Contains shell operators: {dangerous_tokens_found}"
-
+    report = constraint.check(value)
+    tokens = list(report["tokens"])
     return CommandAnalysis(
         input=value,
         tokens=tokens,
-        binary=binary,
-        binary_allowed=binary_allowed,
-        dangerous_tokens=dangerous_tokens_found,
-        expansion_chars=[],
-        control_chars=[],
-        safe=safe,
-        reason=reason,
+        binary=tokens[0] if tokens else "",
+        binary_allowed=bool(report["binary_allowed"]),
+        dangerous_tokens=list(report["operators"]),
+        expansion_chars=list(report["expansion"]),
+        control_chars=list(report["controls"]),
+        safe=bool(report["allowed"]),
+        reason=str(report["reason"]),
     )
 
 

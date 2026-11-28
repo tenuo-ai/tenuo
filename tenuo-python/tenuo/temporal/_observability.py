@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import dataclasses as _dataclasses
 import logging
+import queue
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, List, Literal, Optional
+from typing import Any, Callable, Deque, Dict, List, Literal, Optional, Union
 
 logger = logging.getLogger("tenuo.temporal")
 
@@ -34,7 +36,11 @@ class TemporalAuditEvent:
 
     # Warrant info
     warrant_id: str
-    warrant_expires_at: Optional[datetime]
+    # ``tenuo_core.Warrant.expires_at()`` returns an RFC 3339 string, while
+    # callers constructing audit events directly have historically supplied a
+    # datetime.  Accept both representations at this public serialization
+    # boundary so real warrants and existing integrations remain compatible.
+    warrant_expires_at: Optional[Union[datetime, str]]
     warrant_capabilities: List[str]
 
     # Denial details (populated if denied)
@@ -47,6 +53,10 @@ class TemporalAuditEvent:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for structured logging."""
+        warrant_expires_at = self.warrant_expires_at
+        if isinstance(warrant_expires_at, datetime):
+            warrant_expires_at = warrant_expires_at.isoformat()
+
         return {
             "workflow_id": self.workflow_id,
             "workflow_type": self.workflow_type,
@@ -58,13 +68,94 @@ class TemporalAuditEvent:
             "tool": self.tool,
             "arguments": self.arguments,
             "warrant_id": self.warrant_id,
-            "warrant_expires_at": (self.warrant_expires_at.isoformat() if self.warrant_expires_at else None),
+            "warrant_expires_at": warrant_expires_at,
             "warrant_capabilities": self.warrant_capabilities,
             "denial_reason": self.denial_reason,
             "constraint_violated": self.constraint_violated,
             "timestamp": self.timestamp.isoformat(),
             "tenuo_version": self.tenuo_version,
         }
+
+
+class _DroppedSignalAuditDispatcher:
+    """Bounded, process-local bridge from workflow code to an audit callback.
+
+    The process-wide dispatcher is constructed by ``TenuoWorkerInterceptor``
+    before any workflow runs. ``submit`` only performs a non-blocking queue
+    write; the daemon thread invokes user code outside Temporal's workflow sandbox.
+    Delivery is intentionally best-effort and the bounded queue prevents an
+    untrusted signal sender from causing unbounded worker memory growth.
+    """
+
+    _QUEUE_SIZE = 1024
+
+    def __init__(self) -> None:
+        self._queue: "queue.Queue[tuple[Callable[[TemporalAuditEvent], None], TemporalAuditEvent]]" = (
+            queue.Queue(maxsize=self._QUEUE_SIZE)
+        )
+        self._overflow_lock = threading.Lock()
+        self._overflow_count = 0
+        self._thread = threading.Thread(
+            target=self._run,
+            name="tenuo-temporal-signal-audit",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def submit(
+        self,
+        callback: Callable[[TemporalAuditEvent], None],
+        event: TemporalAuditEvent,
+    ) -> bool:
+        try:
+            self._queue.put_nowait((callback, event))
+            return True
+        except queue.Full:
+            # Never invoke logging handlers from workflow code. They may do
+            # blocking file/network I/O and trip Temporal's deadlock detector.
+            # The dispatcher coalesces and reports this count from its thread.
+            with self._overflow_lock:
+                self._overflow_count += 1
+            return False
+
+    def _run(self) -> None:
+        while True:
+            callback, event = self._queue.get()
+            self._report_overflow()
+            try:
+                callback(event)
+            except Exception:
+                logger.error(
+                    "Audit callback failed for dropped %s", event.tool, exc_info=True
+                )
+            finally:
+                self._queue.task_done()
+
+    def _report_overflow(self) -> None:
+        with self._overflow_lock:
+            count = self._overflow_count
+            self._overflow_count = 0
+        if count:
+            logger.error(
+                "Dropped-signal audit queue overflowed; %d audit event(s) lost",
+                count,
+            )
+
+
+_dropped_signal_dispatcher_lock = threading.Lock()
+_dropped_signal_dispatcher: Optional[_DroppedSignalAuditDispatcher] = None
+
+
+def _install_dropped_signal_audit_dispatcher(config: Any) -> None:
+    """Attach the process-wide dispatcher before workflow execution starts."""
+    global _dropped_signal_dispatcher
+
+    if getattr(config, "_dropped_signal_audit_dispatcher", None) is not None:
+        return
+    with _dropped_signal_dispatcher_lock:
+        if _dropped_signal_dispatcher is None:
+            _dropped_signal_dispatcher = _DroppedSignalAuditDispatcher()
+        config._dropped_signal_audit_dispatcher = _dropped_signal_dispatcher
 
 
 @_dataclasses.dataclass

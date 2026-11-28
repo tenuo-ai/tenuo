@@ -37,7 +37,7 @@ version: "1"
 # ============================================================
 settings:
   # Header containing the base64-encoded warrant chain
-  chain_header: "X-Tenuo-Chain"
+  warrant_header: "X-Tenuo-Warrant"
   
   # Header containing the PoP signature (hex)
   pop_header: "X-Tenuo-PoP"
@@ -47,7 +47,7 @@ settings:
   
   # Trusted Control Plane public keys (hex)
   # In production, these come from your Control Plane
-  trusted_issuers:
+  trusted_roots:
     - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
 
 # ============================================================
@@ -187,7 +187,7 @@ routes:
     method: ["POST"]
     tool: "transfer_funds"
     # Additional constraints from headers
-    extra_constraints:
+    constraints:
       tenant_id:
         from: header
         path: "X-Tenant-Id"

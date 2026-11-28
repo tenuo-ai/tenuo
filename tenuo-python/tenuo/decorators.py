@@ -46,7 +46,7 @@ import traceback
 import warnings
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Callable, List, Literal, Optional, Union, get_args, get_origin, get_type_hints, overload
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, get_args, get_origin, get_type_hints, overload
 
 from typing_extensions import Annotated
 
@@ -61,7 +61,7 @@ from .exceptions import (
     ScopeViolation,
     ToolNotAuthorized,
 )
-from ._enforcement import EnforcementResult, enforce_tool_call
+from ._enforcement import EnforcementResult, _log_observed_denial, enforce_tool_call
 from .bound_warrant import BoundWarrant
 
 logger = logging.getLogger("tenuo.decorators")
@@ -191,14 +191,17 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
       - Pattern.matches()      -> Rust core
       - Shlex.matches()        -> Python shlex (full POSIX parsing)
       - Range.contains()       -> Rust core
-      - Exact.matches()        -> Rust core
-      - OneOf.contains()       -> Rust core
-      - NotOneOf.allows()      -> Rust core
+      - Exact.satisfies()      -> Rust core, typed
+      - OneOf.satisfies()      -> Rust core, typed
+      - Not/NotOneOf.satisfies() -> Rust core, preserving value kinds
       - Wildcard.matches()     -> Rust core
     """
     constraint_type = type(constraint).__name__
 
     try:
+        if constraint_type in {"Exact", "OneOf", "Not", "NotOneOf"} and hasattr(constraint, "satisfies"):
+            return constraint.satisfies(value)
+
         # Subpath - filesystem path containment (Rust core)
         if hasattr(constraint, "contains") and constraint_type == "Subpath":
             return constraint.contains(str(value))
@@ -215,7 +218,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
             return constraint.matches(value)
 
-        # Shlex - shell command validation (Python full shlex parsing)
+        # Shlex - shell command validation (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Shlex":
             return constraint.matches(str(value))
 
@@ -229,18 +232,6 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
                 return constraint.contains(float(value))
             except (ValueError, TypeError):
                 return False
-
-        # Exact - exact value match (Rust core)
-        if hasattr(constraint, "matches") and constraint_type == "Exact":
-            return constraint.matches(str(value))
-
-        # OneOf - set membership (Rust core)
-        if hasattr(constraint, "contains") and constraint_type == "OneOf":
-            return constraint.contains(str(value))
-
-        # NotOneOf - exclusion list (Rust core)
-        if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
-            return constraint.allows(str(value))
 
         # Wildcard - matches anything (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Wildcard":
@@ -657,22 +648,10 @@ def _map_result_to_guard_error(
         )
     )
 
-    # Build explorer URL for debugging
-    warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
-    if warrant_b64:
-        import base64 as b64_mod
-        import json as json_mod
-        import urllib.parse
-
-        state = {"warrant": warrant_b64, "tool": tool_name, "args": json_mod.dumps(auth_args)}
-        state_b64 = b64_mod.b64encode(json_mod.dumps(state).encode()).decode()
-        explorer_url = f"https://tenuo.ai/explorer/?s={urllib.parse.quote(state_b64)}"
-    else:
-        explorer_url = None
-
+    # The hint ends up in logs and tool output, so it never embeds the
+    # warrant or argument values; why_denied().explorer_url has the
+    # pre-filled Explorer link for local debugging.
     hint = why.suggestion if hasattr(why, "suggestion") else None
-    if explorer_url:
-        hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
 
     raise AuthorizationDenied(
         tool=tool_name,
@@ -786,13 +765,120 @@ def guard(
             if is_bypass_enabled():
                 return func(*args, **kwargs)
 
-            from .config import get_config
+            from .config import get_config, should_block_violation
 
             config = get_config()
             callsite = _get_callsite()
             func_name = f"{func.__module__}.{func.__qualname__}"
 
             warrant_to_use = active_warrant or get_warrant_context()
+            args_not_extracted = object()
+            auth_args_cache: Any = args_not_extracted
+            context_not_resolved = object()
+            presented_parents_cache: Any = context_not_resolved
+            receipt_authorizer_cache: Any = context_not_resolved
+
+            def authorization_args() -> Dict[str, Any]:
+                """Extract once so enforcement and early-denial receipts agree."""
+                nonlocal auth_args_cache
+                if auth_args_cache is not args_not_extracted:
+                    return auth_args_cache
+                if extract_args:
+                    auth_args_cache = extract_args(*args, **kwargs)
+                    return auth_args_cache
+
+                import inspect
+
+                try:
+                    bound = inspect.signature(func).bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    extracted = dict(bound.arguments)
+                except TypeError as e:
+                    audit_logger.log(
+                        AuditEvent(
+                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                            tool=tool_name,
+                            action="denied",
+                            error_code="argument_binding_error",
+                            details=f"Failed to bind arguments for {tool_name}: {e}",
+                        )
+                    )
+                    raise
+
+                if mapping:
+                    extracted = {
+                        mapping.get(arg_name, arg_name): value
+                        for arg_name, value in extracted.items()
+                    }
+                auth_args_cache = extracted
+                return auth_args_cache
+
+            def presented_parents() -> Optional[List[Any]]:
+                """Resolve the request's parents once for enforcement and receipts."""
+                nonlocal presented_parents_cache
+                if presented_parents_cache is not context_not_resolved:
+                    return presented_parents_cache
+                if verify_mode == "verify":
+                    raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
+                else:
+                    raw_chain = chain_scope()
+                presented_parents_cache = list(raw_chain) if raw_chain else None
+                return presented_parents_cache
+
+            def receipt_authorizer() -> Any:
+                """Use the same trust context as normal verification for receipts."""
+                nonlocal receipt_authorizer_cache
+                if receipt_authorizer_cache is not context_not_resolved:
+                    return receipt_authorizer_cache
+                if verify_mode == "verify" and authorizer is not None:
+                    receipt_authorizer_cache = authorizer
+                    return receipt_authorizer_cache
+
+                from .config import resolve_trusted_roots
+
+                roots = resolve_trusted_roots(trusted_roots)
+                if not roots:
+                    receipt_authorizer_cache = None
+                    return None
+                from tenuo_core import Authorizer
+
+                receipt_authorizer_cache = Authorizer(trusted_roots=roots)
+                from .runtime import apply_runtime_revocation
+
+                apply_runtime_revocation(receipt_authorizer_cache)
+                return receipt_authorizer_cache
+
+            def observe_early_denial(
+                reason: str,
+                error_type: str,
+                *,
+                warrant_id: Optional[Any] = None,
+                constraint_violated: Optional[str] = None,
+            ) -> Any:
+                """Record decorator-local denials and continue in observe mode."""
+                if warrant_to_use is not None:
+                    observed_args = authorization_args()
+                else:
+                    observed_args = dict(kwargs)
+                observed_result = EnforcementResult(
+                    allowed=False,
+                    observed=True,
+                    warrant_id=str(warrant_id) if warrant_id is not None else None,
+                    tool=tool_name,
+                    arguments=observed_args,
+                    denial_reason=reason,
+                    error_type=error_type,
+                    constraint_violated=constraint_violated,
+                    pop_auth_args=observed_args,
+                )
+                if warrant_to_use is not None:
+                    observed_result.presented_chain = [*(presented_parents() or []), warrant_to_use]
+                    observed_result.authorizer = receipt_authorizer()
+                from .receipts import collect_enforcement_receipt
+
+                collect_enforcement_receipt(observed_result)
+                _log_observed_denial(observed_result)
+                return func(*args, **kwargs)
 
             if warrant_to_use is None:
                 error_code = AuthErrorCode.MISSING_CONTEXT
@@ -810,6 +896,12 @@ def guard(
                         },
                     )
                 )
+
+                if not should_block_violation():
+                    return observe_early_denial(
+                        f"No warrant context available for tool '{tool_name}'.",
+                        "missing_warrant",
+                    )
 
                 should_fail = config.strict_mode
 
@@ -882,6 +974,13 @@ def guard(
                     )
                 )
 
+                if not should_block_violation():
+                    return observe_early_denial(
+                        f"Warrant expired at {expires_at}.",
+                        "expired",
+                        warrant_id=getattr(warrant_to_use, "id", None),
+                    )
+
                 error_msg = _make_actionable_error(
                     error_code=error_code,
                     tool_name=tool_name,
@@ -916,6 +1015,13 @@ def guard(
                     )
                 )
 
+                if not should_block_violation():
+                    return observe_early_denial(
+                        "Proof-of-Possession is mandatory but no keypair is available.",
+                        "missing_signing_key",
+                        warrant_id=getattr(warrant_to_use, "id", None),
+                    )
+
                 error_msg = _make_actionable_error(
                     error_code=error_code,
                     tool_name=tool_name,
@@ -925,40 +1031,7 @@ def guard(
                 )
                 raise MissingSigningKey(tool=tool_name)
 
-            if extract_args:
-                auth_args = extract_args(*args, **kwargs)
-            else:
-                import inspect
-
-                sig = inspect.signature(func)
-
-                try:
-                    bound = sig.bind(*args, **kwargs)
-                    bound.apply_defaults()
-                    auth_args = dict(bound.arguments)
-                except TypeError as e:
-                    # If binding fails (e.g. wrong number of args), we can't authorize
-                    # Let the function call proceed to fail naturally, or raise
-                    # But for security, if we can't inspect args, we shouldn't authorize.
-                    # However, the function call itself would fail right after.
-                    # Let's log and re-raise to be safe/clear.
-                    audit_logger.log(
-                        AuditEvent(
-                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
-                            tool=tool_name,
-                            action="denied",
-                            error_code="argument_binding_error",
-                            details=f"Failed to bind arguments for {tool_name}: {e}",
-                        )
-                    )
-                    raise
-
-                if mapping:
-                    mapped_args = {}
-                    for arg_name, value in auth_args.items():
-                        constraint_name = mapping.get(arg_name, arg_name)
-                        mapped_args[constraint_name] = value
-                    auth_args = mapped_args
+            auth_args = authorization_args()
 
             # Defense in Depth: Enforce code-level constraints from Annotated hints
             # These are checked BEFORE the warrant, preventing unsafe values even if authorized
@@ -985,6 +1058,14 @@ def guard(
                                     metadata={"param": param, "value": str(val), "constraint": str(constraint)},
                                 )
                             )
+
+                            if not should_block_violation():
+                                return observe_early_denial(
+                                    details,
+                                    "constraint_violation",
+                                    warrant_id=getattr(warrant_to_use, "id", None),
+                                    constraint_violated=param,
+                                )
 
                             raise AuthorizationDenied(
                                 tool=tool_name,
@@ -1020,11 +1101,15 @@ def guard(
             if verify_mode == "verify":
                 _precomputed_sig = extract_signature(*args, **kwargs) if callable(extract_signature) else None
                 if _precomputed_sig is None:
+                    if not should_block_violation():
+                        return observe_early_denial(
+                            "No Proof-of-Possession signature was provided.",
+                            "missing_signature",
+                            warrant_id=getattr(warrant_to_use, "id", None),
+                        )
                     raise MissingSignature("@guard(verify_mode='verify') requires extract_signature to return bytes")
                 _precomputed_sig = bytes(_precomputed_sig)
-                _raw_chain = extract_chain(*args, **kwargs) if callable(extract_chain) else None
-                if _raw_chain:
-                    _warrant_chain = list(_raw_chain)
+                _warrant_chain = presented_parents()
                 # Build authorizer from trusted_roots if not explicitly provided
                 if _verify_authorizer is None:
                     from .config import resolve_trusted_roots as _rtr
@@ -1038,9 +1123,7 @@ def guard(
                             "or trusted_roots configured via configure() at startup."
                         )
             else:
-                _parents = chain_scope()
-                if _parents:
-                    _warrant_chain = list(_parents)
+                _warrant_chain = presented_parents()
 
             result = enforce_tool_call(
                 tool_name=tool_name,
@@ -1065,15 +1148,25 @@ def guard(
                     result, warrant_to_use, tool_name, auth_args, callsite, func_name,
                 )
 
+            observed = bool(getattr(result, "observed", False))
             audit_logger.log(
                 AuditEvent(
-                    event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+                    event_type=(
+                        AuditEventType.AUTHORIZATION_FAILURE
+                        if observed
+                        else AuditEventType.AUTHORIZATION_SUCCESS
+                    ),
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, "id") else None,
                     tool=tool_name,
-                    action="authorized",
+                    action="denied" if observed else "authorized",
                     constraints=auth_args,
                     trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, "session_id") else None,
-                    details=f"Authorization successful for {tool_name}",
+                    error_code="authorization_failed" if observed else None,
+                    details=(
+                        f"Authorization denied: {result.denial_reason}"
+                        if observed
+                        else f"Authorization successful for {tool_name}"
+                    ),
                     metadata={
                         "callsite": callsite,
                         "function": func_name,

@@ -407,8 +407,9 @@ class TestConstraintContainment:
         from tenuo_core import Exact, Range
 
         # Range parent can contain Exact child with numeric value
-        assert _is_constraint_contained(Exact("50"), Range(0, 100))  # In range
-        assert not _is_constraint_contained(Exact("200"), Range(0, 100))  # Out of range
+        assert _is_constraint_contained(Exact(50), Range(0, 100))  # In range
+        assert not _is_constraint_contained(Exact(200), Range(0, 100))  # Out of range
+        assert not _is_constraint_contained(Exact("50"), Range(0, 100))  # String is not numeric
         assert not _is_constraint_contained(Exact("abc"), Range(0, 100))  # Non-numeric
 
     def test_incompatible_oneof_pattern(self):
@@ -505,14 +506,14 @@ class TestConstraintContainment:
 
         parent = Range(0, 100)
 
-        # Exact with numeric string within range
-        assert _is_constraint_contained(Exact("50"), parent)
-        assert _is_constraint_contained(Exact("0"), parent)  # At min
-        assert _is_constraint_contained(Exact("100"), parent)  # At max
+        # Exact with numeric value within range
+        assert _is_constraint_contained(Exact(50), parent)
+        assert _is_constraint_contained(Exact(0), parent)  # At min
+        assert _is_constraint_contained(Exact(100), parent)  # At max
 
         # Exact outside range
-        assert not _is_constraint_contained(Exact("-1"), parent)
-        assert not _is_constraint_contained(Exact("101"), parent)
+        assert not _is_constraint_contained(Exact(-1), parent)
+        assert not _is_constraint_contained(Exact(101), parent)
 
     def test_range_to_exact_string_fails(self):
         """Range -> Exact with non-numeric string should fail."""
@@ -752,6 +753,30 @@ def test_scoped_task_enforces_containment(setup_config):
     asyncio.run(_test())
 
 
+def test_scoped_task_ttl_beyond_parent_inherits_parent_expiry(setup_config):
+    """grant(ttl=...) longer than the parent has left inherits the parent's expiry, as preview() reports.
+
+    Low-level builders reject a child that would outlive its parent; the scoped API
+    asks the core to atomically cap the request instead of raising.
+    """
+    from tenuo_core import Pattern
+
+    from tenuo import Capability
+
+    async def _test():
+        async with mint(Capability("read_file", path=Pattern("/data/*")), ttl=60) as parent:
+            scope = grant(Capability("read_file", path=Pattern("/data/reports/*")), ttl=3600)
+            assert scope.preview().error is None
+            assert scope.preview().ttl <= 60
+            async with scope as child:
+                assert child.expires_at() == parent.expires_at()
+
+            async with grant(Capability("read_file", path=Pattern("/data/reports/*")), ttl=30) as shorter:
+                assert shorter.expires_at() <= parent.expires_at()
+
+    asyncio.run(_test())
+
+
 def test_scoped_task_preview(setup_config):
     from tenuo_core import Pattern
 
@@ -905,3 +930,111 @@ class TestGrantWithAllConstraints:
                     }
 
         asyncio.run(_test())
+
+
+class TestGrantChainPropagation:
+    """grant() must carry its parent on chain_scope() so only the root needs trust.
+
+    The holder is a separate key, so every granted child is issued by a key
+    that is NOT in trusted_roots; it verifies only if the root travels with it.
+    """
+
+    @pytest.fixture
+    def worker_key(self):
+        return SigningKey.generate()
+
+    @pytest.fixture
+    def root_only_trust(self, keypair):
+        reset_config()
+        configure(issuer_key=keypair, trusted_roots=[keypair.public_key])
+        yield
+        reset_config()
+
+    def test_nested_grants_verify_against_root_only(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+
+        @guard(tool="read_file")
+        async def read_file(path: str) -> str:
+            return f"content of {path}"
+
+        async def _test():
+            assert chain_scope() is None
+            async with mint(Capability("read_file", path=Pattern("/data/*")), holder_key=worker_key) as root:
+                async with grant(Capability("read_file", path=Pattern("/data/reports/*"))) as child:
+                    assert [w.id for w in chain_scope()] == [root.id]
+                    assert await read_file(path="/data/reports/q1.csv") == "content of /data/reports/q1.csv"
+
+                    async with grant(Capability("read_file", path=Pattern("/data/reports/q1*"))):
+                        assert [w.id for w in chain_scope()] == [root.id, child.id]
+                        assert await read_file(path="/data/reports/q1.csv") == "content of /data/reports/q1.csv"
+
+                    assert [w.id for w in chain_scope()] == [root.id]
+                assert chain_scope() is None
+            assert chain_scope() is None
+
+        asyncio.run(_test())
+
+    def test_sync_grant_enforce_tool_call_against_root_only(self, root_only_trust, keypair, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope, enforce_tool_call
+        from tenuo.scoped import mint_sync
+
+        with mint_sync(Capability("read_file", path=Pattern("/data/*")), holder_key=worker_key) as root:
+            with grant(Capability("read_file", path=Pattern("/data/reports/*"))) as child:
+                assert [w.id for w in chain_scope()] == [root.id]
+                result = enforce_tool_call(
+                    "read_file",
+                    {"path": "/data/reports/q1.csv"},
+                    child.bind(worker_key),
+                    trusted_roots=[keypair.public_key],
+                )
+                assert result.allowed, result.denial_reason
+            assert chain_scope() is None
+
+    def test_nested_async_mint_resets_and_restores_outer_chain(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+
+        @guard(tool="read_file")
+        async def read_file(path: str) -> str:
+            return f"content of {path}"
+
+        async def _test():
+            async with mint(Capability("read_file", path=Pattern("/outer/*")), holder_key=worker_key) as outer:
+                async with grant(Capability("read_file", path=Pattern("/outer/reports/*"))):
+                    assert [w.id for w in chain_scope()] == [outer.id]
+
+                    async with mint(Capability("read_file", path=Pattern("/fresh/*"))) as fresh:
+                        assert chain_scope() is None
+                        assert await read_file(path="/fresh/report.txt") == "content of /fresh/report.txt"
+
+                        async with grant(Capability("read_file", path=Pattern("/fresh/reports/*"))):
+                            assert [w.id for w in chain_scope()] == [fresh.id]
+                            assert await read_file(path="/fresh/reports/q1.txt") == "content of /fresh/reports/q1.txt"
+
+                    assert [w.id for w in chain_scope()] == [outer.id]
+                assert chain_scope() is None
+
+        asyncio.run(_test())
+
+    def test_nested_sync_mint_resets_and_restores_outer_chain(self, root_only_trust, worker_key):
+        from tenuo_core import Pattern
+
+        from tenuo import Capability, chain_scope
+        from tenuo.scoped import mint_sync
+
+        with mint_sync(Capability("read_file", path=Pattern("/outer/*")), holder_key=worker_key) as outer:
+            with grant(Capability("read_file", path=Pattern("/outer/reports/*"))):
+                assert [w.id for w in chain_scope()] == [outer.id]
+
+                with mint_sync(Capability("read_file", path=Pattern("/fresh/*"))) as fresh:
+                    assert chain_scope() is None
+                    with grant(Capability("read_file", path=Pattern("/fresh/reports/*"))):
+                        assert [w.id for w in chain_scope()] == [fresh.id]
+
+                assert [w.id for w in chain_scope()] == [outer.id]
+            assert chain_scope() is None

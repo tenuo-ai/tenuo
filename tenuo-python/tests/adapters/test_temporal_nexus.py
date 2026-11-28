@@ -15,7 +15,15 @@ pytest.importorskip("nexusrpc")
 import nexusrpc  # noqa: E402
 import tenuo  # noqa: F401, E402 - installs Warrant.mint_builder()
 from tenuo.approval import ApprovalRequest, sign_approval  # noqa: E402
-from tenuo_core import Exact, Range, SigningKey, Warrant, py_compute_request_hash  # noqa: E402
+from tenuo_core import (  # noqa: E402
+    Exact,
+    Range,
+    SigningKey,
+    Warrant,
+    decode_warrant_stack_base64,
+    encode_warrant_stack,
+    py_compute_request_hash,
+)
 
 from tenuo.temporal._config import TenuoPluginConfig  # noqa: E402
 from tenuo.temporal._client import TenuoClientInterceptor  # noqa: E402
@@ -25,6 +33,7 @@ from tenuo.temporal._interceptors import (  # noqa: E402
 )
 from tenuo.temporal._constants import (  # noqa: E402
     TENUO_ARG_KEYS_HEADER,
+    TENUO_CHAIN_HEADER,
     TENUO_KEY_ID_HEADER,
 )
 from tenuo.temporal._dedup import _default_pop_dedup_store, _pop_dedup_cache  # noqa: E402
@@ -111,7 +120,7 @@ class RecordingControlPlane:
             "request_id": request_id,
             "warrant_stack_override": warrant_stack_override,
         }
-        if result.allowed:
+        if result.allowed and not getattr(result, "observed", False):
             self.allow_events.append(event)
         else:
             self.deny_events.append(event)
@@ -360,6 +369,60 @@ def test_verify_nexus_operation_emits_control_plane_allow(
         "order_id": "ord_123",
         "amount_cents": 2500,
     }
+
+
+def test_verify_nexus_operation_preserves_observed_denial_context(
+    nexus_keys: tuple[Any, Any],
+    nexus_warrant: Any,
+) -> None:
+    from tenuo.config import configure, reset_config
+
+    root_key, agent_key = nexus_keys
+    denied_input = RefundInput("ord_999", 2500)
+    control_plane = RecordingControlPlane()
+    audit_events = []
+    ctx = SimpleNamespace(
+        request_id="req-observed-denial",
+        service="BillingService",
+        operation="refund",
+        headers=tenuo_nexus_headers(
+            nexus_warrant,
+            "agent-key",
+            agent_key,
+            endpoint="billing-prod",
+            service="BillingService",
+            operation="refund",
+            input=denied_input,
+        ),
+    )
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+        control_plane=control_plane,
+        audit_callback=audit_events.append,
+    )
+
+    configure(trusted_roots=[root_key.public_key], mode="observe")
+    try:
+        verified = verify_nexus_operation(
+            ctx, denied_input, config, endpoint="billing-prod"
+        )
+    finally:
+        reset_config()
+
+    assert verified.to_bytes() == nexus_warrant.to_bytes()
+    assert control_plane.allow_events == []
+    [entry] = control_plane.deny_events
+    assert entry["chain_result"] is None
+    assert entry["result"].allowed and entry["result"].observed
+    assert entry["result"].error_type == "constraint_violation"
+    assert entry["result"].denial_reason
+    assert entry["result"].arguments == {
+        "order_id": "[REDACTED]",
+        "amount_cents": "[REDACTED]",
+    }
+    assert audit_events[-1].decision == "DENY"
+    assert audit_events[-1].denial_reason == entry["result"].denial_reason
 
 
 def test_verify_nexus_operation_control_plane_failure_does_not_deny_allow(
@@ -1304,6 +1367,90 @@ async def test_tenuo_execute_nexus_operation_merges_headers_and_calls_client(
     )
     verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
     assert verified.to_bytes() == nexus_warrant.to_bytes()
+
+
+def _delegated_nexus_chain(root_key: Any, orch_key: Any, agent_key: Any) -> tuple[Any, Any]:
+    root = (
+        Warrant.mint_builder()
+        .holder(orch_key.public_key)
+        .capability(
+            nexus_tool_name("billing-prod", "refund", service="BillingService"),
+            order_id=Exact("ord_123"),
+            amount_cents=Range(0, 5000),
+        )
+        .ttl(3600)
+        .mint(root_key)
+    )
+    leaf = (
+        root.grant_builder()
+        .holder(agent_key.public_key)
+        .capability(
+            nexus_tool_name("billing-prod", "refund", service="BillingService"),
+            order_id=Exact("ord_123"),
+            amount_cents=Range(0, 5000),
+        )
+        .ttl(1800)
+        .grant(orch_key)
+    )
+    return root, leaf
+
+
+async def test_tenuo_execute_nexus_operation_forwards_delegated_workflow_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, agent_key = nexus_keys
+    root, leaf = _delegated_nexus_chain(root_key, SigningKey.generate(), agent_key)
+    run_key = "run-nexus-delegated"
+    config = TenuoPluginConfig(
+        key_resolver=StaticResolver(agent_key),
+        trusted_roots=[root_key.public_key],
+    )
+    workflow_headers = tenuo_headers(leaf, "agent-key")
+    workflow_headers[TENUO_CHAIN_HEADER] = encode_warrant_stack([root, leaf]).encode("utf-8")
+    with _store_lock:
+        _workflow_headers_store[run_key] = workflow_headers
+        _workflow_config_store[run_key] = config
+    monkeypatch.setattr("tenuo.temporal._nexus._current_run_key", lambda: run_key)
+
+    client = FakeNexusClient()
+    input = RefundInput("ord_123", 2500)
+    await tenuo_execute_nexus_operation(client, "refund", input)
+
+    assert client.execute_call is not None
+    headers = client.execute_call[2]["headers"]
+    sent_chain = decode_warrant_stack_base64(base64.b64decode(headers[TENUO_CHAIN_HEADER]).decode("utf-8"))
+    assert [w.to_bytes() for w in sent_chain] == [root.to_bytes(), leaf.to_bytes()]
+
+    ctx = SimpleNamespace(
+        request_id="req-default",
+        service="BillingService",
+        operation="refund",
+        headers=headers,
+    )
+    verified = verify_nexus_operation(ctx, input, config, endpoint="billing-prod")
+    assert verified.to_bytes() == leaf.to_bytes()
+
+
+async def test_tenuo_execute_nexus_operation_rejects_delegated_warrant_without_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    nexus_keys: tuple[Any, Any],
+) -> None:
+    root_key, agent_key = nexus_keys
+    _root, leaf = _delegated_nexus_chain(root_key, SigningKey.generate(), agent_key)
+    run_key = "run-nexus-delegated-no-chain"
+    with _store_lock:
+        _workflow_headers_store[run_key] = tenuo_headers(leaf, "agent-key")
+        _workflow_config_store[run_key] = TenuoPluginConfig(
+            key_resolver=StaticResolver(agent_key),
+            trusted_roots=[root_key.public_key],
+        )
+    monkeypatch.setattr("tenuo.temporal._nexus._current_run_key", lambda: run_key)
+
+    client = FakeNexusClient()
+    with pytest.raises(TenuoContextError, match=TENUO_CHAIN_HEADER):
+        await tenuo_execute_nexus_operation(client, "refund", RefundInput("ord_123", 2500))
+    assert client.execute_call is None
 
 
 async def test_tenuo_nexus_operation_decorator_maps_denial_to_handler_error(

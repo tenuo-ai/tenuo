@@ -1,6 +1,6 @@
 [package]
 name = "tenuo"
-version = "0.3.2"
+version = "0.3.8"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Task-scoped authorization for AI agents: signed warrants that constrain tools and arguments, narrow on delegation, and verify offline. Rust core of Tenuo."
@@ -37,6 +37,13 @@ data-plane = []
 
 # Framework-independent Rust SDK (default-off; no extra dependencies)
 sdk = []
+# Attenuating Agent Tokens in their JWT/JWS encoding: chain verification per
+# draft-niyikiza-oauth-attenuating-agent-tokens-02 Section 8. No extra dependencies.
+aat-jws = []
+# ES256 (ECDSA using P-256 and SHA-256) for AAT and PoP JWT signatures, the
+# second algorithm Section 9.11 of the draft recommends. Adds the p256
+# dependency. An enforcement point still has to permit ES256 by name.
+aat-es256 = ["aat-jws", "dep:p256"]
 # Guarded file open. Subpath stays lexical; this feature pins a local jail
 # and opens the authorized argument through path_jail. Unix only at runtime.
 filesystem = ["sdk", "dep:path_jail"]
@@ -101,9 +108,10 @@ required-features = ["data-plane"]
 # ============================================================================
 [dependencies]
 # Cryptography
-ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
+ed25519-dalek = { version = "3.0", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
 rand = "0.10"
 sha2 = "0.11"
+p256 = { version = "0.14", default-features = false, features = ["ecdsa"], optional = true }
 subtle = "2.6"  # Constant-time comparison for secrets
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1.7"
@@ -123,7 +131,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Network handling
 ipnetwork = "0.21"
-url = "2.5"
+url = "2.5.9"
 
 # HTTP client (optional - only needed for demo binaries)
 reqwest = { version = "0.13", features = ["blocking", "json"], optional = true }
@@ -139,7 +147,7 @@ matchit = "0.9"
 smallvec = { version = "1.13", features = ["union"] }
 
 # CEL expression evaluation (optional - reduces dependencies for most users)
-cel-interpreter = { version = "0.10", optional = true }
+cel-interpreter = { package = "cel", version = "0.13", optional = true }
 
 # Caching for CEL compiled programs (optional - only with CEL)
 moka = { version = "0.12", features = ["sync"], optional = true }
@@ -171,14 +179,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 clap = { version = "4.6", features = ["derive", "env"] }
 hex = "0.4"
 pem = "3.0"
-pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
-spki = { version = "0.7", features = ["alloc", "pem"] }
-der = { version = "0.7", features = ["pem"] }
+pkcs8 = { version = "0.11", features = ["alloc", "pem"] }
+spki = { version = "0.8", features = ["alloc", "pem"] }
+der = { version = "0.8", features = ["pem"] }
 humantime = "2.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# getrandom 0.2 — required by rand_core 0.6 / ed25519-dalek via the old RNG trait stack
-getrandom = { version = "0.2", features = ["js"] }
 # getrandom 0.3 — pulled in by rand_core 0.9 on WASM targets
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 # getrandom 0.4 — pulled in by rand 0.10 / rand_core 0.10 on WASM targets
@@ -199,6 +205,16 @@ ci_group = "0.1"
 name = "holder_lifecycle_vectors"
 path = "tests/holder_lifecycle_vectors.rs"
 required-features = ["server"]
+
+[[test]]
+name = "aat_jws_vectors"
+path = "tests/aat_jws_vectors.rs"
+required-features = ["aat-jws"]
+
+[[test]]
+name = "aat_es256"
+path = "tests/aat_es256.rs"
+required-features = ["aat-es256"]
 
 [[test]]
 name = "filesystem_guard"

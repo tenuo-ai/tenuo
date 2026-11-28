@@ -233,11 +233,16 @@ echo -e "\n${GREEN}[8/9] Checking version sync...${NC}"
 
 # Extract versions (normalize Python pre-release format to match Rust)
 PYPROJECT_VER=$(grep '^version = ' tenuo-python/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | sed 's/a/-alpha./' | sed 's/b/-beta./')
+PYTHON_INIT_VER=$(grep '^__version__ = ' tenuo-python/tenuo/__init__.py | head -1 | sed 's/__version__ = "\(.*\)"/\1/' | sed 's/a/-alpha./' | sed 's/b/-beta./')
 PYTHON_CARGO_VER=$(grep '^version = ' tenuo-python/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 CORE_CARGO_VER=$(grep '^version = ' tenuo-core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 WASM_CARGO_VER=$(grep '^version = ' tenuo-wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 VERSION_MISMATCH=0
+if [ "$PYPROJECT_VER" != "$PYTHON_INIT_VER" ]; then
+    echo -e "${RED}  ✗ Version mismatch: pyproject.toml ($PYPROJECT_VER) vs tenuo.__version__ ($PYTHON_INIT_VER)${NC}"
+    VERSION_MISMATCH=1
+fi
 if [ "$PYPROJECT_VER" != "$PYTHON_CARGO_VER" ]; then
     echo -e "${RED}  ✗ Version mismatch: pyproject.toml ($PYPROJECT_VER) vs tenuo-python/Cargo.toml ($PYTHON_CARGO_VER)${NC}"
     VERSION_MISMATCH=1

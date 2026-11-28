@@ -120,21 +120,35 @@ If a warrant embeds approval gates and the tool call triggers one::
 The client must obtain ``SignedApproval`` objects from authorized approvers and
 re-submit the call with those approvals serialized into ``_meta.tenuo.approvals``.
 
-JSON-RPC error codes
---------------------
+Denial codes
+------------
 - ``-32602`` — Invalid params (missing required extraction field)
 - ``-32001`` — Access denied (constraint violation, expired, bad signature …)
 - ``-32002`` — Approval required (approval gate triggered, re-submit with approvals)
+
+``to_jsonrpc_error()`` renders these as a JSON-RPC error. The FastMCP and
+``MCPServer`` middlewares instead return a tool result with ``isError`` set and
+the code in ``structuredContent.tenuo.code``.
+
+Replay
+------
+Without ``nonce_store`` (or ``enable_default_nonce_store()``) an identical
+envelope is accepted again until its PoP window closes. With one, two
+legitimate identical calls in the same 30-second PoP window share a signature
+and the second is rejected.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from .._pop_canonicalize import strip_none_values
+from .._arg_types import argument_type_mismatches
+from .._pop_canonicalize import constraint_view
 from ..meta import _capture_arguments
 from ..approval import ApprovalRequired
 from ..exceptions import (
@@ -209,6 +223,121 @@ def _access_denial_reason(exc: BaseException) -> str:
     return base
 
 
+_INDEX_SEGMENT = re.compile(r"\+?[0-9]+")
+
+
+def _segment_reads(segment: str, key: Any, in_list: bool) -> bool:
+    """Whether a config path segment reads ``key`` the way the core does.
+
+    The core treats ``*`` as a list wildcard, an integer as a list index,
+    and anything else as an object field.
+    """
+    if in_list:
+        return segment == "*" or (_INDEX_SEGMENT.fullmatch(segment) is not None and int(segment) == key)
+    return segment != "*" and _INDEX_SEGMENT.fullmatch(segment) is None and segment == key
+
+
+def _unread_arguments(args: Mapping[str, Any], rule_paths: List[List[str]]) -> List[Tuple[str, Any]]:
+    """Argument values no config rule reads, as ``(dotted path, value)`` pairs.
+
+    A rule reads the whole value at its path, nested keys included. A value
+    on the way to a rule that is not a container (``query: "x"`` for a rule
+    on ``query.table``) is unread too.
+    """
+    unread: List[Tuple[str, Any]] = []
+
+    def walk(node: Any, prefix: List[str], candidates: List[List[str]]) -> bool:
+        """Walk a container and report whether any rule reached its value."""
+        read_any = False
+        in_list = isinstance(node, list)
+        items = enumerate(node) if in_list else node.items()
+        for key, value in items:
+            path = prefix + [str(key)]
+            matched = [rest[1:] for rest in candidates if _segment_reads(rest[0], key, in_list)]
+            if any(not rest for rest in matched):
+                read_any = True
+                continue
+            if matched and isinstance(value, (Mapping, list)):
+                unread_before = len(unread)
+                child_read = walk(value, path, matched)
+                read_any = read_any or child_read
+                # An empty container (or a chain of empty containers) never
+                # reaches the configured leaf and is therefore still unread.
+                if not child_read and len(unread) == unread_before:
+                    unread.append((".".join(path), value))
+            else:
+                unread.append((".".join(path), value))
+        return read_any
+
+    walk(args, [], [p for p in rule_paths if p])
+    return unread
+
+
+def _apply_default(arguments: Dict[str, Any], path: List[str], value: Any) -> bool:
+    """Set a config default at an absent ``path`` so the tool receives it.
+
+    Returns False when the path cannot be built (a list index, or a non-object
+    on the way), True when the value is present or was set.
+    """
+    if any(seg == "*" or _INDEX_SEGMENT.fullmatch(seg) for seg in path):
+        return False
+    node: Any = arguments
+    for seg in path[:-1]:
+        if not isinstance(node, dict):
+            return False
+        node = node.setdefault(seg, {})
+    if not isinstance(node, dict):
+        return False
+    leaf = path[-1]
+    if leaf in node:
+        return node[leaf] == value
+    node[leaf] = copy.deepcopy(value)
+    return True
+
+
+def _closed_world_config_view(
+    config: Any,
+    tool_name: str,
+    args: Dict[str, Any],
+    extracted: Dict[str, Any],
+    defaulted_fields: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Make ``CompiledMcpConfig`` extraction closed-world, like raw mode.
+
+    Returns ``(clean_arguments, constraints)``. Arguments no rule reads are
+    added to the constraints under their dotted path, so the warrant decides
+    them as unknown fields (denied unless it allows unknown fields). A config
+    default the core applied for a missing argument is written into
+    ``clean_arguments``, so the tool runs with the value that was checked
+    instead of its own default.
+
+    Raises ``ValueError`` when that cannot be done safely.
+    """
+    tool_rules = getattr(config, "tool_rules", None)
+    rules = tool_rules(tool_name) if callable(tool_rules) else None
+    if not isinstance(rules, list):
+        raise ValueError("Extraction config does not list its rules for this tool; refusing to check it open-world")
+    body_rules = [r for r in rules if isinstance(r, Mapping) and r.get("source") == "body"]
+    rule_paths = [str(r.get("path", "")).split(".") for r in body_rules]
+
+    constraints = dict(extracted)
+    for dotted, value in _unread_arguments(args, rule_paths):
+        if dotted in constraints:
+            raise ValueError(f"Argument '{dotted}' is not read by the extraction config but has the name of a constraint")
+        constraints[dotted] = value
+
+    clean_arguments = copy.deepcopy(args)
+    defaulted = set(defaulted_fields)
+    for rule in body_rules:
+        field = str(rule.get("field", ""))
+        if field not in defaulted:
+            continue
+        path = str(rule.get("path", "")).split(".")
+        if not _apply_default(clean_arguments, path, rule.get("default")):
+            raise ValueError(f"Config default for '{rule.get('path')}' cannot be passed to the tool")
+    return clean_arguments, constraints
+
+
 # ---------------------------------------------------------------------------
 # Result and exception types
 # ---------------------------------------------------------------------------
@@ -263,6 +392,18 @@ class MCPVerificationResult:
 
     error_type: Optional[str] = field(default=None)
     """PEP ``error_type`` (``invalid_pop``, ``constraint_violation``, …)."""
+
+    observed: bool = field(default=False)
+    """Whether observe mode allowed this otherwise denied call to continue."""
+
+    constraint_violated: Optional[str] = field(default=None)
+    """Constraint field reported by the shared enforcement result."""
+
+    verified_pop: Optional[bytes] = field(default=None, repr=False)
+    """Verified proof bytes retained for receipt emission."""
+
+    pop_auth_args: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    """Canonical arguments covered by the proof, retained for receipts."""
 
     @property
     def is_approval_required(self) -> bool:
@@ -398,6 +539,8 @@ def _mcp_result_from_enforcement(
     error_type = getattr(enforcement, "error_type", None) or ""
     meta = getattr(enforcement, "approval_metadata", None) or {}
     reason = getattr(enforcement, "denial_reason", None) or "Authorization denied"
+    observed = bool(getattr(enforcement, "observed", False))
+    allowed = bool(getattr(enforcement, "allowed", False))
     if error_type == "invalid_pop":
         reason = (
             f"Access denied: {reason} PoP covers the core's reading of the "
@@ -412,26 +555,36 @@ def _mcp_result_from_enforcement(
         )
     if error_type in ("insufficient_approvals", "approval_required", "approval_gate_misconfigured"):
         return MCPVerificationResult(
-            allowed=False,
+            allowed=allowed,
             tool=tool_name,
             clean_arguments=clean_arguments,
             constraints=constraints,
             warrant_id=warrant_id,
             denial_reason=reason,
-            jsonrpc_error_code=-32002,
+            # An observed call proceeds, so it carries no JSON-RPC error code:
+            # callers branch on is_approval_required before checking allowed.
+            jsonrpc_error_code=None if allowed else -32002,
             request_hash=meta.get("request_hash") or getattr(enforcement, "request_hash", None),
             approval_metadata=meta or None,
             error_type=error_type or None,
+            observed=observed,
+            constraint_violated=getattr(enforcement, "constraint_violated", None),
+            verified_pop=getattr(enforcement, "verified_pop", None),
+            pop_auth_args=getattr(enforcement, "pop_auth_args", None),
         )
     return MCPVerificationResult(
-        allowed=False,
+        allowed=allowed,
         tool=tool_name,
         clean_arguments=clean_arguments,
         constraints=constraints,
         warrant_id=warrant_id,
         denial_reason=reason,
-        jsonrpc_error_code=-32001,
+        jsonrpc_error_code=None if allowed else -32001,
         error_type=error_type or None,
+        observed=observed,
+        constraint_violated=getattr(enforcement, "constraint_violated", None),
+        verified_pop=getattr(enforcement, "verified_pop", None),
+        pop_auth_args=getattr(enforcement, "pop_auth_args", None),
     )
 
 
@@ -503,6 +656,9 @@ class MCPVerifier:
                 extraction.  When provided, argument field names are mapped to
                 warrant constraint names according to the YAML config (type
                 coercion, defaults, and nested-path extraction all apply).
+                Arguments no rule reads are checked as unknown fields under
+                their dotted path, and a default the config applied is passed
+                to the tool in ``clean_arguments``.
                 When omitted, raw tool arguments are used directly as
                 constraints — the field name must then match the warrant
                 constraint name exactly.
@@ -542,6 +698,7 @@ class MCPVerifier:
         tool_name: str,
         arguments: Optional[Dict[str, Any]],
         meta: Any = None,
+        input_schema: Optional[Mapping[str, Any]] = None,
     ) -> MCPVerificationResult:
         """Verify a tool call against the embedded Tenuo warrant.
 
@@ -569,6 +726,12 @@ class MCPVerifier:
                 model — 1.x supplies a model and 2.x a dict. It may carry a
                 ``tenuo`` key with the warrant and PoP signature; when absent,
                 the verifier checks ``arguments._tenuo``.
+
+            input_schema: The tool's input JSON Schema, when the server will
+                validate ``clean_arguments`` against it before running the
+                tool. An argument whose JSON type differs from the schema is
+                denied with ``-32602``, because lenient validation would
+                convert it (``"off"`` to ``False``) after this check.
 
         Returns:
             :class:`MCPVerificationResult` with ``allowed=True`` on success,
@@ -740,10 +903,27 @@ class MCPVerifier:
                     denial_reason=str(exc),
                     jsonrpc_error_code=-32602,
                 ))
-            clean_arguments = dict(args)
-            # Strip None from constraints too: extraction may propagate None
-            # defaults, which the Rust canonicalizer rejects.
-            constraints = strip_none_values(dict(extraction.constraints))
+            # Closed-world, like raw mode: arguments no rule reads are checked
+            # as unknown fields, and the tool receives the config defaults
+            # that were checked.
+            try:
+                clean_arguments, constraints = _closed_world_config_view(
+                    self._config,
+                    tool_name,
+                    args,
+                    dict(extraction.constraints),
+                    list(extraction.defaulted_fields),
+                )
+            except Exception as exc:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False,
+                    tool=tool_name,
+                    clean_arguments=dict(args),
+                    constraints={},
+                    denial_reason=str(exc),
+                    jsonrpc_error_code=-32602,
+                    error_type="invalid_arguments",
+                ))
 
             # Note: PoP covers the raw wire args (pop_args), not the extracted
             # constraint view. That means every wire arg is covered by the
@@ -752,11 +932,23 @@ class MCPVerifier:
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
         else:
-            # Raw mode: arguments are the constraints. Strip None there too.
+            # Raw mode: arguments are the constraints.
             clean_arguments = dict(args)
-            constraints = strip_none_values(dict(args))
+            constraints = dict(args)
             warrant_b64 = tenuo_envelope.get("warrant")
             signature_b64 = tenuo_envelope.get("signature")
+
+        if input_schema is not None:
+            mismatched = argument_type_mismatches(input_schema, clean_arguments)
+            if mismatched:
+                return _emit_and_return(MCPVerificationResult(
+                    allowed=False, tool=tool_name, clean_arguments={}, constraints={},
+                    denial_reason=(
+                        "Argument type does not match the tool schema: "
+                        + ", ".join(mismatched)
+                    ),
+                    jsonrpc_error_code=-32602, error_type="invalid_arguments",
+                ))
 
         # ------------------------------------------------------------------
         # Step 2: handle missing warrant
@@ -868,6 +1060,7 @@ class MCPVerifier:
 
         warrant_id: Optional[str] = getattr(warrant, "id", None)
         presented[:] = list(_chain_parents or []) + [warrant]
+        constraints = constraint_view(constraints, tool_name, presented)
 
         pop_sig: Optional[bytes] = None
         if signature_b64:
@@ -952,7 +1145,38 @@ class MCPVerifier:
             if _ns is None:
                 from ..nonce import get_default_nonce_store as _get_ns
                 _ns = _get_ns()
-            if _ns is not None and pop_sig is not None and not _ns.check_and_record(pop_sig):
+            replayed = True
+            try:
+                from ..nonce import _admit_verified_pop
+
+                replayed = _ns is not None and pop_sig is not None and not _admit_verified_pop(_ns, pop_sig, self._authorizer)
+            finally:
+                # No action runs on replay denial or a nonce backend failure.
+                # Release only this attempt's reservation so a fresh PoP can
+                # retry the approval, and do not publish an abandoned key.
+                if replayed and not enforcement.observed:
+                    from ..consumption import _set_current_idempotency_key
+
+                    _set_current_idempotency_key(None)
+                    if enforcement.approval_reservation is not None:
+                        enforcement.approval_reservation.release()
+
+            if enforcement.observed:
+                # Observe mode lets the call through; still report a replay
+                # alongside the denial it would have added.
+                if replayed:
+                    logger.warning("OBSERVE: would deny %s (pop_replay)", tool_name)
+                result = _mcp_result_from_enforcement(
+                    enforcement,
+                    tool_name=tool_name,
+                    clean_arguments=clean_arguments,
+                    constraints=constraints,
+                    warrant_id=warrant_id,
+                )
+                latency_us = (time.perf_counter_ns() - start_ns) // 1000
+                return _emit_and_return(result, chain_result=chain_result, latency_us=latency_us)
+
+            if replayed:
                 logger.warning(
                     "PoP replay rejected for '%s' (warrant=%s)",
                     tool_name,

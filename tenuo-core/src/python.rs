@@ -35,7 +35,9 @@ use crate::warrant::{
 use crate::wire;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PySequence, PyTuple};
+use pyo3::types::{
+    PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySequence, PyString, PyTuple,
+};
 use pyo3::IntoPyObjectExt;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -480,6 +482,16 @@ pub(crate) fn to_py_err(e: crate::error::Error) -> PyErr {
     })
 }
 
+/// Seconds to a chrono tolerance without panicking: chrono's range is
+/// narrower than i64 seconds, so out-of-range values saturate.
+fn clock_tolerance_from_secs(seconds: i64) -> chrono::Duration {
+    chrono::Duration::try_seconds(seconds).unwrap_or(if seconds < 0 {
+        chrono::Duration::zero()
+    } else {
+        chrono::Duration::MAX
+    })
+}
+
 fn py_validation_err(message: impl Into<String>) -> PyErr {
     to_py_err(crate::error::Error::Validation(message.into()))
 }
@@ -523,10 +535,8 @@ impl PyPattern {
     ///
     /// Raises:
     ///     MonotonicityError: If child would expand capabilities.
-    fn validate_attenuation(&self, child: &PyPattern) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Pattern(self.inner.clone()), child)
     }
 
     /// Check if a value matches this glob pattern.
@@ -565,8 +575,11 @@ impl PyPattern {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Pattern('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Pattern({})", value))
     }
 
     #[getter]
@@ -585,10 +598,10 @@ pub struct PyExact {
 #[pymethods]
 impl PyExact {
     #[new]
-    fn new(value: &str) -> Self {
-        Self {
-            inner: Exact::new(value),
-        }
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Exact::new(py_to_literal_value(value)?),
+        })
     }
 
     /// Check if a value matches this exact constraint.
@@ -596,7 +609,7 @@ impl PyExact {
     /// This is the runtime check used for Tier 1 authorization.
     ///
     /// Args:
-    ///     value: Value to check (will be converted to string for comparison)
+    ///     value: Typed value to check, without string coercion.
     ///
     /// Returns:
     ///     True if value matches exactly, False otherwise
@@ -607,8 +620,8 @@ impl PyExact {
     ///     True
     ///     >>> e.matches("staging")
     ///     False
-    fn matches(&self, value: &str) -> bool {
-        self.inner.value.as_str() == Some(value)
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -617,8 +630,17 @@ impl PyExact {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Exact('{}')", self.inner.value)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = constraint_value_to_py(py, &self.inner.value)?;
+        Ok(format!(
+            "Exact({})",
+            value.bind(py).repr()?.extract::<String>()?
+        ))
+    }
+
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Exact(self.inner.clone()), child)
     }
 
     #[getter]
@@ -637,19 +659,21 @@ pub struct PyOneOf {
 #[pymethods]
 impl PyOneOf {
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: OneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_literal_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: OneOf::from_values(values),
+        })
     }
 
-    /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
     /// A child OneOf is valid if its values are a subset of parent's values.
-    fn validate_attenuation(&self, child: &PyOneOf) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::OneOf(self.inner.clone()), child)
     }
 
     /// Check if a value is in the allowed set.
@@ -668,9 +692,8 @@ impl PyOneOf {
     ///     True
     ///     >>> o.contains("development")
     ///     False
-    fn contains(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        self.inner.contains(&cv)
+    fn contains(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -679,8 +702,11 @@ impl PyOneOf {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("OneOf({:?})", self.inner.values)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "OneOf({})",
+            self.values()?.bind(py).repr()?.extract::<String>()?
+        ))
     }
 
     #[getter]
@@ -705,22 +731,25 @@ pub struct PyNotOneOf {
 #[pymethods]
 impl PyNotOneOf {
     #[new]
-    fn new(values: Vec<String>) -> Self {
-        Self {
-            inner: NotOneOf::new(values),
-        }
+    fn new(values: Vec<Bound<'_, PyAny>>) -> PyResult<Self> {
+        let values = values
+            .iter()
+            .map(py_to_literal_value)
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: NotOneOf::from_values(values),
+        })
     }
 
-    /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
-    /// A child NotOneOf is valid if it excludes at least everything parent excludes.
-    fn validate_attenuation(&self, child: &PyNotOneOf) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    /// Within the parent's judged value kinds, a child must exclude at least
+    /// everything the parent excludes. Adding a new judged kind is forbidden.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::NotOneOf(self.inner.clone()), child)
     }
 
-    /// Check if a value is allowed (not in the excluded set).
+    /// Check whether a typed value passes the core exclusion constraint.
     ///
     /// This is the runtime check used for Tier 1 authorization.
     ///
@@ -728,7 +757,8 @@ impl PyNotOneOf {
     ///     value: Value to check
     ///
     /// Returns:
-    ///     True if value is NOT in the excluded set, False if it is excluded
+    ///     True if the value's kind is covered by the exclusion list and the
+    ///     value is not excluded. An empty list covers every supported kind.
     ///
     /// Example:
     ///     >>> n = NotOneOf(["admin", "root"])
@@ -736,9 +766,8 @@ impl PyNotOneOf {
     ///     True
     ///     >>> n.allows("admin")
     ///     False
-    fn allows(&self, value: &str) -> bool {
-        let cv = ConstraintValue::String(value.to_string());
-        !self.inner.excluded.contains(&cv)
+    fn allows(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.satisfies(value)
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -759,8 +788,12 @@ impl PyNotOneOf {
         })
     }
 
-    fn __repr__(&self) -> String {
-        format!("NotOneOf({:?})", self.inner.excluded)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let values = self.excluded()?.into_py_any(py)?;
+        Ok(format!(
+            "NotOneOf({})",
+            values.bind(py).repr()?.extract::<String>()?
+        ))
     }
 }
 
@@ -791,10 +824,8 @@ impl PyContains {
     /// Validate that another Contains is a valid attenuation (narrowing) of this one.
     ///
     /// A child Contains is valid if it requires at least everything parent requires.
-    fn validate_attenuation(&self, child: &PyContains) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Contains(self.inner.clone()), child)
     }
 
     /// Check if a list contains all required values.
@@ -876,10 +907,8 @@ impl PySubset {
     /// Validate that another Subset is a valid attenuation (narrowing) of this one.
     ///
     /// A child Subset is valid if its allowed values are a subset of parent's.
-    fn validate_attenuation(&self, child: &PySubset) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Subset(self.inner.clone()), child)
     }
 
     /// Check if all values in a list are within the allowed set.
@@ -958,13 +987,11 @@ impl PyAll {
         })
     }
 
-    /// Validate that another All is a valid attenuation (narrowing) of this one.
+    /// Validate a child constraint using the core's generic narrowing rules.
     ///
     /// A child All is valid if it has all parent's constraints plus optionally more.
-    fn validate_attenuation(&self, child: &PyAll) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::All(self.inner.clone()), child)
     }
 
     /// Check if a value matches ALL constraints in this set.
@@ -987,8 +1014,19 @@ impl PyAll {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        "All(...)".to_string()
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("All([{}])", children.join(", ")))
     }
 }
 
@@ -1036,8 +1074,24 @@ impl PyAnyOf {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        "AnyOf(...)".to_string()
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Any(self.inner.clone()), child)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let children = self
+            .inner
+            .constraints
+            .iter()
+            .map(|constraint| {
+                constraint_to_py(py, constraint)?
+                    .bind(py)
+                    .repr()?
+                    .extract::<String>()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(format!("AnyOf([{}])", children.join(", ")))
     }
 }
 
@@ -1081,8 +1135,17 @@ impl PyNot {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        "Not(...)".to_string()
+    /// Validate narrowing using the core's generic constraint rules.
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Not(self.inner.clone()), child)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let child = constraint_to_py(py, &self.inner.constraint)?;
+        Ok(format!(
+            "Not({})",
+            child.bind(py).repr()?.extract::<String>()?
+        ))
     }
 }
 
@@ -1120,10 +1183,8 @@ impl PyRange {
     /// Validate that another Range is a valid attenuation (narrowing) of this one.
     ///
     /// A child Range is valid if its bounds are within parent's bounds.
-    fn validate_attenuation(&self, child: &PyRange) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Range(self.inner.clone()), child)
     }
 
     /// Check if a value is within this range.
@@ -1153,7 +1214,10 @@ impl PyRange {
     }
 
     fn __repr__(&self) -> String {
-        format!("Range(min={:?}, max={:?})", self.inner.min, self.inner.max)
+        format!(
+            "Range(min={:?}, max={:?}, min_inclusive={}, max_inclusive={})",
+            self.inner.min, self.inner.max, self.inner.min_inclusive, self.inner.max_inclusive
+        )
     }
 
     #[getter]
@@ -1220,14 +1284,15 @@ impl PyCidr {
     /// Validate that another Cidr is a valid attenuation (narrowing) of this one.
     ///
     /// A child Cidr is valid if its network is a subnet of parent's network.
-    fn validate_attenuation(&self, child: &PyCidr) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Cidr(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Cidr('{}')", self.inner.cidr_string)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.cidr_string)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Cidr({})", value))
     }
 
     fn __str__(&self) -> String {
@@ -1306,14 +1371,15 @@ impl PyUrlPattern {
     /// Validate that another UrlPattern is a valid attenuation (narrowing) of this one.
     ///
     /// A child UrlPattern is valid if it matches a subset of URLs that parent matches.
-    fn validate_attenuation(&self, child: &PyUrlPattern) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::UrlPattern(self.inner.clone()), child)
     }
 
-    fn __repr__(&self) -> String {
-        format!("UrlPattern('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("UrlPattern({})", value))
     }
 
     fn __str__(&self) -> String {
@@ -1370,10 +1436,8 @@ impl PyCel {
     /// Validate that another CEL is a valid attenuation (narrowing) of this one.
     ///
     /// CEL attenuation is conservative: requires exact match or logical AND extension.
-    fn validate_attenuation(&self, child: &PyCel) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Cel(self.inner.clone()), child)
     }
 
     /// Check if a value matches this CEL expression.
@@ -1401,8 +1465,11 @@ impl PyCel {
         self.matches(value)
     }
 
-    fn __repr__(&self) -> String {
-        format!("CEL('{}')", self.inner.expression)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.expression)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("CEL({})", value))
     }
 
     #[getter]
@@ -1429,10 +1496,8 @@ impl PyRegex {
     /// Validate that another Regex is a valid attenuation (narrowing) of this one.
     ///
     /// Regex attenuation is conservative: requires exact pattern match.
-    fn validate_attenuation(&self, child: &PyRegex) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Regex(self.inner.clone()), child)
     }
 
     /// Check if a value matches this regex pattern.
@@ -1463,8 +1528,11 @@ impl PyRegex {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        format!("Regex('{}')", self.inner.pattern)
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = PyString::new(py, &self.inner.pattern)
+            .repr()?
+            .extract::<String>()?;
+        Ok(format!("Regex({})", value))
     }
 
     #[getter]
@@ -1631,12 +1699,21 @@ impl PySubpath {
     /// Alias for contains() for consistency with other constraints.
     ///
     /// Args:
-    ///     path: The path to check.
+    ///     path: The path string or list of path strings to check.
     ///
     /// Returns:
-    ///     True if the path is safely contained, False otherwise.
-    fn matches(&self, path: &str) -> PyResult<bool> {
-        self.contains(path)
+    ///     True if the path(s) are safely contained, False otherwise.
+    fn matches(&self, path: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(s) = path.extract::<String>() {
+            return self.contains(&s);
+        }
+        if let Ok(list) = path.extract::<Vec<String>>() {
+            let cv = ConstraintValue::List(list.into_iter().map(ConstraintValue::String).collect());
+            return self.inner.matches(&cv).map_err(to_py_err);
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "path must be a string or list of strings",
+        ))
     }
 
     /// Unified constraint check - returns True if value satisfies this constraint.
@@ -1645,14 +1722,16 @@ impl PySubpath {
         self.inner.matches(&cv).map_err(to_py_err)
     }
 
-    fn __repr__(&self) -> String {
-        // Python-style repr with quoted string
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let root = PyString::new(py, &self.inner.root)
+            .repr()?
+            .extract::<String>()?;
         if self.inner.case_sensitive && self.inner.allow_equal {
-            format!("Subpath('{}')", self.inner.root)
+            Ok(format!("Subpath({})", root))
         } else {
-            format!(
-                "Subpath('{}', case_sensitive={}, allow_equal={})",
-                self.inner.root,
+            Ok(format!(
+                "Subpath({}, case_sensitive={}, allow_equal={})",
+                root,
                 if self.inner.case_sensitive {
                     "True"
                 } else {
@@ -1663,7 +1742,7 @@ impl PySubpath {
                 } else {
                     "False"
                 }
-            )
+            ))
         }
     }
 
@@ -1707,10 +1786,8 @@ impl PySubpath {
     ///     >>> parent = Subpath("/data/reports")
     ///     >>> child = Subpath("/data")
     ///     >>> parent.validate_attenuation(child)  # Raises MonotonicityError
-    fn validate_attenuation(&self, child: &PySubpath) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Subpath(self.inner.clone()), child)
     }
 }
 
@@ -1749,7 +1826,7 @@ impl PyUrlSafe {
     ///     allow_domains: If set, only these domains are allowed.
     ///         Supports wildcards: "*.example.com"
     ///     allow_ports: If set, only these ports are allowed.
-    ///     block_private: Block RFC1918 private IPs. Default: True.
+    ///     block_private: Block private IPs (RFC 1918, RFC 6598, fc00::/7, ...). Default: True.
     ///     block_loopback: Block loopback (127.x, ::1). Default: True.
     ///     block_metadata: Block cloud metadata endpoints. Default: True.
     ///     block_reserved: Block reserved IP ranges. Default: True.
@@ -1785,20 +1862,20 @@ impl PyUrlSafe {
         block_metadata: bool,
         block_reserved: bool,
         block_internal_tlds: bool,
-    ) -> Self {
-        Self {
-            inner: UrlSafe {
-                schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
-                allow_domains,
-                deny_domains,
-                allow_ports,
-                block_private,
-                block_loopback,
-                block_metadata,
-                block_reserved,
-                block_internal_tlds,
-            },
-        }
+    ) -> PyResult<Self> {
+        let inner = UrlSafe {
+            schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
+            allow_domains,
+            deny_domains,
+            allow_ports,
+            block_private,
+            block_loopback,
+            block_metadata,
+            block_reserved,
+            block_internal_tlds,
+        };
+        inner.validate().map_err(to_py_err)?;
+        Ok(Self { inner })
     }
 
     /// Check if a URL is safe to fetch.
@@ -1807,7 +1884,9 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. Hostname DNS results must also be validated and pinned
+    ///     by the HTTP execution layer to prevent DNS rebinding.
     fn is_safe(&self, url: &str) -> PyResult<bool> {
         self.inner.is_safe(url).map_err(to_py_err)
     }
@@ -1818,7 +1897,8 @@ impl PyUrlSafe {
     ///     url: URL string to check.
     ///
     /// Returns:
-    ///     True if the URL passes all SSRF checks, False otherwise.
+    ///     True if the URL passes stateless URL and literal-IP checks, False
+    ///     otherwise. See ``is_safe`` for the DNS-rebinding limitation.
     fn matches(&self, url: &str) -> PyResult<bool> {
         self.is_safe(url)
     }
@@ -1944,19 +2024,39 @@ impl PyUrlSafe {
     ///     >>> parent = UrlSafe(allow_domains=["*.example.com"])
     ///     >>> child = UrlSafe(allow_domains=["api.example.com"])
     ///     >>> parent.validate_attenuation(child)  # OK
-    fn validate_attenuation(&self, child: &PyUrlSafe) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::UrlSafe(self.inner.clone()), child)
     }
 }
 
-/// Shell command safety constraint (Rust core).
+/// Python `repr` of a string, using single quotes. Binary names in `Shlex`
+/// reprs are ordinary path text; control characters are escaped so the result
+/// stays a single line.
+fn python_single_quoted(value: &str) -> String {
+    let mut out = String::from("'");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if (ch as u32) < 0x20 || ch == '\u{7f}' => {
+                out.push_str(&format!("\\x{:02x}", u32::from(ch)));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Shell command safety constraint.
 ///
-/// Validates that a command uses only allowed binaries and contains no shell
-/// metacharacters. The Rust implementation is a conservative approximation
-/// (whitespace tokenization, no quoting). Python's ``Shlex`` class provides
-/// full POSIX shlex parsing for annotated ``@guard`` constraints.
+/// One POSIX tokenizer for every SDK. Quoted operators are literal arguments.
+/// ``$`` and backticks are rejected anywhere in the command, including inside
+/// double quotes. Unquoted operator runs (``|``, ``&&``, ``;``, ``<>``, …) are
+/// rejected.
 ///
 /// Example (Python):
 ///
@@ -1964,6 +2064,7 @@ impl PyUrlSafe {
 /// shlex = Shlex(allow=["npm", "docker"])
 /// shlex.matches("npm install express")   # True
 /// shlex.matches("npm install; rm -rf /") # False (semicolon)
+/// shlex.matches('npm install "a;b"')     # True (quoted semicolon)
 /// shlex.matches("bash -c 'evil'")        # False (not in allowlist)
 /// ```
 #[pyclass(name = "Shlex")]
@@ -1990,7 +2091,7 @@ impl PyShlex {
     #[pyo3(signature = (allow))]
     fn new(allow: Vec<String>) -> PyResult<Self> {
         if allow.is_empty() {
-            return Err(py_validation_err(
+            return Err(PyValueError::new_err(
                 "Shlex requires at least one allowed binary",
             ));
         }
@@ -1999,38 +2100,96 @@ impl PyShlex {
         })
     }
 
-    /// Check if a command string is safe to execute (conservative approximation).
+    /// Check if a command string is safe to execute.
     ///
-    /// Rejects any command containing shell metacharacters (|, &, ;, $, `, etc.),
-    /// then checks the first whitespace-delimited token against the allowlist.
+    /// Non-strings return False. Parse errors, control characters, ``$``,
+    /// backticks, and unquoted operators return False.
     ///
     /// Args:
     ///     command: Shell command string to validate.
     ///
     /// Returns:
-    ///     True if the command passes the conservative check, False otherwise.
-    fn matches(&self, command: &str) -> PyResult<bool> {
-        let cv = ConstraintValue::String(command.to_string());
+    ///     True if the command is one allowlisted binary with literal arguments.
+    fn matches(&self, command: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let Ok(command) = command.extract::<String>() else {
+            return Ok(false);
+        };
+        let cv = ConstraintValue::String(command);
         self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// The core's decision for `command`.
+    ///
+    /// Returns a dict with `allowed`, `reason`, `tokens`, `operators`,
+    /// `expansion`, `controls`, and `binary_allowed`. A non-string is not
+    /// allowed. Explanations should use this instead of a second parser.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        command: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        let Ok(command) = command.extract::<String>() else {
+            dict.set_item("allowed", false)?;
+            dict.set_item("reason", "value is not a string")?;
+            dict.set_item("tokens", Vec::<String>::new())?;
+            dict.set_item("operators", Vec::<String>::new())?;
+            dict.set_item("expansion", Vec::<String>::new())?;
+            dict.set_item("controls", Vec::<String>::new())?;
+            dict.set_item("binary_allowed", false)?;
+            return Ok(dict);
+        };
+        let report = crate::shell_words::check(&self.inner.allow, &command);
+        dict.set_item("allowed", report.allowed)?;
+        dict.set_item("reason", &report.reason)?;
+        dict.set_item("tokens", report.tokens)?;
+        dict.set_item("operators", report.operators)?;
+        dict.set_item("expansion", report.expansion)?;
+        dict.set_item("controls", report.controls)?;
+        dict.set_item("binary_allowed", report.binary_allowed)?;
+        Ok(dict)
+    }
+
+    /// Split a command the way [`matches`](Self::matches) does.
+    ///
+    /// Raises:
+    ///     ValueError: Unbalanced quotes or a trailing backslash.
+    #[staticmethod]
+    fn tokenize(command: &str) -> PyResult<Vec<String>> {
+        crate::shell_words::tokenize(command)
+            .map(|tokens| tokens.into_iter().map(|token| token.text).collect())
+            .map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
     /// Unified constraint check.
     fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let cv = py_to_constraint_value(value)?;
-        self.inner.matches(&cv).map_err(to_py_err)
+        self.matches(value)
     }
 
     fn __repr__(&self) -> String {
-        format!("Shlex(allow={:?})", self.inner.allow)
+        let mut allow = self.inner.allow.clone();
+        allow.sort();
+        let parts: Vec<String> = allow
+            .iter()
+            .map(|item| python_single_quoted(item))
+            .collect();
+        format!("Shlex(allow=[{}])", parts.join(", "))
     }
 
     fn __str__(&self) -> String {
         self.__repr__()
     }
 
-    /// Allowed binaries.
+    /// Allowed binaries, in the order they were given.
     #[getter]
     fn allow(&self) -> Vec<String> {
+        self.inner.allow.clone()
+    }
+
+    /// Allowed binaries. Same list as ``allow``, kept for callers that read
+    /// the previous Python attribute.
+    #[getter]
+    fn allowed_bins(&self) -> Vec<String> {
         self.inner.allow.clone()
     }
 
@@ -2041,10 +2200,8 @@ impl PyShlex {
     ///
     /// Raises:
     ///     MonotonicityError: If child would expand capabilities.
-    fn validate_attenuation(&self, child: &PyShlex) -> PyResult<()> {
-        self.inner
-            .validate_attenuation(&child.inner)
-            .map_err(to_py_err)
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        validate_child_attenuation(Constraint::Shlex(self.inner.clone()), child)
     }
 }
 
@@ -2303,6 +2460,24 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<Py<PyAn
     }
 }
 
+/// Validate constraint narrowing without issuing or verifying a warrant.
+///
+/// Returns None when Rust can establish that child narrows or equals parent;
+/// otherwise raises the core's typed exception. Checking is conservative:
+/// rejection can mean that containment cannot be established. Signatures,
+/// trusted roots, expiry, revocation, approvals, and PoP are not checked here.
+/// Actual delegation and authorization must still verify the complete warrant.
+#[pyfunction(name = "validate_attenuation")]
+fn py_validate_attenuation(parent: &Bound<'_, PyAny>, child: &Bound<'_, PyAny>) -> PyResult<()> {
+    validate_child_attenuation(py_to_constraint(parent)?, child)
+}
+
+fn validate_child_attenuation(parent: Constraint, child: &Bound<'_, PyAny>) -> PyResult<()> {
+    parent
+        .validate_attenuation(&py_to_constraint(child)?)
+        .map_err(to_py_err)
+}
+
 /// Convert a Python constraint object to a Rust Constraint.
 ///
 /// Uses `downcast` + `borrow()` rather than `extract()` so constraint instances
@@ -2399,6 +2574,37 @@ fn py_dict_to_constraint_set(
 }
 
 /// Convert a Python value to a ConstraintValue.
+/// Convert a policy literal for `Exact`, `OneOf`, or `NotOneOf`.
+///
+/// Binary values have no literal form. Without this check a `bytes` object
+/// would be read as a sequence and stored as a list of integers.
+fn py_to_literal_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
+    reject_binary_literal(obj)?;
+    py_to_constraint_value(obj)
+}
+
+fn reject_binary_literal(obj: &Bound<'_, PyAny>) -> PyResult<()> {
+    if obj.is_instance_of::<PyBytes>() || obj.is_instance_of::<PyByteArray>() {
+        return Err(py_validation_err(
+            "value must be str, int, float, bool, list, dict, or None",
+        ));
+    }
+    if let Ok(dict) = obj.cast::<PyDict>() {
+        for (_, value) in dict.iter() {
+            reject_binary_literal(&value)?;
+        }
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        for item in list.iter() {
+            reject_binary_literal(&item)?;
+        }
+    } else if let Ok(tuple) = obj.cast::<PyTuple>() {
+        for item in tuple.iter() {
+            reject_binary_literal(&item)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     // Extraction order matters for canonicalization parity with the Rust
     // core: Python ``bool`` inherits from ``int`` (``True == 1``), so
@@ -2429,10 +2635,13 @@ pub(crate) fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<Constra
         Ok(ConstraintValue::String(s))
     } else if let Ok(b) = obj.extract::<bool>() {
         Ok(ConstraintValue::Boolean(b))
-    } else if let Ok(i) = obj.extract::<i64>() {
+    } else if obj.cast::<PyInt>().is_ok() {
+        let i = obj.extract::<i64>().map_err(|_| {
+            py_validation_err("integer argument is outside the signed 64-bit range")
+        })?;
         Ok(ConstraintValue::Integer(i))
-    } else if let Ok(f) = obj.extract::<f64>() {
-        Ok(ConstraintValue::Float(f))
+    } else if obj.cast::<PyFloat>().is_ok() {
+        Ok(ConstraintValue::Float(obj.extract::<f64>()?))
     } else if let Ok(l) = obj.extract::<Vec<Py<PyAny>>>() {
         // Recursively convert list items
         let py = obj.py();
@@ -3367,6 +3576,15 @@ impl PyAttenuationBuilder {
         self.inner.set_ttl(Duration::from_secs(seconds));
     }
 
+    /// Set a TTL, atomically capped at the parent's expiry.
+    ///
+    /// High-level scoping helpers use this to avoid a wall-clock race between
+    /// inspecting the parent's remaining lifetime and building the child.
+    fn with_ttl_capped_to_parent(&mut self, seconds: u64) {
+        self.inner
+            .set_ttl_capped_to_parent(Duration::from_secs(seconds));
+    }
+
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
         self.inner.set_holder(holder.inner.clone());
@@ -3380,6 +3598,19 @@ impl PyAttenuationBuilder {
     /// Set the intent/purpose for this delegation (for audit trails).
     fn with_intent(&mut self, intent: &str) {
         self.inner.set_intent(intent);
+    }
+
+    /// Add approvers without removing any inherited approvers.
+    fn add_approvers(&mut self, approvers: Vec<PyPublicKey>) {
+        self.inner = self
+            .inner
+            .clone()
+            .add_approvers(approvers.into_iter().map(|key| key.inner).collect());
+    }
+
+    /// Raise the approval threshold without lowering the current value.
+    fn raise_min_approvals(&mut self, min: u32) {
+        self.inner = self.inner.clone().raise_min_approvals(min);
     }
 
     /// Add or merge approval gates into this attenuated warrant.
@@ -3764,7 +3995,7 @@ impl PyWarrant {
 
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None, max_depth=None))]
     #[allow(clippy::too_many_arguments)]
     fn issue(
         keypair: &PySigningKey,
@@ -3776,8 +4007,13 @@ impl PyWarrant {
         required_approvers: Option<Vec<PyPublicKey>>,
         min_approvals: Option<u32>,
         approval_gates: Option<&Bound<'_, PyDict>>,
+        max_depth: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
+
+        if let Some(depth) = max_depth {
+            builder = builder.max_depth(depth);
+        }
 
         // Capabilities: dict[tool_name, dict[field, constraint]]
         // Supports _allow_unknown key for zero-trust mode opt-out
@@ -3842,7 +4078,7 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None, approval_gates=None, max_depth=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
         keypair: &PySigningKey,
@@ -3852,11 +4088,19 @@ impl PyWarrant {
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
         clearance: Option<&PyClearance>,
+        required_approvers: Option<Vec<PyPublicKey>>,
+        min_approvals: Option<u32>,
+        approval_gates: Option<&Bound<'_, PyDict>>,
+        max_depth: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(issuable_tools)
             .ttl(Duration::from_secs(ttl_seconds));
+
+        if let Some(depth) = max_depth {
+            builder = builder.max_depth(depth);
+        }
 
         if let Some(depth) = max_issue_depth {
             builder = builder.max_issue_depth(depth);
@@ -3884,6 +4128,27 @@ impl PyWarrant {
                 let constraint = py_to_constraint(&value)?;
                 builder = builder.constraint_bound(field, constraint);
             }
+        }
+
+        // Approval template: issued execution warrants inherit these
+        if let Some(approvers) = required_approvers {
+            let rust_approvers: Vec<crate::crypto::PublicKey> =
+                approvers.into_iter().map(|pk| pk.inner).collect();
+            builder = builder.required_approvers(rust_approvers);
+        }
+
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
+        }
+
+        if let Some(approval_gates_dict) = approval_gates {
+            let approval_gate_map = py_dict_to_approval_gate_map(approval_gates_dict)?;
+            let bytes = crate::approval_gate::encode_approval_gate_map(&approval_gate_map)
+                .map_err(to_py_err)?;
+            builder = builder.extension(
+                crate::approval_gate::APPROVAL_GATE_EXTENSION_KEY.to_string(),
+                bytes,
+            );
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
@@ -4059,6 +4324,25 @@ impl PyWarrant {
         }
     }
 
+    /// Whether the execution policy allows undeclared arguments for this tool.
+    /// Exact entries take precedence over wildcard fallback. Returns None if
+    /// there is no execution policy for the tool; this is not authorization.
+    fn allows_unknown_arguments(&self, tool: &str) -> Option<bool> {
+        self.inner
+            .capabilities()
+            .and_then(|caps| caps.get(tool).or_else(|| caps.get("*")))
+            .map(|constraints| constraints.is_empty() || constraints.allow_unknown())
+    }
+
+    /// Optional fields in the signed execution policy or issuable tool's bounds.
+    /// Exact execution entries take precedence over the wildcard entry.
+    fn optional_fields(&self, tool: &str) -> Vec<String> {
+        self.inner
+            .optional_fields(tool)
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// Get constraint bounds as a Python dict (Issuer warrants only).
     fn constraint_bounds_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if let Some(bounds) = self.inner.constraint_bounds() {
@@ -4221,6 +4505,45 @@ impl PyWarrant {
             }
             Err(e) => Ok(Some(("_error".to_string(), format!("{}", e)))),
         }
+    }
+
+    /// Diagnose all constraint failures (DIAGNOSTIC USE ONLY).
+    ///
+    /// Returns a dictionary containing ``closed_world`` and a deterministic
+    /// ``violations`` list. Each violation has stable ``kind`` and ``field``
+    /// values plus a human-readable ``reason``. Argument values are never
+    /// included. This does not perform authorization or any cryptographic,
+    /// temporal, revocation, approval, or PoP check.
+    fn diagnose_constraints<'py>(
+        &self,
+        py: Python<'py>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let diagnostics = self
+            .inner
+            .diagnose_constraints(tool, &rust_args)
+            .map_err(to_py_err)?;
+        let result = PyDict::new(py);
+        result.set_item("closed_world", diagnostics.closed_world)?;
+
+        let violations = PyList::empty(py);
+        for violation in diagnostics.violations {
+            let item = PyDict::new(py);
+            item.set_item("field", violation.field)?;
+            item.set_item("kind", violation.kind.as_str())?;
+            item.set_item("reason", violation.reason)?;
+            violations.append(item)?;
+        }
+        result.set_item("violations", violations)?;
+        Ok(result)
     }
 
     // ========================================================================
@@ -4509,6 +4832,43 @@ impl PyCompiledMcpConfig {
         self.inner.validate()
     }
 
+    /// Extraction rules for a tool, or ``None`` if the tool is not configured.
+    ///
+    /// Each rule is a dict with ``field`` (constraint name), ``source``
+    /// (``"body"``, ``"literal"``, ...), ``path`` (dot notation) and
+    /// ``default`` (``None`` when the rule has none). ``MCPVerifier`` uses it
+    /// to check that every argument is read by some rule.
+    fn tool_rules(&self, py: Python<'_>, tool_name: &str) -> PyResult<Option<Py<PyAny>>> {
+        let Some(tool) = self.inner.tools.get(tool_name) else {
+            return Ok(None);
+        };
+        let json_loads = py.import("json")?.getattr("loads")?;
+        let mut fields: Vec<&String> = tool.extraction_rules.rules.keys().collect();
+        fields.sort();
+        let list = pyo3::types::PyList::empty(py);
+        for field in fields {
+            let rule = &tool.extraction_rules.rules[field].rule;
+            let entry = PyDict::new(py);
+            entry.set_item("field", field)?;
+            let source = serde_json::to_value(&rule.from)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            entry.set_item("source", source)?;
+            entry.set_item("path", &rule.path)?;
+            match &rule.default {
+                Some(value) => {
+                    let text = serde_json::to_string(value)
+                        .map_err(|e| py_validation_err(format!("Invalid default: {}", e)))?;
+                    entry.set_item("default", json_loads.call1((text,))?)?;
+                }
+                None => entry.set_item("default", py.None())?,
+            }
+            list.append(entry)?;
+        }
+        Ok(Some(list.into_any().unbind()))
+    }
+
     /// Extract constraints from an MCP tool call.
     ///
     /// Args:
@@ -4539,6 +4899,25 @@ impl PyCompiledMcpConfig {
             .extract_constraints(tool_name, &args_value)
             .map_err(|e| py_validation_err(e.to_string()))?;
 
+        // Preserve which values came from defaults.  The Python MCP adapter
+        // needs this to pass exactly the values that were authorized to the
+        // tool; path presence alone is insufficient for wildcard/index paths.
+        let mut defaulted_fields: Vec<String> = result
+            .traces
+            .iter()
+            .filter(|trace| {
+                trace.result.is_none()
+                    && self
+                        .inner
+                        .tools
+                        .get(tool_name)
+                        .and_then(|tool| tool.extraction_rules.rules.get(&trace.field))
+                        .is_some_and(|rule| rule.rule.default.is_some())
+            })
+            .map(|trace| trace.field.clone())
+            .collect();
+        defaulted_fields.sort();
+
         // Convert extracted constraints to Python dict
         let dict = PyDict::new(py);
         for (key, value) in result.constraints {
@@ -4552,6 +4931,7 @@ impl PyCompiledMcpConfig {
             warrant_base64: result.warrant_base64,
             signature_base64: result.signature_base64,
             approvals_base64: result.approvals_base64,
+            defaulted_fields,
         })
     }
 }
@@ -4569,6 +4949,9 @@ pub struct PyExtractionResult {
     signature_base64: Option<String>,
     #[pyo3(get)]
     approvals_base64: Vec<String>,
+    /// Constraint fields whose configured default supplied the extracted value.
+    #[pyo3(get)]
+    defaulted_fields: Vec<String>,
 }
 
 #[pymethods]
@@ -4738,6 +5121,18 @@ impl PyVerifiedApproval {
         self.inner.request_hash
     }
 
+    /// The approval's nonce (16 bytes); identifies this approval for at-most-once use.
+    #[getter]
+    fn nonce(&self) -> [u8; 16] {
+        self.inner.nonce
+    }
+
+    /// Key a consumption store records this approval under (`approver_hex:nonce_hex`).
+    #[getter]
+    fn consumption_key(&self) -> String {
+        self.inner.consumption_key()
+    }
+
     /// Standard base64-encoded CBOR SignedApproval envelope for independent verification.
     #[getter]
     fn signed_approval_cbor_b64(&self) -> Option<String> {
@@ -4762,6 +5157,9 @@ impl PyVerifiedApproval {
 #[derive(Clone)]
 pub struct PyChainVerificationResult {
     pub(crate) inner: RustChainVerificationResult,
+    // Immutable decision-time evidence, never read from a rebound issuer.
+    pub(crate) host_policy_hash: Option<[u8; 32]>,
+    pub(crate) host_policy_denied: bool,
 }
 
 #[pymethods]
@@ -4811,6 +5209,20 @@ impl PyChainVerificationResult {
             .cloned()
             .map(|inner| PyVerifiedApproval { inner })
             .collect()
+    }
+
+    /// Commitment to the authorized invocation (32 bytes), the same value a
+    /// receipt carries as its request hash. None when no invocation was checked.
+    #[getter]
+    fn request_hash(&self) -> Option<[u8; 32]> {
+        self.inner.request_hash
+    }
+
+    /// Stable key for this authorization (32 bytes), for downstream
+    /// deduplication. None unless approvals were verified.
+    #[getter]
+    fn idempotency_key(&self) -> Option<[u8; 32]> {
+        self.inner.idempotency_key()
     }
 
     fn __repr__(&self) -> String {
@@ -5491,7 +5903,7 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///   - Signature validity (verify-before-deserialize pattern)
 ///   - Approver is in the required set
 ///   - Request hash matches the expected value
-///   - Expiration with configurable clock tolerance
+///   - Strict expiration and configurable tolerance for future-approved timestamps
 ///   - Duplicate detection (one approval per approver key)
 ///   - DoS protection (max 2× approver count)
 ///   - Threshold satisfaction (m-of-n)
@@ -5501,7 +5913,8 @@ fn py_srl_commitment_digest(srl_bytes: &[u8]) -> [u8; 32] {
 ///     approvals: List of SignedApproval objects to verify
 ///     trusted_approvers: Public keys of accepted approvers
 ///     threshold: Minimum number of valid approvals required (default 1)
-///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///     clock_tolerance_secs: Tolerance for an approver whose clock runs ahead, applied to
+///         approved_at (default 30). Expiry itself is strict.
 ///
 /// Returns:
 ///     List of verified ApprovalPayload objects (one per valid approval)
@@ -5547,6 +5960,7 @@ fn py_verify_approvals(
         NotTrusted,
         Duplicate,
         Expired,
+        NotYetValid,
         HashMismatch,
     }
 
@@ -5556,7 +5970,8 @@ fn py_verify_approvals(
     let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in &approvals {
-        let payload = match approval.inner.verify() {
+        // Signature and structure here; the time checks below give precise reasons.
+        let payload = match approval.inner.verify_with_skew(u64::MAX) {
             Ok(p) => p,
             Err(_) => {
                 rejections.push(Rejection::InvalidSignature);
@@ -5578,8 +5993,14 @@ fn py_verify_approvals(
             continue;
         }
 
-        if payload.expires_at + clock_tolerance_secs < now {
+        // Expiry is strict, as for warrants at authorization. The tolerance
+        // only covers an approver whose clock runs ahead.
+        if now >= payload.expires_at {
             rejections.push(Rejection::Expired);
+            continue;
+        }
+        if payload.approved_at > now.saturating_add(clock_tolerance_secs) {
+            rejections.push(Rejection::NotYetValid);
             continue;
         }
 
@@ -5602,7 +6023,8 @@ fn py_verify_approvals(
             Rejection::InvalidSignature => "invalid signature on approval",
             Rejection::NotTrusted => "approver not in trusted set",
             Rejection::Duplicate => "duplicate approval from same approver",
-            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::Expired => "approval expired",
+            Rejection::NotYetValid => "approval dated in the future beyond clock tolerance",
             Rejection::HashMismatch => {
                 "request hash mismatch (approval was signed for a different request)"
             }
@@ -5614,7 +6036,7 @@ fn py_verify_approvals(
 
     // m-of-n: include rejection summary for diagnostics
     let mut parts = Vec::new();
-    let counts: [(usize, &str); 5] = [
+    let counts: [(usize, &str); 6] = [
         (
             rejections
                 .iter()
@@ -5642,6 +6064,13 @@ fn py_verify_approvals(
                 .filter(|r| matches!(r, Rejection::Expired))
                 .count(),
             "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotYetValid))
+                .count(),
+            "dated in the future",
         ),
         (
             rejections
@@ -6049,6 +6478,8 @@ pub struct PyAuthorizer {
     /// Receipt keys 12 and 13. `None` until a list is installed, which is the
     /// honest claim that revocation was never consulted.
     srl_commitment: Option<(Option<u64>, [u8; 32])>,
+    /// Per-tool host ceilings, set once per tool. Receipt key 11.
+    host_policies: BTreeMap<String, crate::host_policy::HostPolicy>,
 }
 
 impl PyAuthorizer {
@@ -6061,6 +6492,33 @@ impl PyAuthorizer {
     pub(crate) fn srl_commitment_value(&self) -> Option<(Option<u64>, [u8; 32])> {
         self.srl_commitment
     }
+
+    /// Preserve the evaluated ceiling on both successful and denied decisions.
+    fn finish_authorization(
+        &self,
+        py: Python<'_>,
+        inner: RustChainVerificationResult,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let policy = self.host_policies.get(tool);
+        let mut result = PyChainVerificationResult {
+            inner,
+            host_policy_hash: policy.map(|p| p.digest()),
+            host_policy_denied: false,
+        };
+        if let Some(policy) = policy {
+            if let Err(error) = policy.check(args) {
+                result.host_policy_denied = true;
+                let error = to_py_err(error);
+                error
+                    .value(py)
+                    .setattr("_chain_result", Py::new(py, result)?)?;
+                return Err(error);
+            }
+        }
+        Ok(result)
+    }
 }
 
 #[pymethods]
@@ -6069,7 +6527,7 @@ impl PyAuthorizer {
     ///
     /// Args:
     ///     trusted_roots: List of trusted root public keys. At least one required.
-    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     clock_tolerance_secs: Tolerance for future-issued timestamps in seconds (default: 30)
     ///     pop_window_secs: PoP window size in seconds (default: 30)
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
@@ -6104,7 +6562,7 @@ impl PyAuthorizer {
         }
 
         let mut authorizer = RustAuthorizer::new()
-            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_clock_tolerance(clock_tolerance_from_secs(clock_tolerance_secs))
             .with_pop_window(pop_window_secs, pop_max_windows);
 
         let mut root_bytes = Vec::new();
@@ -6119,6 +6577,7 @@ impl PyAuthorizer {
             inner: authorizer,
             trusted_roots: root_bytes,
             srl_commitment: None,
+            host_policies: BTreeMap::new(),
         })
     }
 
@@ -6171,13 +6630,13 @@ impl PyAuthorizer {
         Ok(())
     }
 
-    /// Set the clock tolerance for expiration checks.
+    /// Set the clock tolerance for future-issued timestamps. Expiry remains strict.
     ///
     /// Args:
     ///     seconds: Clock tolerance in seconds
     fn set_clock_tolerance(&mut self, seconds: i64) {
         self.inner
-            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+            .set_clock_tolerance(clock_tolerance_from_secs(seconds));
     }
 
     /// Set the PoP window configuration.
@@ -6216,6 +6675,71 @@ impl PyAuthorizer {
         self.inner
             .require_clearance(&tool, level.inner)
             .map_err(to_py_err)
+    }
+
+    /// Set this enforcement point's own ceiling for a tool.
+    ///
+    /// A call to ``tool`` must satisfy both the presented warrant chain and
+    /// this policy. The policy is checked after the chain authorizes the call,
+    /// by every authorization method on this object. Like a warrant's
+    /// constraints it is closed-world: name every argument the tool accepts.
+    /// An empty dict is an open ceiling that receipts still commit to.
+    ///
+    /// A ceiling cannot be replaced once set, so a receipt's
+    /// ``policy_definition_hash`` always names the ceiling the decision was
+    /// made under. Build a new Authorizer to change it.
+    ///
+    /// Args:
+    ///     tool: Tool name (exact match)
+    ///     allow: Dict of argument name -> constraint (Exact, OneOf, Range, ...)
+    ///
+    /// Raises:
+    ///     ValidationError: If a ceiling is already set for ``tool``, a value is
+    ///         not a constraint, or a constraint's configuration cannot be
+    ///         expressed in the policy commitment.
+    ///
+    /// Example:
+    ///     ```text
+    ///     authorizer.set_host_policy("route_ticket", {
+    ///         "ticket_id": Wildcard(),
+    ///         "queue": OneOf(["general", "billing"]),
+    ///     })
+    ///     ```
+    fn set_host_policy(&mut self, tool: String, allow: &Bound<'_, PyDict>) -> PyResult<()> {
+        if tool.is_empty() {
+            return Err(py_validation_err("host policy tool name must not be empty"));
+        }
+        if self.host_policies.contains_key(&tool) {
+            return Err(py_validation_err(format!(
+                "host policy for '{tool}' is already set and cannot be replaced"
+            )));
+        }
+        let mut fields = BTreeMap::new();
+        for (key, value) in allow.iter() {
+            let field: String = key
+                .extract()
+                .map_err(|_| py_validation_err("host policy argument names must be strings"))?;
+            let constraint = py_to_constraint(&value)
+                .map_err(|e| py_validation_err(format!("host policy field '{field}': {e}")))?;
+            fields.insert(field, constraint);
+        }
+        let policy =
+            crate::host_policy::HostPolicy::new(fields).map_err(|e| py_validation_err(&e))?;
+        self.host_policies.insert(tool, policy);
+        Ok(())
+    }
+
+    /// Receipt ``policy_definition_hash`` for a tool's host ceiling, or None
+    /// when no ceiling is set for it.
+    fn host_policy_hash<'py>(&self, py: Python<'py>, tool: &str) -> Option<Bound<'py, PyBytes>> {
+        self.host_policies
+            .get(tool)
+            .map(|policy| PyBytes::new(py, &policy.digest()))
+    }
+
+    /// Tools that have a host ceiling, sorted.
+    fn host_policy_tools(&self) -> Vec<String> {
+        self.host_policies.keys().cloned().collect()
     }
 
     /// Get the required clearance for a tool.
@@ -6311,7 +6835,8 @@ impl PyAuthorizer {
             .map(|a| a.inner.clone())
             .collect();
 
-        self.inner
+        let result = self
+            .inner
             .authorize_one(
                 &warrant.inner,
                 tool,
@@ -6319,8 +6844,9 @@ impl PyAuthorizer {
                 sig.as_ref(),
                 &rust_approvals,
             )
+            .map_err(to_py_err)?;
+        self.finish_authorization(args.py(), result, tool, &rust_args)
             .map(|_| ())
-            .map_err(to_py_err)
     }
 
     /// Alias for `authorize()`. Verifies and authorizes in one call.
@@ -6404,7 +6930,7 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Verify a complete delegation chain.
@@ -6453,7 +6979,11 @@ impl PyAuthorizer {
             None => self.inner.verify_chain(&warrants),
         }
         .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        Ok(PyChainVerificationResult {
+            inner: result,
+            host_policy_hash: None,
+            host_policy_denied: false,
+        })
     }
 
     /// Verify chain and authorize an action.
@@ -6533,7 +7063,7 @@ impl PyAuthorizer {
             }
         }
         .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        self.finish_authorization(args.py(), result, tool, &rust_args)
     }
 
     /// Split-view single-warrant authorization.
@@ -6553,10 +7083,14 @@ impl PyAuthorizer {
     ///         ``CompiledMcpConfig.extract_constraints``.
     ///     signature: Optional PoP signature bytes (64 bytes)
     ///     approvals: Optional list of SignedApproval objects
+    ///     host_policy_args: Unstripped extracted arguments for the host ceiling.
+    ///         Defaults to constraint_args. Supply this separately when warrant
+    ///         matching uses legacy null normalization.
     ///
     /// Returns:
     ///     ChainVerificationResult on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (warrant, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn authorize_one_with_pop_args(
         &self,
         warrant: &PyWarrant,
@@ -6565,6 +7099,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let mut rust_pop_args = HashMap::new();
         for (key, value) in pop_args.iter() {
@@ -6607,14 +7142,24 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 
     /// Split-view delegation-chain authorization.
     ///
     /// See :meth:`authorize_one_with_pop_args` for semantics — this is the
     /// multi-warrant form for delegation chains.
-    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None))]
+    #[pyo3(signature = (chain, tool, pop_args, constraint_args, signature=None, approvals=None, *, host_policy_args=None))]
+    #[allow(clippy::too_many_arguments)]
     fn check_chain_with_pop_args(
         &self,
         chain: &Bound<'_, PySequence>,
@@ -6623,6 +7168,7 @@ impl PyAuthorizer {
         constraint_args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
         approvals: Option<Vec<PyRef<PySignedApproval>>>,
+        host_policy_args: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<PyChainVerificationResult> {
         let len = chain.len()?;
         if len == 0 {
@@ -6678,7 +7224,16 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)?;
-        Ok(PyChainVerificationResult { inner: result })
+        // Warrant compatibility normalization must never erase values from
+        // the host ceiling's extracted/renamed argument view.
+        let rust_host_args = match host_policy_args {
+            Some(args) if self.host_policies.contains_key(tool) => args
+                .iter()
+                .map(|(key, value)| Ok((key.extract::<String>()?, py_to_constraint_value(&value)?)))
+                .collect::<PyResult<HashMap<_, _>>>()?,
+            _ => rust_constraint_args,
+        };
+        self.finish_authorization(constraint_args.py(), result, tool, &rust_host_args)
     }
 }
 
@@ -7021,6 +7576,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("WARRANT_HEADER", wire::WARRANT_HEADER)?;
 
     // Functions
+    m.add_function(wrap_pyfunction!(py_validate_attenuation, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_encode_warrant_stack, m)?)?;

@@ -91,7 +91,7 @@ configure(
 | `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `mint`) |
 | `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
 | `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
-| `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
+| `clock_tolerance` | `int` | 30 | Tolerance for future-issued timestamps; expiry is strict |
 | `pop_window_secs` | `int` | 30 | PoP window size in seconds |
 | `pop_max_windows` | `int` | 4 | Number of PoP windows to accept (~2 min total) |
 | `dev_mode` | `bool` | False | Enable development mode (relaxed security) |
@@ -152,7 +152,7 @@ auto_configure()
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `TENUO_ISSUER_KEY` | Base64-encoded signing key | `SGVsbG8...` |
-| `TENUO_MODE` | Enforcement mode | `enforce`, `audit`, `permissive` |
+| `TENUO_MODE` | Enforcement mode (`audit`, `permissive` are aliases of `observe`) | `enforce`, `observe` |
 | `TENUO_TRUSTED_ROOTS` | Comma-separated public keys | `key1,key2` |
 | `TENUO_DEV_MODE` | Enable development mode | `1` or `true` |
 | `TENUO_DEFAULT_TTL` | Default warrant TTL (seconds) | `300` |
@@ -179,10 +179,11 @@ print(f"Mode: {config.mode}")  # EnforcementMode enum
 Enum controlling how authorization violations are handled:
 
 ```python
-from tenuo import EnforcementMode, is_audit_mode, is_enforce_mode, should_block_violation
+from tenuo import is_observe_mode, is_enforce_mode, should_block_violation
+from tenuo.config import EnforcementMode
 
 # Check current mode
-if is_audit_mode():
+if is_observe_mode():
     print("Violations are logged but not blocked")
 
 if should_block_violation():
@@ -192,15 +193,17 @@ if should_block_violation():
 | Mode | Behavior | Use Case |
 |------|----------|----------|
 | `EnforcementMode.ENFORCE` | Block unauthorized requests | Production (default) |
-| `EnforcementMode.AUDIT` | Log violations but allow execution | Gradual adoption |
-| `EnforcementMode.PERMISSIVE` | Log + warn header, allow execution | Development |
+| `EnforcementMode.OBSERVE` | Log what would be denied, allow execution | Gradual adoption |
+
+`EnforcementMode.AUDIT` and `EnforcementMode.PERMISSIVE` are aliases of `OBSERVE`, and `mode="audit"` / `mode="permissive"` resolve to it. In observe mode a denial comes back as an `EnforcementResult` with `allowed=True`, `observed=True`, and the denial fields (`error_type`, `denial_reason`, `constraint_violated`) still set.
 
 **Helper Functions:**
 
 | Function | Returns |
 |----------|---------|
 | `is_enforce_mode()` | `True` if mode is ENFORCE |
-| `is_audit_mode()` | `True` if mode is AUDIT |
+| `is_observe_mode()` | `True` if mode is OBSERVE |
+| `is_audit_mode()` | Alias of `is_observe_mode()` |
 | `should_block_violation()` | `True` if violations should be blocked |
 
 ---
@@ -421,10 +424,11 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `grant(allow, to=None, ttl=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 
 | `verify(public_key)` | `bool` | Verify signature against issuer |
-| `sign(keypair, tool, args)` | `bytes` | Sign action (Proof-of-Possession) |
+| `sign(keypair, tool, args, timestamp)` | `bytes` | Sign one call (Proof-of-Possession). `timestamp` is Unix seconds, usually `int(time.time())` |
 | `to_base64()` | `str` | Serialize to base64 |
 | `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
 | `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |
+| `diagnose_constraints(tool, args)` | `dict` | List all constraint failures without exposing argument values |
 | `dedup_key(tool, args)` | `str` | Get deterministic cache key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
@@ -459,6 +463,20 @@ reason = warrant.why_denied("write_file", path="/etc/passwd")
 
 if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
     print("Tool not in warrant")
+
+# All field-shape/value failures in stable order. This is diagnostic only;
+# it does not verify signatures, expiry, revocation, approvals, or PoP.
+diagnostics = warrant.diagnose_constraints(
+    "transfer", {"amount": 300, "unexpected": True}
+)
+# {
+#   "closed_world": True,
+#   "violations": [
+#     {"field": "unexpected", "kind": "unknown_field", ...},
+#     {"field": "amount", "kind": "constraint_mismatch", ...},
+#     {"field": "currency", "kind": "missing_required", ...},
+#   ],
+# }
 
 # Generate HTTP headers
 headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})
@@ -817,6 +835,56 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 |--------|-------------|
 | `require_clearance(pattern, level)` | Set minimum clearance for tool pattern |
 | `get_required_clearance(tool)` | Get required clearance level (or None) |
+
+#### Host Policy Ceilings (Optional)
+
+An enforcement point can set its own per-argument limit for a tool. A call must
+satisfy both the presented warrant chain and the host policy, so a service can
+refuse what its warrants would otherwise allow. This is the Python form of the
+TypeScript SDK's `verify(..., { allow })`.
+
+```python
+from tenuo import Authorizer, OneOf, Wildcard
+
+authorizer = Authorizer(trusted_roots=[root_key])
+authorizer.set_host_policy("route_ticket", {
+    "ticket_id": Wildcard(),
+    "queue": OneOf(["general", "billing"]),
+})
+```
+
+- Every authorization method checks the policy after the chain authorizes the
+  call. A failure raises the same constraint error a warrant constraint does.
+- A non-empty policy is closed-world, like a warrant: name every argument the
+  tool accepts. `{}` is an open policy that receipts still commit to.
+- Host ceilings check the unstripped extracted/renamed arguments. Legacy null
+  normalization applies only to warrant matching. Low-level split-view callers
+  that normalize `constraint_args` must pass the unstripped map separately as
+  `host_policy_args`; otherwise it defaults to `constraint_args`.
+- Tools without a policy are unaffected.
+- A policy cannot be replaced once set. Receipts signed by a `ReceiptIssuer` or
+  `ControlPlaneClient` bound to this authorizer carry its digest as
+  `policy_definition_hash`, so each receipt names the policy its decision was
+  made under. The digest is captured at authorization time, including host-policy
+  denials, and survives deferred signing or rebinding. Raw denial receipts without
+  an evaluated decision omit it. Construct a new `Authorizer` to change a ceiling.
+- The digest is computed over the same constraint-expression form the
+  TypeScript SDK uses, so the same policy has the same digest in both SDKs.
+  Constraints that form cannot fully describe are rejected: `UrlSafe` with
+  options beyond `schemes`, `allow_domains` and `deny_domains`, non-string
+  `OneOf` / `NotOneOf` values, and CEL constraints derived from a parent.
+  Numeric `Range` bounds and `min`/`max` spellings are written as `range`.
+  Both SDKs normalize path roots and omit explicit default options before hashing;
+  aliases such as `email` are encoded as their compiled constraint (`pattern`).
+  This changes newly issued TypeScript policy commitments for noncanonical
+  spellings. Existing signed receipts remain verifiable; reproducing an older
+  commitment requires the original expression and encoding used by that SDK.
+
+| Method | Description |
+|--------|-------------|
+| `set_host_policy(tool, allow)` | Set the tool's ceiling (dict of argument name to constraint) |
+| `host_policy_hash(tool)` | 32-byte `policy_definition_hash` for the tool, or None |
+| `host_policy_tools()` | Tools that have a ceiling |
 
 ### ChainVerificationResult
 
@@ -1894,7 +1962,7 @@ tenuo discover --input <LOG_FILE> [--output FILE] [--format yaml|python]
 
 **How it works:**
 
-1. Deploy your app with `mode="audit"` (logs tool calls but does not block)
+1. Deploy your app with `mode="observe"` (logs tool calls but does not block)
 2. Run the app normally for a period
 3. Use `discover` to analyze logs and generate minimal capabilities
 4. Review and refine the generated capabilities

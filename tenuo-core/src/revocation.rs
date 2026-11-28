@@ -74,6 +74,7 @@ pub const MAX_REVOCATION_REQUEST_AGE_SECS: i64 = 300; // 5 minutes
 /// 3. Validates the requestor is authorized (issuer, holder, or control plane)
 /// 4. Rejects stale requests (replay protection)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RevocationRequest {
     /// The warrant ID to revoke
     pub warrant_id: String,
@@ -272,6 +273,7 @@ impl RevocationRequest {
 
 /// The payload of a signed revocation list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SrlPayload {
     /// List of revoked warrant IDs
     revoked_ids: Vec<String>,
@@ -310,6 +312,7 @@ struct SrlPayload {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SignedRevocationList {
     payload: SrlPayload,
     signature: Signature,

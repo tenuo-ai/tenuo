@@ -27,6 +27,8 @@ from tenuo_core import (
     DelegationDiff as RustDelegationDiff,
 )
 
+from ._native_patch import patch_native
+
 
 class MintBuilder:
     """Fluent builder for creating new root warrants.
@@ -65,6 +67,7 @@ class MintBuilder:
         self._constraints: Dict[str, Any] = {}
 
         self._ttl_seconds: int = 3600  # Default 1 hour
+        self._max_depth: Optional[int] = None
         self._holder: Optional[PublicKey] = None
         self._session_id: Optional[str] = None
         self._clearance: Optional[Clearance] = None
@@ -157,6 +160,17 @@ class MintBuilder:
             seconds: TTL in seconds (default: 3600)
         """
         self._ttl_seconds = seconds
+        return self
+
+    def max_depth(self, depth: int) -> "MintBuilder":
+        """Set the root warrant's delegation ceiling (0 makes it terminal).
+
+        This is distinct from an issuer warrant's maximum issuance depth.
+        The native builder validates the protocol limit when minting.
+        """
+        if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
+            raise ValueError("max_depth must be a non-negative integer")
+        self._max_depth = depth
         return self
 
     def holder(self, public_key: PublicKey) -> "MintBuilder":
@@ -313,6 +327,7 @@ class MintBuilder:
             keypair=key,
             capabilities=capabilities,
             ttl_seconds=self._ttl_seconds,
+            max_depth=self._max_depth,
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
@@ -334,9 +349,13 @@ class MintBuilder:
             constraint_bounds=self._constraint_bounds if self._constraint_bounds else None,
             max_issue_depth=self._max_issue_depth,
             ttl_seconds=self._ttl_seconds,
+            max_depth=self._max_depth,
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
+            required_approvers=self._required_approvers,
+            min_approvals=self._min_approvals,
+            approval_gates=getattr(self, "_approval_gates", None),
         )
 
     def preview(self) -> Dict[str, Any]:
@@ -353,6 +372,7 @@ class MintBuilder:
                 "constraint_bounds": self._constraint_bounds,
                 "max_issue_depth": self._max_issue_depth,
                 "ttl_seconds": self._ttl_seconds,
+                "max_depth": self._max_depth,
                 "holder": self._holder,
                 "session_id": self._session_id,
             }
@@ -362,6 +382,7 @@ class MintBuilder:
                 "tools": self._tools,
                 "constraints": self._constraints,
                 "ttl_seconds": self._ttl_seconds,
+                "max_depth": self._max_depth,
                 "holder": self._holder,
                 "session_id": self._session_id,
                 "clearance": self._clearance,
@@ -387,10 +408,8 @@ def _mint_builder_impl() -> "MintBuilder":
 
 def _add_builder_to_warrant():
     """Add the mint_builder() class method to Warrant."""
-    # Only add if not already present
-    if not hasattr(Warrant, "mint_builder"):
-        # Use staticmethod since we don't need cls
-        Warrant.mint_builder = staticmethod(_mint_builder_impl)
+    # Only add if not already present. Use staticmethod since we don't need cls.
+    patch_native(Warrant, "mint_builder", staticmethod(_mint_builder_impl), if_missing=True)
 
 
 # Initialize on module load
@@ -461,6 +480,11 @@ class GrantBuilder:
         if seconds is self._NOT_SET:
             return self._rust_builder.ttl_seconds
         self._rust_builder.with_ttl(seconds)
+        return self
+
+    def _ttl_capped_to_parent(self, seconds: int) -> "GrantBuilder":
+        """Set TTL with atomic parent-expiry clamping in the Rust core."""
+        self._rust_builder.with_ttl_capped_to_parent(seconds)
         return self
 
     def holder(self, public_key: Any = _NOT_SET) -> Union["GrantBuilder", Optional[PublicKey]]:
@@ -647,6 +671,19 @@ class GrantBuilder:
     def terminal(self) -> "GrantBuilder":
         """Make this warrant terminal (cannot be delegated further)."""
         self._rust_builder.terminal()
+        return self
+
+    def add_approvers(self, approvers: List[PublicKey]) -> "GrantBuilder":
+        """Add approvers to the inherited set; duplicates have no effect.
+
+        The Rust builder checks threshold monotonicity when granting.
+        """
+        self._rust_builder.add_approvers(approvers)
+        return self
+
+    def raise_min_approvals(self, count: int) -> "GrantBuilder":
+        """Raise the approval threshold; a smaller count cannot lower it."""
+        self._rust_builder.raise_min_approvals(count)
         return self
 
     def approval_gates(self, approval_gate_map: Dict[str, Any]) -> "GrantBuilder":

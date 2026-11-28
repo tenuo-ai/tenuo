@@ -68,12 +68,19 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from tenuo._enforcement import (
     EnforcementResult,
+    _log_observed_denial,
+    _resolve_presented_parents,
     enforce_tool_call,
     enforce_tool_call_async,
     split_presented_warrant,
 )
-from tenuo.config import resolve_trusted_roots
-from tenuo.exceptions import ConfigurationError, InsufficientApprovals
+from tenuo.approval import (
+    ApprovalDenied,
+    ApprovalRequired,
+    ApprovalVerificationError,
+)
+from tenuo.config import resolve_trusted_roots, should_block_violation
+from tenuo.exceptions import ApprovalExpired, ConfigurationError, InsufficientApprovals, InvalidApproval
 
 if TYPE_CHECKING:
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -101,6 +108,15 @@ class MissingSigningKeyError(Exception):
             "pass signing_key= to TenuoGuard. For Tier 1 (guardrails only), use "
             "require_pop=False."
         )
+
+
+def _approval_denial_reason(error: BaseException) -> str:
+    """Denial text for an approval failure raised by the shared path."""
+    if isinstance(error, ApprovalDenied):
+        return "Approval denied"
+    if isinstance(error, ApprovalRequired):
+        return "Approval required: no approval handler or approvals were provided"
+    return "Approval failed verification"
 
 
 class TenuoGuard:
@@ -141,6 +157,7 @@ class TenuoGuard:
         control_plane: Optional[Any] = None,
         *,
         warrant_chain: Optional[List["Warrant"]] = None,
+        warrant_resolver: Optional[Callable[[Any], Any]] = None,
     ) -> None:
         """
         Initialize TenuoGuard.
@@ -156,7 +173,16 @@ class TenuoGuard:
                 Always supply in production. Emits SecurityWarning when omitted.
             warrant_key: Key to look up warrant in ToolContext.state (for dynamic warrants).
                 The state value may be a Warrant, a base64 warrant or WarrantStack
-                string, or a root-first list of warrants.
+                string, or a root-first list of warrants. Session state can be
+                written by tools and by whoever starts the run, so any of them
+                can replace the warrant; prefer ``warrant_resolver``.
+            warrant_resolver: Callable ``(tool_context) -> warrant`` returning the
+                warrant for this call from a source the model cannot write,
+                for example a server-side store keyed by ``tool_context.user_id``.
+                Accepts the same forms as ``warrant_key`` values, or ``None``
+                for no warrant, which denies the call even with local allow
+                rules. Cannot be combined with a static warrant. When set,
+                session state is not consulted.
             skill_map: Map ADK tool names to warrant skill names
             arg_map: Map tool argument names to constraint parameter names
             constraints: Direct constraints for Tier 1 mode (no warrant)
@@ -185,9 +211,15 @@ class TenuoGuard:
                 cryptographically verify the chain, the leaf, or its root.
 
         Raises:
-            ConfigurationError: If ``warrant`` is a multi-warrant stack and
+            ConfigurationError: If static and resolver warrants are combined,
+                the resolver is not callable, ``warrant`` is a multi-warrant stack and
                 ``warrant_chain`` is also given, or a token does not decode.
         """
+        if warrant_resolver is not None:
+            if not callable(warrant_resolver):
+                raise ConfigurationError("warrant_resolver must be callable")
+            if warrant is not None:
+                raise ConfigurationError("Pass either a static warrant or warrant_resolver, not both")
         if on_deny is not None:
             import warnings
             warnings.warn(
@@ -200,6 +232,8 @@ class TenuoGuard:
         self._signing_key = signing_key
         self._trusted_roots = trusted_roots
         self._warrant_key = warrant_key
+        self._warrant_resolver = warrant_resolver
+        self._warned_state_warrant = False
         self._skill_map = skill_map or {}
         self._arg_map = arg_map or {}
         self._constraints = constraints or {}  # Direct constraints for Tier 1
@@ -415,15 +449,33 @@ class TenuoGuard:
 
                 # Use shared enforcement logic for PoP authorization
                 # This verifies: signature, skill grant, expiry, AND constraint satisfaction
-                result = enforce_tool_call(
-                    tool_name=skill_name,
-                    tool_args=validation_args,
-                    bound_warrant=bound_warrant,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                    approval_handler=self._approval_handler,
-                    approvals=self._approvals,
-                    warrant_chain=warrant_chain,
-                )
+                try:
+                    result = enforce_tool_call(
+                        tool_name=skill_name,
+                        tool_args=validation_args,
+                        bound_warrant=bound_warrant,
+                        trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                        approval_handler=self._approval_handler,
+                        approvals=self._approvals,
+                        warrant_chain=warrant_chain,
+                    )
+                except (
+                    ApprovalDenied,
+                    ApprovalExpired,
+                    ApprovalRequired,
+                    ApprovalVerificationError,
+                    InvalidApproval,
+                ) as e:
+                    # The shared path raises approval failures instead of
+                    # returning a denial. Deny the call the same way as any
+                    # other, instead of letting the exception end the run.
+                    reason = _approval_denial_reason(e)
+                    cp_emitted = self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain, start_ns
+                    )
+                    return self._deny(
+                        reason, tool.name, args, start_ns=start_ns, _cp_already_emitted=cp_emitted
+                    )
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -473,8 +525,9 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                # PoP authorized - tool call is allowed
-                self._audit("tool_allowed", tool.name, args, warrant)
+                # PoP authorized - tool call is allowed (or observed: the shared
+                # observe mode let a denial through, so audit it as one)
+                self._audit_tier2_allow(result, tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -486,6 +539,22 @@ class TenuoGuard:
                     args,
                 )
 
+        return self._before_tool_tier1(tool, args, warrant, skill_name, validation_args, start_ns=start_ns)
+
+    def _before_tool_tier1(
+        self,
+        tool: "BaseTool",
+        args: Dict[str, Any],
+        warrant: Optional["Warrant"],
+        skill_name: str,
+        validation_args: Dict[str, Any],
+        *,
+        start_ns: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply local policy to the warrant already resolved for this call."""
+        import time
+
+        use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
         # =======================================================================
         # Tier 1: Guardrails-Only Authorization (Logic Checks)
         # =======================================================================
@@ -517,43 +586,55 @@ class TenuoGuard:
         # =======================================================================
         # ZERO TRUST: Check ALL arguments against constraints
         # =======================================================================
-        # If we have ANY constraints for this skill, we enforce zero-trust:
-        # - Arguments matching constraints must pass
-        # - Arguments NOT in constraints are REJECTED (unless Wildcard present)
+        # Same rules as the Rust core's ConstraintSet when the skill has any
+        # constraints (no constraints means any arguments, as in the core):
+        # - Every argument needs its own constraint. Wildcard() covers only
+        #   its own argument; "_allow_unknown" is the only opt-out.
+        # - Every constrained argument must be present: ADK passes only the
+        #   arguments the model sent, so an omitted one would run with the
+        #   tool's default unchecked.
+        # - Argument names are not special: a "_"-prefixed argument is a real
+        #   tool argument and is checked like any other.
         if constraints:
-            has_wildcard = any(type(c).__name__ == "Wildcard" for c in constraints.values())
-            allows_unknown = constraints.get("_allow_unknown", False)
+            allows_unknown = constraints.get("_allow_unknown", False) is True
+            checked = {k: c for k, c in constraints.items() if k != "_allow_unknown"}
 
-            for arg_name, value in validation_args.items():
-                if arg_name.startswith("_"):
-                    continue  # Skip internal args like _allow_unknown
+            for arg_name in validation_args:
+                if arg_name not in checked and not allows_unknown:
+                    return self._deny(
+                        f"Unknown argument '{arg_name}' - not in constraints",
+                        tool.name,
+                        args,
+                        start_ns=start_ns,
+                    )
 
+            for arg_name, constraint in checked.items():
+                if arg_name not in validation_args:
+                    return self._deny(
+                        f"Missing required argument '{arg_name}'",
+                        tool.name,
+                        args,
+                        constraint_param=arg_name,
+                        constraint=constraint,
+                        start_ns=start_ns,
+                    )
                 try:
-                    if arg_name in constraints:
-                        constraint = constraints[arg_name]
-                        if not self._check_constraint(constraint, value):
-                            return self._deny(
-                                f"Argument '{arg_name}' violates constraint",
-                                tool.name,
-                                args,
-                                constraint_param=arg_name,
-                                constraint=constraint,
-                                start_ns=start_ns,
-                            )
-                    elif not has_wildcard and not allows_unknown:
-                        # Zero-trust: unknown argument rejected
-                        return self._deny(
-                            f"Unknown argument '{arg_name}' - not in constraints",
-                            tool.name,
-                            args,
-                            start_ns=start_ns,
-                        )
+                    satisfied = self._check_constraint(constraint, validation_args[arg_name])
                 except Exception as e:
                     logger.warning(f"Constraint implementation bug causing denial for '{arg_name}': {e}")
                     return self._deny(
                         f"Argument '{arg_name}' violates constraint (internal validation error)",
                         tool.name,
                         args,
+                        start_ns=start_ns,
+                    )
+                if not satisfied:
+                    return self._deny(
+                        f"Argument '{arg_name}' violates constraint",
+                        tool.name,
+                        args,
+                        constraint_param=arg_name,
+                        constraint=constraint,
                         start_ns=start_ns,
                     )
 
@@ -618,15 +699,33 @@ class TenuoGuard:
             try:
                 bound_warrant = warrant.bind(self._signing_key)
 
-                result = await enforce_tool_call_async(
-                    tool_name=skill_name,
-                    tool_args=validation_args,
-                    bound_warrant=bound_warrant,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
-                    approval_handler=self._approval_handler,
-                    approvals=self._approvals,
-                    warrant_chain=warrant_chain,
-                )
+                try:
+                    result = await enforce_tool_call_async(
+                        tool_name=skill_name,
+                        tool_args=validation_args,
+                        bound_warrant=bound_warrant,
+                        trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                        approval_handler=self._approval_handler,
+                        approvals=self._approvals,
+                        warrant_chain=warrant_chain,
+                    )
+                except (
+                    ApprovalDenied,
+                    ApprovalExpired,
+                    ApprovalRequired,
+                    ApprovalVerificationError,
+                    InvalidApproval,
+                ) as e:
+                    # The shared path raises approval failures instead of
+                    # returning a denial. Deny the call the same way as any
+                    # other, instead of letting the exception end the run.
+                    reason = _approval_denial_reason(e)
+                    cp_emitted = self._collect_approval_denial_receipt(
+                        e, reason, skill_name, validation_args, bound_warrant, warrant_chain, start_ns
+                    )
+                    return self._deny(
+                        reason, tool.name, args, start_ns=start_ns, _cp_already_emitted=cp_emitted
+                    )
 
                 if self._control_plane is not None:
                     latency_us = (time.perf_counter_ns() - start_ns) // 1000
@@ -674,7 +773,7 @@ class TenuoGuard:
                         _cp_already_emitted=True,
                     )
 
-                self._audit("tool_allowed", tool.name, args, warrant)
+                self._audit_tier2_allow(result, tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
@@ -685,8 +784,8 @@ class TenuoGuard:
                     args,
                 )
 
-        # Tier 1 path is CPU-only, safe to delegate to sync
-        return self.before_tool(tool, args, tool_context)
+        # Reuse this hook's resolved warrant; never query the resolver twice.
+        return self._before_tool_tier1(tool, args, warrant, skill_name, validation_args, start_ns=start_ns)
 
     def after_tool(
         self,
@@ -702,6 +801,8 @@ class TenuoGuard:
             None: Use original result
             Any: Replace result (not used here)
         """
+        if self._audit_log is None:
+            return None
         try:
             warrant = self._get_warrant(tool_context)
         except ConfigurationError:
@@ -730,25 +831,50 @@ class TenuoGuard:
         any, leaving any ambient ``chain_scope()`` in effect.
 
         Raises:
-            ConfigurationError: If a state token does not decode.
+            ConfigurationError: If a state token does not decode, or a
+                ScopedWarrant in state belongs to a different agent.
         """
         if self._warrant is not None:
             return self._warrant, self._warrant_chain
         value = None
-        if self._warrant_key and tool_context:
+        if self._warrant_resolver is not None:
+            # The resolver is the only source: session state is not consulted.
+            try:
+                value = self._warrant_resolver(tool_context)
+            except Exception as e:
+                # Tool denials are returned to the model. Keep backend details
+                # only in the exception cause available to the host.
+                raise ConfigurationError("warrant_resolver failed") from e
+            if value is None:
+                raise ConfigurationError("warrant_resolver returned no warrant")
+        elif self._warrant_key and tool_context:
             # Check session_state (standard) then state (fallback)
             if hasattr(tool_context, "session_state"):
                 value = tool_context.session_state.get(self._warrant_key)
             elif hasattr(tool_context, "state"):
                 value = tool_context.state.get(self._warrant_key)
+            if value is not None and not self._warned_state_warrant:
+                self._warned_state_warrant = True
+                logger.warning(
+                    "Tenuo is reading the warrant from session state key %r. Tools and "
+                    "whoever starts the run can write session state and so replace the "
+                    "warrant; pass warrant_resolver= to read it from a trusted source.",
+                    self._warrant_key,
+                )
         if value is None:
             return None, None
-        # A ScopedWarrant around a stack token or list: unwrap it (the plugin
-        # already checked the agent scope). A ScopedWarrant around a Warrant
-        # stays as is, since it delegates attribute access to the warrant.
-        inner = getattr(value, "warrant", None) if hasattr(value, "valid_for_agent") else None
-        if isinstance(inner, (str, list, tuple)):
-            value = inner
+        if hasattr(value, "valid_for_agent"):
+            # A ScopedWarrant is only valid for its agent. Check it here too,
+            # not only in TenuoPlugin, so a guard used as an agent's
+            # before_tool_callback never runs on another agent's warrant.
+            agent_name = getattr(tool_context, "agent_name", None)
+            if not agent_name or not value.valid_for_agent(agent_name):
+                raise ConfigurationError("the session warrant is scoped to a different agent")
+            # Unwrap a ScopedWarrant around a stack token or list. One around
+            # a Warrant stays as is, since it delegates attribute access.
+            inner = getattr(value, "warrant", None)
+            if isinstance(inner, (str, list, tuple)):
+                value = inner
         leaf, parents = split_presented_warrant(value)
         return leaf, (parents if parents is not None else self._warrant_chain)
 
@@ -865,9 +991,17 @@ class TenuoGuard:
         need = meta.get("need", 0)
         reason = result.denial_reason or f"Insufficient approvals: got {got}, need {need}"
 
-        if self._dry_run:
-            logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
-            self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
+        if self._observing():
+            self._observe_denial(tool_name, args, reason, error_type="insufficient_approvals")
+            if self._control_plane is not None and not _cp_already_emitted:
+                self._emit_control_plane_denial(
+                    reason,
+                    tool_name,
+                    args,
+                    start_ns=start_ns,
+                    error_type="insufficient_approvals",
+                    observed=True,
+                )
             return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
@@ -888,6 +1022,69 @@ class TenuoGuard:
             "details": reason if self._denial_detail == "full" else None,
         }
 
+    def _collect_approval_denial_receipt(
+        self,
+        error: BaseException,
+        reason: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        bound_warrant: Any,
+        warrant_chain: Optional[List[Any]],
+        start_ns: Optional[int],
+    ) -> bool:
+        """Collect evidence when ADK turns approval flow control into a denial."""
+        if isinstance(error, ApprovalDenied):
+            error_type = "approval_denied"
+        elif isinstance(error, ApprovalRequired):
+            error_type = "approval_required"
+        else:
+            error_type = "approval_verification_failed"
+
+        result = None
+        try:
+            authorizer = None
+            roots = resolve_trusted_roots(self._trusted_roots)
+            if roots:
+                from tenuo_core import Authorizer
+
+                authorizer = Authorizer(trusted_roots=roots)
+                from tenuo.runtime import apply_runtime_revocation
+
+                apply_runtime_revocation(authorizer)
+            result = EnforcementResult(
+                allowed=False,
+                warrant_id=str(getattr(bound_warrant, "id", "")),
+                tool=tool_name,
+                arguments=args,
+                denial_reason=reason,
+                error_type=error_type,
+                presented_chain=[*_resolve_presented_parents(warrant_chain), bound_warrant.warrant],
+                pop_auth_args=args,
+                authorizer=authorizer,
+            )
+            from tenuo.receipts import collect_enforcement_receipt
+
+            collect_enforcement_receipt(result)
+        except Exception:
+            logger.warning("Approval denial receipt collection failed for '%s'", tool_name, exc_info=True)
+        if self._control_plane is None or result is None:
+            return False
+        try:
+            import time
+            from tenuo_core import encode_warrant_stack
+
+            latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
+            stack = encode_warrant_stack(result.presented_chain)
+            self._control_plane.emit_for_enforcement(
+                result,
+                latency_us=latency_us,
+                warrant_stack_override=stack,
+            )
+            return True
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+            return False
+
     def _deny(
         self,
         reason: str,
@@ -900,34 +1097,30 @@ class TenuoGuard:
         _cp_already_emitted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Handle denial based on on_denial setting."""
-        # Dry run mode: log but don't block
-        if self._dry_run:
-            logger.warning(f"DRY RUN: Would deny {tool_name} - {reason}")
-            self._audit("tool_dry_run_denied", tool_name, args, reason=reason)
-            return None  # Allow through in dry run
+        # Observe mode (global) or this guard's dry_run: log but don't block
+        if self._observing():
+            self._observe_denial(tool_name, args, reason, constraint_param=constraint_param)
+            if self._control_plane is not None and not _cp_already_emitted:
+                self._emit_control_plane_denial(
+                    reason,
+                    tool_name,
+                    args,
+                    start_ns=start_ns,
+                    constraint_param=constraint_param,
+                    observed=True,
+                )
+            return None
 
         self._audit("tool_denied", tool_name, args, reason=reason)
 
         if self._control_plane is not None and not _cp_already_emitted:
-            import time
-            latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
-            warrant_id = ""
-            if self._warrant is not None:
-                _wid = getattr(self._warrant, "id", None)
-                if _wid is not None:
-                    warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
-            pseudo = EnforcementResult(
-                allowed=False,
-                warrant_id=warrant_id,
-                tool=tool_name,
-                denial_reason=reason,
-                constraint_violated=constraint_param,
-                arguments=args,
+            self._emit_control_plane_denial(
+                reason,
+                tool_name,
+                args,
+                start_ns=start_ns,
+                constraint_param=constraint_param,
             )
-            try:
-                self._control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
-            except Exception:
-                logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
 
         if self._on_denial == "raise":
             raise ToolAuthorizationError(reason, tool_name, args)
@@ -962,6 +1155,101 @@ class TenuoGuard:
 
         return result
 
+    def _emit_control_plane_denial(
+        self,
+        reason: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        start_ns: Optional[int] = None,
+        constraint_param: Optional[str] = None,
+        error_type: Optional[str] = None,
+        observed: bool = False,
+    ) -> None:
+        """Emit a locally produced denial, including observe-mode decisions."""
+        import time
+
+        control_plane = self._control_plane
+        if control_plane is None:
+            return
+        latency_us = ((time.perf_counter_ns() - start_ns) // 1000) if start_ns is not None else 0
+        warrant_id = ""
+        if self._warrant is not None:
+            _wid = getattr(self._warrant, "id", None)
+            if _wid is not None:
+                warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+        pseudo = EnforcementResult(
+            allowed=False,
+            observed=observed,
+            warrant_id=warrant_id,
+            tool=tool_name,
+            denial_reason=reason,
+            error_type=error_type,
+            constraint_violated=constraint_param,
+            arguments=args,
+        )
+        try:
+            control_plane.emit_for_enforcement(pseudo, latency_us=latency_us)
+        except Exception:
+            logger.warning("Control plane emission failed for '%s'; audit event lost", tool_name, exc_info=True)
+
+    def _observing(self) -> bool:
+        """True when denials should be recorded but not enforced.
+
+        ``dry_run`` is observe mode scoped to this guard; global observe mode
+        (``tenuo.configure(mode="observe")``) applies to every guard.
+        """
+        return self._dry_run or not should_block_violation()
+
+    def _observe_denial(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        reason: str,
+        *,
+        constraint_param: Optional[str] = None,
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Record a would-deny the same way as the shared observe mode."""
+        warrant_id = None
+        if self._warrant is not None:
+            _wid = getattr(self._warrant, "id", None)
+            if _wid is not None:
+                warrant_id = _wid.hex() if hasattr(_wid, "hex") else str(_wid)
+        _log_observed_denial(
+            EnforcementResult(
+                allowed=False,
+                tool=tool_name,
+                arguments=args,
+                denial_reason=reason,
+                constraint_violated=constraint_param,
+                error_type=error_type,
+                warrant_id=warrant_id,
+            )
+        )
+        # Event name kept for existing audit consumers; ``observed`` matches
+        # the field other adapters use.
+        self._audit("tool_dry_run_denied", tool_name, args, reason=reason, observed=True)
+
+    def _audit_tier2_allow(self, result: EnforcementResult, tool_name: str, args: Dict[str, Any], warrant: Any) -> None:
+        """Audit a Tier 2 decision the shared path returned as allowed.
+
+        In observe mode the shared path returns allowed=True, observed=True
+        for a denial it already logged; record that as an observed denial, not
+        as an allow.
+        """
+        if getattr(result, "observed", False):
+            self._audit(
+                "tool_dry_run_denied",
+                tool_name,
+                args,
+                warrant,
+                reason=result.denial_reason or "",
+                observed=True,
+            )
+        else:
+            self._audit("tool_allowed", tool_name, args, warrant)
+
     def _audit(
         self,
         event: str,
@@ -976,7 +1264,7 @@ class TenuoGuard:
 
         try:
             record = {
-                "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "event": event,
                 "tool": tool_name,
                 "args": (
@@ -1077,6 +1365,7 @@ class GuardBuilder:
         self._warrant_chain: Optional[List["Warrant"]] = None
         self._signing_key: Optional["SigningKey"] = None
         self._warrant_key: Optional[str] = None
+        self._warrant_resolver: Optional[Callable[[Any], Any]] = None
         self._skill_map: Dict[str, str] = {}
         self._arg_map: Dict[str, Dict[str, str]] = {}
         self._constraints: Dict[str, Dict[str, Any]] = {}  # Direct constraints
@@ -1197,6 +1486,22 @@ class GuardBuilder:
             self for chaining
         """
         self._warrant_key = key
+        return self
+
+    def warrant_resolver(self, resolver: Callable[[Any], Any]) -> "GuardBuilder":
+        """
+        Set a callable that returns the warrant for each tool call.
+
+        The resolver receives the ADK ``ToolContext`` and returns the warrant
+        from a source the model cannot write (for example a server-side store
+        keyed by ``tool_context.user_id``), or ``None`` to deny the call even
+        with local allow rules. Cannot be combined with a static warrant.
+        When set, session state is not consulted.
+
+        Returns:
+            self for chaining
+        """
+        self._warrant_resolver = resolver
         return self
 
     def allow(self, tool_name: str, **constraints: Any) -> "GuardBuilder":
@@ -1432,4 +1737,5 @@ class GuardBuilder:
             control_plane=self._control_plane,
             trusted_roots=self._trusted_roots,
             warrant_chain=self._warrant_chain,
+            warrant_resolver=self._warrant_resolver,
         )

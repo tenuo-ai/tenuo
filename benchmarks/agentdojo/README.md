@@ -4,7 +4,8 @@
 > **This benchmark integration has known methodological limitations and is under active development.**
 > Results should not be cited in publications or used as authoritative performance claims.
 > We are collaborating with AgentDojo authors on a proper evaluation harness.
-> See [AGENTDOJO_COLLABORATION_NOTES.md](./AGENTDOJO_COLLABORATION_NOTES.md) for the full technical discussion.
+> The current experiment, with methodology, raw traces and failure analysis, is in
+> [tenuo-ai/agentdojo-experiment](https://github.com/tenuo-ai/agentdojo-experiment).
 
 ---
 
@@ -61,8 +62,6 @@ To make task-level ASR meaningful for authorization systems, we need at least on
 3. **Deterministic scripted sequences** — eliminate LLM stochasticity for reproducible enforcement testing
 4. **Constraint design reference** — example policies that actually achieve 0% ASR, showing what sufficient constraints look like
 
-See [AGENTDOJO_COLLABORATION_NOTES.md](./AGENTDOJO_COLLABORATION_NOTES.md) for detailed proposals on all four.
-
 ---
 
 ## Running It
@@ -106,13 +105,13 @@ python -m benchmarks.agentdojo.analyze results/workspace/<timestamp>/
 ```
 benchmarks/agentdojo/
 ├── README.md                        ← This file
-├── AGENTDOJO_COLLABORATION_NOTES.md ← Full technical analysis + collaboration proposal
 ├── evaluate.py                      ← CLI entry point
 ├── harness.py                       ← AgentDojo integration layer
 ├── task_policies.py                 ← Warrant definitions for each scenario
 ├── tool_wrapper.py                  ← Tenuo enforcement adapter
 ├── analyze.py                       ← Results analysis and report generation
-├── compare_baseline.py              ← Matched baseline comparison runner
+├── run_batch.py, run_batch.sh       ← Batch runners
+├── run_batch_safe.py                ← Sequential batch runner that paces for rate limits
 └── warrant_templates.py             ← Reusable warrant builders
 ```
 

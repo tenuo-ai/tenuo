@@ -18,6 +18,7 @@ fn scalar_value_strategy() -> impl Strategy<Value = ConstraintValue> {
         (-10_000.0f64..10_000.0f64)
             .prop_filter("finite float", |f| f.is_finite())
             .prop_map(ConstraintValue::Float),
+        (-100_000i64..=100_000i64).prop_map(|i| ConstraintValue::Float(i as f64)),
         "[a-zA-Z0-9_\\-]{0,16}".prop_map(ConstraintValue::String),
     ]
 }

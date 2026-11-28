@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import time
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -142,7 +141,7 @@ def test_shared_enforcement_raises_resolved_message():
 def test_fastapi_and_mcp_share_resolved_message():
     pytest.importorskip("fastapi")
 
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from tenuo.fastapi import TenuoGuard, configure_tenuo
 
     issuer = SigningKey.generate()
@@ -159,11 +158,8 @@ def test_fastapi_and_mcp_share_resolved_message():
 
     app = FastAPI()
     configure_tenuo(app, trusted_issuers=[issuer.public_key])
-    request = SimpleNamespace(
-        state=SimpleNamespace(tenuo_parents=[]),
-        path_params={},
-        query_params={},
-    )
+    request = Request({"type": "http", "headers": [], "query_string": b""})
+    request.state.tenuo_parents = []
     guard = TenuoGuard("email.delete", extract_args=lambda _: args)
 
     with pytest.raises(HTTPException) as fastapi_exc:

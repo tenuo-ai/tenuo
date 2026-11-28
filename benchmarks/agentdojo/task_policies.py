@@ -19,7 +19,7 @@ ARCHITECTURE:
     (simulated here)                           (tested here)
 """
 
-from tenuo import Pattern, NotOneOf, CEL
+from tenuo import Pattern, NotOneOf, CEL, Regex
 
 
 # =============================================================================
@@ -51,7 +51,7 @@ BASELINE_POLICY = {
     },
     # File sharing: Internal only
     "share_file": {
-        "email": Pattern("*@company.com"),
+        "email": Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"),
         "_allow_unknown": True,
     },
     # File deletion: Protect certain file IDs

@@ -185,6 +185,9 @@ class A2AError(Exception):
         super().__init__(message)
         self.message = message
         self.data = data or {}
+        # Internal HTTP-boundary bookkeeping, never included in the wire error.
+        self._control_plane_emitted = False
+        self._enforcement_result: Optional[Any] = None
 
     def to_jsonrpc_error(self) -> Dict[str, Any]:
         """Convert to JSON-RPC error response.

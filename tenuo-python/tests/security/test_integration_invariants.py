@@ -335,7 +335,7 @@ class TestA2AInvariants:
         k1, k2 = SigningKey.generate(), SigningKey.generate()
         root_w = _root_warrant(root_key, root_key)
         mid_w = _attenuate(root_w, root_key, k1)
-        leaf_w = _attenuate(mid_w, k1, k2)
+        leaf_w = _attenuate(mid_w, k1, k2, ttl=60)  # shorter than mid_w's 300s
 
         with pytest.raises(ChainValidationError):
             await server.validate_warrant(

@@ -1,7 +1,8 @@
 """Property tests for FastAPI integration (fastapi.py).
 
 Verifies:
-- TenuoGuard._enforce_with_pop_signature calls enforce_tool_call (Rust path)
+- TenuoGuard._enforce_with_pop_signature reaches the shared enforcement path in verify mode
+- A PoP signed by a key other than the holder's is denied
 - Warrant header extraction handles arbitrary strings without crashing
 - Trusted roots resolution: no roots -> denial (fail-closed)
 """
@@ -15,21 +16,22 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from tenuo._enforcement import enforce_tool_call
+from tenuo import SigningKey
+from tenuo._enforcement import _enforce_tool_call_impl
 
 from .strategies import st_warrant_bundle
 
 
 # ---------------------------------------------------------------------------
-# TenuoGuard calls enforce_tool_call (Rust path)
+# TenuoGuard reaches the shared enforcement path (verify_inbound_call)
 # ---------------------------------------------------------------------------
 
 
 class TestFastAPIGuardCallsRust:
     @given(data=st_warrant_bundle())
     @settings(max_examples=20)
-    def test_enforce_with_pop_calls_enforce_tool_call(self, data):
-        """TenuoGuard._enforce_with_pop_signature delegates to enforce_tool_call."""
+    def test_enforce_with_pop_calls_enforcement(self, data):
+        """TenuoGuard._enforce_with_pop_signature delegates to the shared enforcement path."""
         warrant, key, tool, args = data
         pop = bytes(warrant.sign(key, tool, args, int(time.time())))
 
@@ -42,7 +44,7 @@ class TestFastAPIGuardCallsRust:
         try:
             guard = TenuoGuard(tool)
 
-            with patch("tenuo._enforcement.enforce_tool_call", wraps=enforce_tool_call) as spy:
+            with patch("tenuo._enforcement._enforce_tool_call_impl", wraps=_enforce_tool_call_impl) as spy:
                 guard._enforce_with_pop_signature(warrant, tool, args, pop)
                 spy.assert_called_once()
         finally:
@@ -64,10 +66,35 @@ class TestFastAPIGuardCallsRust:
         try:
             guard = TenuoGuard(tool)
 
-            with patch("tenuo._enforcement.enforce_tool_call", wraps=enforce_tool_call) as spy:
+            with patch("tenuo._enforcement._enforce_tool_call_impl", wraps=_enforce_tool_call_impl) as spy:
                 guard._enforce_with_pop_signature(warrant, tool, args, pop)
                 _, kwargs = spy.call_args
                 assert kwargs.get("verify_mode") == "verify"
+        finally:
+            _config.pop("trusted_issuers", None)
+
+    @given(data=st_warrant_bundle())
+    @settings(max_examples=20)
+    def test_pop_from_other_key_denied(self, data):
+        """A PoP signed by a key other than the warrant holder's is denied."""
+        warrant, key, tool, args = data
+        pop = bytes(warrant.sign(SigningKey.generate(), tool, args, int(time.time())))
+
+        try:
+            from fastapi import HTTPException
+            from tenuo.fastapi import TenuoGuard, _config
+        except ImportError:
+            pytest.skip("fastapi not installed")
+
+        _config["trusted_issuers"] = [key.public_key]
+        try:
+            guard = TenuoGuard(tool)
+            try:
+                result = guard._enforce_with_pop_signature(warrant, tool, args, pop)
+            except HTTPException as e:
+                assert e.status_code == 403
+            else:
+                assert not result.allowed
         finally:
             _config.pop("trusted_issuers", None)
 

@@ -207,6 +207,7 @@ clean:
 
 version-check:
 	@PYPROJECT=$$(grep '^version = ' tenuo-python/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | sed 's/a/-alpha./' | sed 's/b/-beta./'); \
+	PYTHON_INIT=$$(grep '^__version__ = ' tenuo-python/tenuo/__init__.py | head -1 | sed 's/__version__ = "\(.*\)"/\1/' | sed 's/a/-alpha./' | sed 's/b/-beta./'); \
 	PYTHON_CARGO=$$(grep '^version = ' tenuo-python/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	CORE_CARGO=$$(grep '^version = ' tenuo-core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	WASM_CARGO=$$(grep '^version = ' tenuo-wasm/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'); \
@@ -216,9 +217,10 @@ version-check:
 	fi; \
 	TS_CORE=$$(node -p "require('./tenuo-ts/packages/core/package.json').version"); \
 	TS_MCP=$$(node -p "require('./tenuo-ts/packages/mcp/package.json').version"); \
-	if [ "$$PYPROJECT" != "$$PYTHON_CARGO" ] || [ "$$PYPROJECT" != "$$CORE_CARGO" ] || [ "$$PYPROJECT" != "$$WASM_CARGO" ]; then \
+	if [ "$$PYPROJECT" != "$$PYTHON_INIT" ] || [ "$$PYPROJECT" != "$$PYTHON_CARGO" ] || [ "$$PYPROJECT" != "$$CORE_CARGO" ] || [ "$$PYPROJECT" != "$$WASM_CARGO" ]; then \
 		echo "❌ Version mismatch:"; \
 		echo "  pyproject.toml: $$PYPROJECT"; \
+		echo "  tenuo-python/tenuo/__init__.py: $$PYTHON_INIT"; \
 		echo "  tenuo-python/Cargo.toml: $$PYTHON_CARGO"; \
 		echo "  tenuo-core/Cargo.toml: $$CORE_CARGO"; \
 		echo "  tenuo-wasm/Cargo.toml: $$WASM_CARGO"; \

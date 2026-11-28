@@ -205,7 +205,11 @@ export type ToolPolicy<TArgs = undefined> = {
   /**
    * Host ceiling. AND'd with the session in Rust.
    * Non-empty maps are zero-trust: every call argument must be named here.
-   * `{}` means no extra ceiling (session/warrant only).
+   * `{}` means no extra ceiling (session/warrant only). Required: a missing
+   * `allow` or an unknown policy key throws. `session({ tools })` refuses a
+   * tool whose `allow` is `{}` unless the session's own `allow` names that
+   * capability explicitly, because an empty capability in a warrant accepts
+   * any arguments.
    */
   readonly allow: [NonNullable<TArgs>] extends [object]
     ? [KeysOfUnion<NonNullable<TArgs>>] extends [never]
@@ -219,11 +223,30 @@ export type ToolPolicy<TArgs = undefined> = {
             : { readonly [Field in KeysOfUnion<NonNullable<TArgs>>]?: ConstraintExpr }
     : AllowPolicy;
   readonly capability?: string;
+  /**
+   * Makes approvals one-use for this tool. When a call that carried
+   * `approvals` is allowed, each approval envelope that matches the call is
+   * recorded here before the tool body runs; an envelope the store has
+   * already seen denies with `TENUO_INSUFFICIENT_APPROVALS`. Same
+   * `NonceStore` shape as the MCP verify path; `memoryNonceStore()` works
+   * for one process. The store must remember a key for as long as an
+   * approval can live (one hour by default), so give `memoryNonceStore()` a
+   * matching `ttlSeconds`. A store that throws, rejects, or returns a
+   * non-boolean fails closed with "Replay store unavailable".
+   */
+  readonly nonceStore?: NonceStore;
+  /** Isolated. Called when `nonceStore.checkAndRecord` throws or rejects. */
+  readonly onNonceStoreError?: (error: unknown) => void | Promise<void>;
 };
 
 /** Compile-time brand only — never assigned at runtime. Do not `in`/`has` this key. */
 declare const protectedBrand: unique symbol;
 
+/**
+ * Tenuo's per-call options. Other keys pass through to the wrapped tool's own
+ * `execute`, except keys that look like a misspelled Tenuo option
+ * (`sesion`, `approval`, `onReciept`), which throw instead of being ignored.
+ */
 export type ExecuteOptions = {
   readonly session?: Session;
   /** Already-signed approval envelopes (hex, standard base64, or CBOR bytes). */
@@ -364,6 +387,79 @@ export type ApprovalInfo = {
   readonly error?: string;
 };
 
+/**
+ * Decoded view of one warrant. Not authorization: decoding checks no trusted
+ * root, chain linkage, expiry, or revocation. Use `explainWarrant()` for diagnostics and
+ * `verify()` for authorization.
+ */
+export type WarrantInfo = {
+  readonly id: string;
+  /** Signed extension bytes, hex encoded. Includes the full approval policy at
+   * `extensions["tenuo.approval_gates"]` when conditional/tool gates are set.
+   */
+  readonly extensions: Readonly<Record<string, string>>;
+  readonly kind: "execution" | "issuer";
+  /** Issuer tool scope; absent on execution warrants. */
+  readonly issuableTools?: readonly string[];
+  readonly maxIssueDepth?: number;
+  /** Full core ConstraintSet for an issuer's signed issuance ceiling.
+   * Absent when no bounds were set. Uses the same lossless form as capabilities.
+   */
+  readonly constraintBounds?: Readonly<Record<string, unknown>>;
+  /** Hex public key that signed this warrant (the root issuer at depth 0). */
+  readonly issuerPublicKey: string;
+  /** Hex public key the warrant is bound to. */
+  readonly holderPublicKey: string;
+  readonly depth: number;
+  readonly tools: readonly string[];
+  /** Lossless core ConstraintSet representation per tool: constraints plus
+   * optional_fields / allow_unknown when set. Constraints use [type_id, body]
+   * encoding, retaining details such as exclusive range bounds. Inspection rejects
+   * integers outside JavaScript's safe range rather than returning rounded values.
+   */
+  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly expired: boolean;
+  readonly terminal: boolean;
+  /** Hex keys whose signed approvals the gated tools need. Empty when ungated. */
+  readonly requiredApprovers: readonly string[];
+  readonly minApprovals?: number;
+};
+
+export type ExplainWarrantOptions = {
+  /** Signed approval envelopes (hex, standard or URL-safe base64, or CBOR bytes). */
+  readonly approvals?: readonly (string | Uint8Array)[];
+};
+
+/** Diagnostic evidence only. Never authorizes execution; use verify() for that.
+ * Uses current time and loaded revocation state, not historical execution evidence.
+ * Does not evaluate boundary-specific policy callbacks or tool ceilings.
+ *
+ * Invariants: every result retains kind="diagnostic" and possession="not_checked".
+ * No aggregate authorization verdict, Session, PresentedCall, or receipt is issued.
+ * A report is never accepted in place of a Session or presented proof at execution.
+ * Execution rechecks current validity and the exact invocation independently;
+ * successful diagnostics must never be used to bypass verify() or a protected tool.
+ */
+export type WarrantExplanation = {
+  readonly kind: "diagnostic";
+  readonly chain: { readonly status: "valid" | "invalid" | "not_evaluated" };
+  readonly constraints: { readonly status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  readonly approvals: {
+    readonly status: "satisfied" | "required" | "not_required" | "not_evaluated";
+    readonly valid?: number;
+    readonly required?: number;
+    /** Invalid, expired, unrelated or duplicate envelopes excluded from the count. */
+    readonly rejected?: number;
+  };
+  readonly possession: { readonly status: "not_checked" };
+  readonly code?: TenuoErrorCode;
+  readonly message?: string;
+  readonly rootPublicKey?: string;
+  readonly holderPublicKey?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------
@@ -428,7 +524,10 @@ export type NarrowOptions = {
    * cannot authorize here. Hand `toWire()` to that agent.
    */
   readonly holder?: PublicKeyHandle;
-  /** Child lifetime. Clamped to what the parent has left. */
+  /**
+   * Child lifetime. A value longer than the parent has left is clamped to the
+   * parent's expiry, not rejected: the child never outlives the parent.
+   */
   readonly ttlSeconds?: number;
   /** The child's holder cannot delegate further. */
   readonly terminal?: boolean;
@@ -439,7 +538,7 @@ export type NarrowOptions = {
   readonly agentId?: string;
   /** Approvers can only be added. */
   readonly addApprovers?: readonly PublicKeyHandle[];
-  /** The threshold can only go up. */
+  /** The threshold can only go up. A value below the parent's throws. */
   readonly minApprovals?: number;
 };
 
@@ -648,6 +747,13 @@ export interface Session {
   readonly [Symbol.toStringTag]: "TenuoSession";
   /** Warrant tokens, root first. Does not include the holder secret. */
   toWire(): readonly string[];
+  /**
+   * The whole chain as one string: a CBOR warrant stack in URL-safe base64,
+   * the same encoding as `PresentedCall.warrant`. Use it where only a single
+   * string fits (an environment variable, a header). `sessionFromWire()`
+   * imports it. Does not include the holder secret.
+   */
+  toWireString(): string;
   /** SHA-256 of `(warrant_id, tool, canonical args)`. App-level idempotency, not PoP. */
   dedupKey(tool: string, args: Readonly<Record<string, unknown>>): string;
   /** Holder public key, depth, ceiling, lifetime, tools. Never the secret. */
@@ -703,6 +809,16 @@ export interface Tenuo {
   issuerPublicKey(): PublicKeyHandle;
   /** What the session would decide for `tool(args)`, field by field. Never runs the tool. */
   explain(session: Session, tool: string, args: Readonly<Record<string, unknown>>): Explanation;
+  /** Diagnose chain, constraints and approvals without a holder key.
+   * Never authorizes execution: possession remains not_checked.
+   * Accepts a token, stack string, or token array from toWire().
+   */
+  explainWarrant(
+    warrant: string | readonly string[],
+    tool: string,
+    args: Readonly<Record<string, unknown>>,
+    options?: ExplainWarrantOptions,
+  ): WarrantExplanation;
   /** Everything an approval service needs to present `tool(args)` to a human. */
   approvalRequest(session: Session, tool: string, args: Readonly<Record<string, unknown>>): ApprovalRequest;
   /** Holder-signed proof that this session is the one asking for `tool(args)`. */

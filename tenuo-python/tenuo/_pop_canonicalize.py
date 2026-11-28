@@ -1,8 +1,8 @@
 """Constraint view of tool-call arguments.
 
 Proof-of-possession covers the argument JSON, including ``None``. Warrant
-matching uses this narrower view so an optional null does not become an
-unknown field:
+matching retains every supplied value for signed optional fields. For legacy
+fields, it uses the following normalization:
 
 * Drop any top-level key whose value is ``None``.
 * Recurse into list values to drop ``None`` elements.
@@ -11,7 +11,7 @@ unknown field:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping
+from typing import Any, Collection, Dict, Iterable, List, Mapping
 
 
 def _clean_list(value: List[Any]) -> List[Any]:
@@ -32,7 +32,9 @@ def _clean_list(value: List[Any]) -> List[Any]:
     return cleaned
 
 
-def strip_none_values(args: Mapping[str, Any]) -> Dict[str, Any]:
+def strip_none_values(
+    args: Mapping[str, Any], *, preserve_fields: Collection[str] = ()
+) -> Dict[str, Any]:
     """Return the constraint view: top-level ``None`` keys and list nulls dropped.
 
     Nested dicts are left unchanged. Proof-of-possession does not use this
@@ -40,12 +42,18 @@ def strip_none_values(args: Mapping[str, Any]) -> Dict[str, Any]:
 
     Args:
         args: Tool-call argument dict (e.g., MCP ``params.arguments``).
+        preserve_fields: Fields whose supplied values must remain unchanged,
+            including explicit nulls and null elements inside lists.
 
     Returns:
-        A new dict with ``None`` values removed. The input is not modified.
+        A new dict with legacy fields normalized and preserved fields unchanged.
+        The input is not modified.
     """
     out: Dict[str, Any] = {}
     for key, value in args.items():
+        if key in preserve_fields:
+            out[key] = value
+            continue
         if value is None:
             continue
         if isinstance(value, list):
@@ -55,4 +63,16 @@ def strip_none_values(args: Mapping[str, Any]) -> Dict[str, Any]:
     return out
 
 
-__all__ = ["strip_none_values"]
+def constraint_view(
+    args: Mapping[str, Any], tool: str, warrants: Iterable[Any]
+) -> Dict[str, Any]:
+    """Keep optional fields intact throughout the presented warrant chain.
+
+    Presence rules are read from the signed native policy. Rust remains the
+    authorizer. Required-only warrants retain their legacy null normalization.
+    """
+    optional = {field for warrant in warrants for field in warrant.optional_fields(tool)}
+    return strip_none_values(args, preserve_fields=optional)
+
+
+__all__ = ["strip_none_values", "constraint_view"]

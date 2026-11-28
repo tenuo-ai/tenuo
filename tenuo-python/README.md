@@ -5,8 +5,6 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **Status: v0.2 - Production/Stable.** Core semantics are stable. See [CHANGELOG](https://github.com/tenuo-ai/tenuo/blob/main/CHANGELOG.md).
-
 The Python SDK for [Tenuo](https://github.com/tenuo-ai/tenuo). A warrant is a signed grant of which tools an agent may call, with which argument constraints, and for how long. Tenuo checks every tool call against it before the tool runs, so a prompt-injected or confused agent cannot act outside its task. Warrants are bound to the agent holding them, can only narrow when delegated to another agent, verify offline, and produce signed allow/deny receipts. Adapters cover LangChain, LangGraph, CrewAI, the OpenAI Agents SDK, Google ADK, AutoGen, MCP (official SDK and FastMCP), A2A, FastAPI, and Temporal.
 
 ## Installation
@@ -296,6 +294,25 @@ keyring = Keyring(
 all_pubkeys = keyring.all_public_keys
 ```
 
+## OAuth Integration
+
+If your agents already sign in with OAuth (through Keycloak, an API gateway,
+or as a GitHub Actions run), the [OAuth adapter](../docs/oauth.md) gives each
+task a warrant for only what that task needs. Your login flow and gateway stay
+as they are. See the [gateway recipe](examples/oauth/gateway/README.md) and the
+[browser-to-MCP example](examples/oauth/README.md).
+
+## SPIFFE Integration
+
+Use SPIFFE/SPIRE workload identity to authenticate warrant issuance, then use
+Tenuo to enforce task scope and delegation at tools. The X.509-SVID adapter
+includes an mTLS issuance endpoint and agent client, takes SVIDs from the
+SPIRE Workload API or from files, following renewals, and accepts JWT-SVIDs
+over HTTPS where mTLS cannot reach the issuer, or the identity a mesh proxy
+forwards where agents have only a sidecar. It requires an explicit
+task policy and proof of possession of a separate holder key. See the [adapter guide](../docs/spiffe.md) and
+[runnable SPIRE demo](examples/spiffe/README.md).
+
 ## FastAPI Integration
 
 ```python
@@ -367,14 +384,14 @@ Direct protection for OpenAI's Chat Completions and Responses APIs:
 ```python
 import openai
 from tenuo import Shlex
-from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe
+from tenuo.openai import GuardBuilder, Regex, Subpath, UrlSafe
 
 # Tier 1: Guardrails (quick hardening)
 client = (GuardBuilder(openai.OpenAI())
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
     .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
-    .allow("send_email", to=Pattern("*@company.com"))
+    .allow("send_email", to=Regex(r"^[A-Za-z0-9._%+-]+@company\.com$"))
     .deny("delete_file")
     .build())
 
@@ -495,7 +512,7 @@ server = (A2AServerBuilder()
     .registration_handler(my_handler) # Enable CSR handshake
     .build())
 
-@server.skill("search_papers", constraints={"sources": UrlSafe})
+@server.skill("search_papers", constraints={"sources": UrlSafe()})
 async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
 
@@ -515,7 +532,7 @@ See [A2A Integration](https://tenuo.ai/a2a) for full documentation.
 
 ## Temporal Integration
 
-_(Requires Python ≥3.10 and `temporalio>=1.23.0`)_
+_(Requires Python ≥3.10 and `temporalio>=1.33.0`)_
 
 Warrant-based authorization for Temporal workflows and activities. The plugin wires the client interceptor, worker interceptor, and sandboxed workflow runner (with PyO3 passthrough) in one step:
 

@@ -13,9 +13,10 @@
 use crate::error::{Error, Result};
 use crate::SIGNATURE_CONTEXT;
 use ed25519_dalek::{
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
     Signature as DalekSignature, Signer, SigningKey as Ed25519SigningKey, VerifyingKey,
 };
-use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
+use pkcs8::LineEnding;
 use rand::TryRng;
 use secrecy::{CloneableSecret, ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ pub struct SigningKey {
 }
 
 // Wrapper to implement Zeroize and Clone for Ed25519SigningKey
-// ed25519-dalek 2.x SigningKey implements ZeroizeOnDrop.
+// ed25519-dalek SigningKey implements ZeroizeOnDrop.
 // We implement Zeroize as a no-op because the inner type handles it on Drop.
 struct Ed25519SigningKeyWrapper(Ed25519SigningKey);
 
@@ -196,7 +197,7 @@ impl PublicKey {
     pub fn from_pem(pem: &str) -> Result<Self> {
         let verifying_key = VerifyingKey::from_public_key_pem(pem)
             .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
-        Ok(Self { verifying_key })
+        Self::from_bytes(&verifying_key.to_bytes())
     }
 
     /// Convert the public key to a PEM string.
@@ -337,6 +338,10 @@ impl<'de> Deserialize<'de> for PublicKey {
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
 
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::invalid_length(3, &self));
+                    }
+
                     let arr: [u8; 32] = bytes
                         .try_into()
                         .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
@@ -434,6 +439,10 @@ impl<'de> Deserialize<'de> for Signature {
                         .next_element()?
                         .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
 
+                    if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        return Err(serde::de::Error::invalid_length(3, &self));
+                    }
+
                     let arr: [u8; 64] = bytes
                         .try_into()
                         .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
@@ -465,6 +474,86 @@ mod tests {
         let signature = keypair.sign(message);
 
         assert!(keypair.public_key().verify(message, &signature).is_ok());
+    }
+
+    #[test]
+    fn rfc8032_signature_vector_is_unchanged() {
+        let seed = hex::decode("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+            .unwrap();
+        let seed: [u8; 32] = seed.try_into().unwrap();
+        let expected_public =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
+        let expected_signature = hex::decode(
+            "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155\
+             5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+        )
+        .unwrap();
+
+        let key = SigningKey::from_bytes(&seed);
+        let signature = key.sign_raw(b"");
+
+        assert_eq!(key.public_key().to_bytes().as_slice(), expected_public);
+        assert_eq!(signature.to_bytes().as_slice(), expected_signature);
+        assert!(key.public_key().verify_raw(b"", &signature).is_ok());
+    }
+
+    #[test]
+    fn legacy_pkcs8_and_spki_pem_remain_compatible() {
+        const PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
+MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n\
+-----END PRIVATE KEY-----\n";
+        const PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\n\
+MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n\
+-----END PUBLIC KEY-----\n";
+
+        let signing_key = SigningKey::from_pem(PRIVATE_PEM).unwrap();
+        let public_key = PublicKey::from_pem(PUBLIC_PEM).unwrap();
+
+        assert_eq!(signing_key.public_key(), public_key);
+        assert_eq!(
+            SigningKey::from_pem(&signing_key.to_pem())
+                .unwrap()
+                .secret_key_bytes(),
+            signing_key.secret_key_bytes()
+        );
+        assert_eq!(
+            PublicKey::from_pem(&public_key.to_pem()).unwrap(),
+            public_key
+        );
+    }
+
+    #[test]
+    fn weak_public_key_is_rejected_from_pem() {
+        const WEAK_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\n\
+MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n\
+-----END PUBLIC KEY-----\n";
+
+        assert!(PublicKey::from_bytes(&[0; 32]).is_err());
+        assert!(PublicKey::from_pem(WEAK_PUBLIC_PEM).is_err());
+    }
+
+    #[test]
+    fn binary_key_and_signature_reject_trailing_tuple_elements() {
+        let key = SigningKey::generate();
+        let public_key = key.public_key();
+        let signature = key.sign_raw(b"message");
+
+        let key_tuple = (
+            ED25519_ALG_ID,
+            serde_bytes::ByteBuf::from(public_key.to_bytes().to_vec()),
+            0u8,
+        );
+        let key_bytes = crate::wire::to_vec(&key_tuple).unwrap();
+        assert!(ciborium::de::from_reader::<PublicKey, _>(&key_bytes[..]).is_err());
+
+        let signature_tuple = (
+            ED25519_ALG_ID,
+            serde_bytes::ByteBuf::from(signature.to_bytes().to_vec()),
+            0u8,
+        );
+        let signature_bytes = crate::wire::to_vec(&signature_tuple).unwrap();
+        assert!(ciborium::de::from_reader::<Signature, _>(&signature_bytes[..]).is_err());
     }
 
     #[test]

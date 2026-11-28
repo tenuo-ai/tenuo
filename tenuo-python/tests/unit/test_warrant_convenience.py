@@ -17,13 +17,37 @@ from datetime import timedelta
 import pytest
 
 from tenuo import (
+    All,
+    AnyOf,
+    Not,
+    Pattern,
+    Range,
     BoundWarrant,
+    Exact,
+    OneOf,
     SigningKey,
     Warrant,
     diagnose,
     info,
 )
 from tenuo.testing import allow_all, deterministic_headers
+
+
+def _replace_signed_payload(warrant, key, old, new):
+    """Model a Rust/newer issuer without adding a CBOR test dependency."""
+    raw = bytes(warrant.to_bytes())
+    assert raw[:2] == b"\x83\x01"
+    assert raw[2] in (0x58, 0x59)
+    length_bytes = 1 if raw[2] == 0x58 else 2
+    start = 3 + length_bytes
+    end = start + int.from_bytes(raw[3:start], "big")
+    payload = raw[start:end]
+    assert payload.count(old) == 1
+    payload = payload.replace(old, new)
+    assert len(payload) < 65536
+    header = (b"\x58" + bytes([len(payload)])) if len(payload) < 256 else b"\x59" + len(payload).to_bytes(2, "big")
+    signature = bytes(key.sign_raw(b"tenuo-warrant-v1\x01" + payload))
+    return Warrant.from_bytes(b"\x83\x01" + header + payload + b"\x82\x01\x58\x40" + signature)
 
 
 class TestCoreProperties:
@@ -111,6 +135,165 @@ class TestDebuggingMethods:
         assert "search" in explanation
         assert "read" in explanation
         assert "TTL" in explanation
+
+    def test_explain_shows_constraints(self):
+        """explain() and inspect() list each tool's argument constraints."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("route_ticket", queue=OneOf(["a", "b"]), auto_close=Exact(False))
+            .capability("ping")
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "queue: OneOf(['a', 'b'])" in text
+            assert "auto_close: Exact(False)" in text
+            assert "ping: (no argument constraints)" in text
+
+    def test_explain_shows_nested_constraints(self):
+        key = SigningKey.generate()
+        constraint = All(
+            [Pattern("/workspace/*"), AnyOf([Exact("/workspace/a.json"), Not(Exact("/workspace/secret"))])]
+        )
+        warrant = Warrant.mint_builder().capability("read", path=constraint).holder(key.public_key).ttl(3600).mint(key)
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "All([" in text
+            assert "AnyOf([" in text
+            assert "Not(Exact(" in text
+            for value in ("/workspace/*", "/workspace/a.json", "/workspace/secret"):
+                assert value in text
+            assert "(...)" not in text
+
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_explain_preserves_metadata_for_unknown_constraint(self, nested, monkeypatch, capsys):
+        from tenuo.exceptions import ValidationError
+
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read", path=All([Exact("future-value")]) if nested else Exact("future-value"))
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        # Preserve a signed but unsupported type, including inside composites.
+        exact = b"\x82\x01\xa1\x65value\x6cfuture-value"
+        decoded = _replace_signed_payload(warrant, key, exact, b"\x82\x17" + exact[2:])
+        with pytest.raises(ValidationError, match="Unknown constraint type"):
+            repr(decoded.capabilities)
+        for text in (decoded.explain(), decoded.inspect()):
+            assert "Tools: read" in text
+            assert "Expires:" in text
+            assert "Depth:" in text
+            assert "Constraints: unavailable" in text
+            assert "no argument constraints" not in text
+
+        from tenuo import cli
+
+        monkeypatch.setattr(cli, "print_rich_warrant", lambda warrant: False)
+        cli.inspect_warrant(decoded.to_base64())
+        output = capsys.readouterr().out
+        assert "Constraints: unavailable" in output
+        assert "Error inspecting warrant" not in output
+
+    @pytest.mark.parametrize("allow_unknown", [False, True])
+    @pytest.mark.parametrize("optional", [False, True])
+    def test_explain_distinguishes_argument_policy(self, allow_unknown, optional):
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read", {"path": Exact("a"), "_allow_unknown": allow_unknown})
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        if optional:
+            # Add optional_fields to the ConstraintSet map as a Rust issuer can.
+            old = (b"\xa2" if allow_unknown else b"\xa1") + b"\x6bconstraints"
+            new = (b"\xa3" if allow_unknown else b"\xa2") + b"\x6foptional_fields\x81\x64path\x6bconstraints"
+            warrant = _replace_signed_payload(warrant, key, old, new)
+        assert warrant.allows_unknown_arguments("read") is allow_unknown
+        assert warrant.allows_unknown_arguments("absent") is None
+        for text in (warrant.explain(), warrant.inspect()):
+            assert f"Unknown arguments: {'allowed' if allow_unknown else 'rejected'}" in text
+            assert f"path: Exact('a') ({'optional' if optional else 'required'})" in text
+
+    @pytest.mark.parametrize("endpoint", ["min", "max"])
+    def test_explain_shows_exclusive_range_endpoints(self, endpoint):
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("scale", count=All([Range(1, 5)]))
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        old = f"{endpoint}_inclusive".encode() + b"\xf5"
+        warrant = _replace_signed_payload(warrant, key, old, old[:-1] + b"\xf4")
+        constraint = warrant.capabilities["scale"]["count"]
+        assert not constraint.satisfies(1 if endpoint == "min" else 5)
+        assert constraint.satisfies(3)
+        for text in (warrant.explain(), warrant.inspect()):
+            assert f"{endpoint}_inclusive=false" in text
+
+    def test_explain_escapes_control_characters(self, monkeypatch, capsys):
+        from tenuo import cli
+
+        key = SigningKey.generate()
+        tool, field = "read\nFORGED", "path\tFIELD"
+        warrant = (
+            Warrant.mint_builder()
+            .capability(tool, {field: All([Pattern("/data/\nFORGED\x1b*")])})
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+        for text in (warrant.explain(), warrant.inspect()):
+            assert "read\\nFORGED" in text
+            assert "path\\tFIELD" in text
+            assert "\\x1b" in text
+            assert "\nFORGED" not in text
+            assert "\x1b" not in text
+            assert "\t" not in text
+        monkeypatch.setattr(cli, "print_rich_warrant", lambda warrant: False)
+        cli.inspect_warrant(warrant.to_base64())
+        output = capsys.readouterr().out
+        assert "Error inspecting warrant" not in output
+        assert "\nFORGED" not in output
+        assert "\x1b" not in output
+
+    @pytest.mark.parametrize(
+        "value", ["/data/\n*", r"/data/\n*", "/data/a'b*", '/data/a"b*', "/data/\x1b*", "/data/\u202e*"]
+    )
+    def test_pattern_repr_quotes_values_without_ambiguity(self, value):
+        import ast
+
+        constraint = Pattern(value)
+        assert ast.literal_eval(repr(constraint)[len("Pattern(") : -1]) == value
+        nested = All([constraint])
+        assert repr(nested) == f"All([Pattern({value!r})])"
+        key = SigningKey.generate()
+        warrant = Warrant.mint_builder().capability("read", path=nested).holder(key.public_key).ttl(3600).mint(key)
+        assert repr(nested) in warrant.explain()
+
+    @pytest.mark.parametrize(
+        "name,value",
+        [
+            ("Regex", "a'b\n"),
+            ("Subpath", "/data/a'b"),
+            ("UrlPattern", "https://example.com/a'b"),
+            ("CEL", "value == 'a'"),
+            ("Cidr", "10.0.0.0/8"),
+        ],
+    )
+    def test_native_string_constraint_repr_quotes_values(self, name, value):
+        import ast
+        import tenuo_core
+
+        constraint = getattr(tenuo_core, name)(value)
+        assert ast.literal_eval(repr(constraint)[len(name) + 1 : -1]) == value
 
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""

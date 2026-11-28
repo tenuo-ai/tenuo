@@ -33,6 +33,103 @@ fn atom_strategy() -> impl Strategy<Value = String> {
     prop::sample::select(ATOMS).prop_map(|s| s.to_string())
 }
 
+#[test]
+fn regression_negation_cannot_remove_error_based_rejection() {
+    let exact = Constraint::Exact(Exact::new("10.0.0.1"));
+    let cidr = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+    let parent = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        exact.clone(),
+        cidr.clone(),
+    ]))));
+    let child = Constraint::Not(Not::new(Constraint::All(All::new(vec![exact.clone()]))));
+    let malformed = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&malformed).is_err());
+    assert!(child.matches(&malformed).unwrap());
+    assert!(parent.validate_attenuation(&child).is_err());
+
+    let inner = vec![
+        exact.clone(),
+        cidr.clone(),
+        Constraint::All(All::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::Any(Any::new(vec![exact.clone(), cidr.clone()])),
+        Constraint::All(All::new(vec![cidr.clone()])),
+        Constraint::Any(Any::new(vec![cidr])),
+        Constraint::Not(Not::new(exact)),
+        Constraint::Wildcard(Wildcard),
+    ];
+    let values = [
+        malformed,
+        ConstraintValue::String("10.0.0.1".into()),
+        ConstraintValue::String("10.0.0.2".into()),
+        ConstraintValue::String("192.168.1.1".into()),
+        ConstraintValue::Integer(5),
+        ConstraintValue::List(vec![]),
+    ];
+    for parent_inner in &inner {
+        for child_inner in &inner {
+            let parent = Constraint::Not(Not::new(parent_inner.clone()));
+            let child = Constraint::Not(Not::new(child_inner.clone()));
+            if parent.validate_attenuation(&child).is_ok() {
+                for value in &values {
+                    assert!(
+                        !child.matches(value).unwrap_or(false)
+                            || parent.matches(value).unwrap_or(false),
+                        "negated delegation widened rejection: {parent:?} -> {child:?}, {value:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn regression_any_cannot_drop_or_reorder_an_error_based_denial() {
+    let rejecting = Constraint::Not(Not::new(Constraint::All(All::new(vec![
+        Constraint::Exact(Exact::new("10.0.0.1")),
+        Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap()),
+    ]))));
+    let allowing = Constraint::Exact(Exact::new("not-an-ip"));
+    let parent = Constraint::Any(Any::new(vec![rejecting.clone(), allowing.clone()]));
+    let value = ConstraintValue::String("not-an-ip".into());
+    assert!(parent.matches(&value).is_err());
+    for child in [
+        allowing.clone(),
+        Constraint::Any(Any::new(vec![allowing.clone()])),
+        Constraint::Any(Any::new(vec![allowing, rejecting])),
+    ] {
+        assert!(child.matches(&value).unwrap());
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+    assert!(parent.validate_attenuation(&parent).is_ok());
+    if let Constraint::Any(parent_any) = &parent {
+        let dropped = Any::new(vec![Constraint::Exact(Exact::new("not-an-ip"))]);
+        assert!(parent_any.validate_attenuation(&dropped).is_err());
+    }
+}
+
+#[test]
+fn regression_negated_glob_identity_survives_serialization() {
+    let fresh = Constraint::Not(Not::new(Constraint::Pattern(
+        Pattern::new("*.exe").unwrap(),
+    )));
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(&fresh, &mut bytes).unwrap();
+    let decoded: Constraint = ciborium::de::from_reader(bytes.as_slice()).unwrap();
+    assert_eq!(decoded, fresh);
+    assert!(decoded.validate_attenuation(&fresh).is_ok());
+    assert!(fresh.validate_attenuation(&decoded).is_ok());
+}
+
+#[test]
+fn regression_nested_negation_validates_urlsafe_policy_off_kind() {
+    let policy = Constraint::UrlSafe(UrlSafe::with_domains(vec!["foo.*.example.com"]));
+    let rule = Constraint::Not(Not::new(Constraint::Any(Any::new(vec![
+        Constraint::Not(Not::new(policy)),
+        Constraint::Exact(Exact::new(1000)),
+    ]))));
+    assert!(rule.matches(&ConstraintValue::Integer(5)).is_err());
+}
+
 fn string_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         atom_strategy().prop_map(ConstraintValue::String),
@@ -45,6 +142,9 @@ fn numeric_value_strategy() -> impl Strategy<Value = ConstraintValue> {
     prop_oneof![
         (-1000i64..1000).prop_map(ConstraintValue::Integer),
         (-1000.0f64..1000.0).prop_map(ConstraintValue::Float),
+        // Integral floats: the same numbers as above, spelled `n.0`. A uniform
+        // float draw almost never lands on one.
+        (-1000i64..1000).prop_map(|i| ConstraintValue::Float(i as f64)),
     ]
 }
 
@@ -1339,13 +1439,37 @@ proptest! {
             .build(&parent_kp)
             .unwrap();
 
-        let child = parent
+        let result = parent
             .attenuate()
             .inherit_all()
             .ttl(Duration::from_secs(child_ttl))
             .holder(child_kp.public_key())
-            .build(&child_kp)
-            .unwrap();
+            .build(&child_kp);
+
+        // A child that asks to outlive its parent is rejected; one that fits is
+        // accepted. Within a second of the boundary either is correct, because
+        // the parent's remaining lifetime depends on when the clock ticks.
+        let child = match result {
+            Err(tenuo::Error::MonotonicityViolation(_)) => {
+                prop_assert!(
+                    child_ttl + 1 >= parent_ttl,
+                    "ttl {} fits in parent {} but was rejected",
+                    child_ttl,
+                    parent_ttl
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(TestCaseError::fail(format!("unexpected error {e:?}"))),
+            Ok(child) => {
+                prop_assert!(
+                    child_ttl <= parent_ttl,
+                    "ttl {} exceeds parent {} but was accepted",
+                    child_ttl,
+                    parent_ttl
+                );
+                child
+            }
+        };
 
         // Wire round-trip both
         let parent_decoded = wire::decode(&wire::encode(&parent).unwrap()).unwrap();
@@ -1432,4 +1556,242 @@ fn deep_constraint_nesting_rejected_on_decode() {
             );
         }
     }
+}
+
+#[test]
+fn total_globs_and_subpaths_allow_valid_attenuation() {
+    let parent = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("private-*").unwrap().into()),
+    });
+    let child = Constraint::Not(Not {
+        constraint: Box::new(Pattern::new("*").unwrap().into()),
+    });
+    parent.validate_attenuation(&child).unwrap();
+    let parent = Constraint::Any(Any {
+        constraints: vec![
+            Subpath::new("/data").unwrap().into(),
+            Subpath::new("/tmp").unwrap().into(),
+        ],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![Subpath::new("/data/reports").unwrap().into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+}
+
+#[test]
+fn total_urlsafe_policies_allow_any_narrowing() {
+    let parent = Constraint::Any(Any {
+        constraints: vec![UrlSafe::new().into()],
+    });
+    let child = Constraint::Any(Any {
+        constraints: vec![UrlSafe::with_domains(vec!["api.example.com"]).into()],
+    });
+    parent.validate_attenuation(&child).unwrap();
+    assert!(child
+        .matches(&"https://api.example.com/report".into())
+        .unwrap());
+    assert!(!child
+        .matches(&"https://other.example.com/report".into())
+        .unwrap());
+}
+
+#[test]
+fn invalid_empty_all_cannot_grant_an_exact_child() {
+    let empty = Constraint::All(All::new([]));
+    for child in [
+        Exact::new("safe").into(),
+        Exact::new(5).into(),
+        Constraint::All(All::new([])),
+    ] {
+        assert!(empty.validate_attenuation(&child).is_err());
+    }
+    let parent = Constraint::All(All::new([Wildcard.into(), empty]));
+    let child = Constraint::All(All::new([Exact::new("safe").into()]));
+    assert!(parent.validate_attenuation(&child).is_err());
+}
+
+// ============================================================================
+// Argument maps: which arguments a derived constraint set may add or leave out
+// ============================================================================
+
+fn one_of(values: &[&str]) -> Constraint {
+    Constraint::OneOf(OneOf::new(values.iter().map(|v| v.to_string())))
+}
+
+fn exact(value: &str) -> Constraint {
+    Constraint::Exact(Exact::new(value))
+}
+
+/// A set over fields `a` and `b`. `None` leaves the field out; the flag marks
+/// it optional.
+fn set_of(
+    a: &Option<(Constraint, bool)>,
+    b: &Option<(Constraint, bool)>,
+    allow_unknown: bool,
+) -> ConstraintSet {
+    let mut set = ConstraintSet::new();
+    for (field, entry) in [("a", a), ("b", b)] {
+        match entry {
+            Some((constraint, true)) => set.insert_optional(field, constraint.clone()),
+            Some((constraint, false)) => set.insert(field, constraint.clone()),
+            None => {}
+        }
+    }
+    set.set_allow_unknown(allow_unknown);
+    set
+}
+
+fn args_of(pairs: &[(&str, &str)]) -> HashMap<String, ConstraintValue> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), ConstraintValue::String(v.to_string())))
+        .collect()
+}
+
+/// Every pair of sets from a small pool: whenever the derivation is accepted,
+/// each invocation the child admits is one the parent admits.
+#[test]
+fn exhaustive_constraint_set_attenuation_is_sound() {
+    let mut entries: Vec<Option<(Constraint, bool)>> = vec![None];
+    for constraint in [
+        one_of(&["x", "y"]),
+        exact("x"),
+        Constraint::Wildcard(Wildcard),
+    ] {
+        for optional in [false, true] {
+            entries.push(Some((constraint.clone(), optional)));
+        }
+    }
+    let mut sets = Vec::new();
+    for a in &entries {
+        for b in &entries {
+            for allow_unknown in [false, true] {
+                sets.push(set_of(a, b, allow_unknown));
+            }
+        }
+    }
+    let mut invocations = Vec::new();
+    for a in [None, Some("x"), Some("y"), Some("z")] {
+        for b in [None, Some("x"), Some("y"), Some("z")] {
+            for c in [None, Some("q")] {
+                let pairs: Vec<(&str, &str)> = [("a", a), ("b", b), ("c", c)]
+                    .into_iter()
+                    .filter_map(|(k, v)| v.map(|v| (k, v)))
+                    .collect();
+                invocations.push(args_of(&pairs));
+            }
+        }
+    }
+
+    let mut accepted = 0;
+    for parent in &sets {
+        for child in &sets {
+            if parent.validate_attenuation(child).is_err() {
+                continue;
+            }
+            accepted += 1;
+            for args in &invocations {
+                assert!(
+                    child.matches(args).is_err() || parent.matches(args).is_ok(),
+                    "child admits {args:?} and parent refuses it\nparent {parent:?}\nchild {child:?}"
+                );
+            }
+        }
+    }
+    assert!(accepted > 900, "{accepted} derivations accepted");
+}
+
+/// A parent that admits undeclared arguments lets a child constrain one.
+#[test]
+fn a_child_may_name_an_argument_the_parent_leaves_undeclared() {
+    let named = Some((one_of(&["x", "y"]), false));
+    let added = Some((exact("x"), false));
+    let parent = set_of(&named, &None, true);
+    for child_allows_unknown in [false, true] {
+        parent
+            .validate_attenuation(&set_of(&named, &added, child_allows_unknown))
+            .unwrap();
+    }
+    // A parent that admits none refuses the new argument outright.
+    assert!(set_of(&named, &None, false)
+        .validate_attenuation(&set_of(&named, &added, false))
+        .is_err());
+}
+
+/// A child that admits no undeclared arguments may leave out one the parent
+/// marks optional: the child then refuses that argument.
+#[test]
+fn a_closed_child_may_leave_out_an_optional_argument() {
+    let kept = Some((one_of(&["x", "y"]), false));
+    let optional = Some((exact("x"), true));
+    let required = Some((exact("x"), false));
+
+    let parent = set_of(&kept, &optional, false);
+    let child = set_of(&kept, &None, false);
+    parent.validate_attenuation(&child).unwrap();
+    assert!(child.matches(&args_of(&[("a", "x")])).is_ok());
+    assert!(child.matches(&args_of(&[("a", "x"), ("b", "x")])).is_err());
+
+    // Not when the parent requires it.
+    assert!(set_of(&kept, &required, false)
+        .validate_attenuation(&child)
+        .is_err());
+    // Not when the child admits undeclared arguments, by its flag or by being
+    // empty: the argument would come back with any value.
+    let open_parent = set_of(&kept, &optional, true);
+    assert!(open_parent
+        .validate_attenuation(&set_of(&kept, &None, true))
+        .is_err());
+    assert!(set_of(&None, &optional, false)
+        .validate_attenuation(&ConstraintSet::new())
+        .is_err());
+    open_parent.validate_attenuation(&child).unwrap();
+}
+
+/// An optional argument whose constraint this build cannot evaluate refuses
+/// every invocation. Leaving it out must not turn that into authority.
+#[test]
+fn an_unsupported_optional_argument_cannot_be_left_out() {
+    let kept = Some((one_of(&["x", "y"]), false));
+    let unsupported = Some((
+        Constraint::Unknown {
+            type_id: 200,
+            payload: vec![0xf6],
+        },
+        true,
+    ));
+    let parent = set_of(&kept, &unsupported, false);
+    assert!(parent.matches(&args_of(&[("a", "x")])).is_err());
+    assert!(parent
+        .validate_attenuation(&set_of(&kept, &None, false))
+        .is_err());
+}
+
+/// An empty set admits every argument, so a child of one may keep admitting
+/// undeclared arguments while it constrains others.
+#[test]
+fn a_child_of_an_empty_set_may_still_admit_undeclared_arguments() {
+    let named = Some((exact("x"), false));
+    ConstraintSet::new()
+        .validate_attenuation(&set_of(&named, &None, true))
+        .unwrap();
+    // A non-empty parent without the flag still refuses it.
+    assert!(set_of(&named, &None, false)
+        .validate_attenuation(&set_of(&named, &None, true))
+        .is_err());
+}
+
+/// An optional argument the child keeps is held to the parent's value
+/// constraint like any other.
+#[test]
+fn a_retained_optional_argument_must_still_narrow() {
+    let narrow = Some((exact("x"), true));
+    let wide = Some((Constraint::Wildcard(Wildcard), true));
+    assert!(set_of(&narrow, &None, false)
+        .validate_attenuation(&set_of(&wide, &None, false))
+        .is_err());
+    set_of(&wide, &None, false)
+        .validate_attenuation(&set_of(&narrow, &None, false))
+        .unwrap();
 }

@@ -23,6 +23,25 @@ export type WasmInspect = {
   id: string;
 };
 
+export type ConstraintViolationKind =
+  | "tool_not_authorized"
+  | "unknown_field"
+  | "missing_required"
+  | "constraint_mismatch";
+
+export type ConstraintDiagnostics = {
+  closedWorld: boolean;
+  violations: Array<{
+    field: string;
+    kind: ConstraintViolationKind;
+    reason: string;
+  }>;
+};
+
+type WasmConstraintDiagnostics = Omit<ConstraintDiagnostics, "closedWorld"> & {
+  closed_world: boolean;
+};
+
 export type WasmReceipt = {
   authentic: true;
   /** Hex key the receipt is signed under — resolve against your authorizer set. */
@@ -103,6 +122,7 @@ export type WasmSessionInfo = {
 export type WasmProtocolLimits = {
   max_delegation_depth: number;
   max_warrant_ttl_seconds: number;
+  max_approvals: number;
 };
 
 /** Mirrors `NarrowOptions` in tenuo-wasm. Unknown keys are rejected there. */
@@ -208,6 +228,7 @@ export type WasmAttestation = {
 export type WasmApprovalInfo = {
   approver_public_key: string;
   request_hash: string;
+  nonce: string;
   external_id: string;
   approved_at: number;
   expires_at: number;
@@ -292,7 +313,45 @@ export type WasmContext = {
     toolAllow?: unknown,
     requestId?: string,
   ): WasmDecision;
+  explainWarrant(warrants: unknown, tool: string, args: unknown, approvals: unknown): WasmWarrantExplanation;
 };
+
+export type WasmWarrantExplanation = {
+  kind: "diagnostic";
+  chain: { status: "valid" | "invalid" | "not_evaluated" };
+  constraints: { status: "satisfied" | "unsatisfied" | "not_evaluated" };
+  possession: { status: "not_checked" };
+  approvals: { status: "satisfied" | "required" | "not_required" | "not_evaluated"; valid?: number; required?: number; rejected?: number };
+  code?: string;
+  message?: string;
+  root_public_key?: string;
+  holder_public_key?: string;
+};
+
+export type WasmDecodedWarrant = {
+  id: string;
+  extensions: Record<string, string>;
+  warrant_type: 0 | 1;
+  constraint_bounds?: Record<string, unknown> | null;
+  issuable_tools?: string[] | null;
+  max_issue_depth?: number | null;
+  issuer: string;
+  tools: string[];
+  capabilities: Record<string, unknown>;
+  issued_at: number;
+  expires_at: number;
+  authorized_holder: string;
+  depth: number;
+  required_approvers?: string[] | null;
+  min_approvals?: number | null;
+  is_expired: boolean;
+  is_terminal: boolean;
+};
+
+/** Decode a chain without verifying it. Not authorization. */
+export function decodeChain(warrants: unknown): WasmDecodedWarrant[] {
+  return loadWasm().sdkDecodeChain(warrants);
+}
 
 type Generated = {
   SdkContext: {
@@ -306,7 +365,10 @@ type Generated = {
     fromChain(parts: unknown, holder: Uint8Array): WasmSession;
   };
   sdkInspectWarrant(wire: string): WasmInspect;
+  sdkDecodeChain(warrants: unknown): WasmDecodedWarrant[];
+  sdkDiagnoseConstraints(wire: string, tool: string, args: unknown): WasmConstraintDiagnostics;
   sdkInspectParts(payloadHex: string, signatureHex: string): WasmInspect;
+  sdkCanonicalMetaSignature(signature: string): string;
   sdkProtocolLimits(): WasmProtocolLimits;
   sdkPublicKeyFromHolderKey(holderSecret: Uint8Array): string;
   sdkSignApproval(
@@ -324,7 +386,7 @@ type Generated = {
     ttlSeconds?: number,
     warrantExpiresAt?: number,
   ): string;
-  sdkInspectApproval(envelope: string): WasmApprovalInfo;
+  sdkInspectApproval(envelope: string | Uint8Array): WasmApprovalInfo;
   sdkSignRevocationList(ids: string[], issuerSecret: Uint8Array): string;
   sdkSignRevocationListVersioned(ids: string[], version: number | undefined, issuerSecret: Uint8Array): string;
   sdkSignPublishedRevocationList(ids: string[], version: number, issuerSecret: Uint8Array): string;
@@ -346,7 +408,19 @@ type Generated = {
     args: unknown,
   ): { approval_required: boolean; tool: string; error?: string };
   parse_strict_json(jsonText: string): void;
+  shlex_inspect(allow: string[], command: string): ShlexCheck;
 };
+
+/** Decision from the core Shlex check. The same object Python `Shlex.check` returns. */
+export interface ShlexCheck {
+  allowed: boolean;
+  reason: string;
+  tokens: string[];
+  operators: string[];
+  expansion: string[];
+  controls: string[];
+  binary_allowed: boolean;
+}
 
 let loaded: Generated | undefined;
 
@@ -446,6 +520,20 @@ export function inspectWarrant(wire: string): WasmInspect {
   return loadWasm().sdkInspectWarrant(wire);
 }
 
+/**
+ * List every capability-constraint failure in deterministic order.
+ * Diagnostic only: this does not verify signatures, expiry, revocation,
+ * approvals, or proof-of-possession, and must not be used to authorize.
+ */
+export function diagnoseConstraints(
+  wire: string,
+  tool: string,
+  args: unknown,
+): ConstraintDiagnostics {
+  const result = loadWasm().sdkDiagnoseConstraints(wire, tool, args);
+  return { closedWorld: result.closed_world, violations: result.violations };
+}
+
 export function inspectParts(payloadHex: string, signatureHex: string): WasmInspect {
   return loadWasm().sdkInspectParts(payloadHex, signatureHex);
 }
@@ -496,6 +584,17 @@ function throwIfGateError(error: string | undefined): void {
 export function parseStrictJson(text: string): unknown {
   loadWasm().parse_strict_json(text);
   return JSON.parse(text);
+}
+
+/**
+ * The core's Shlex decision for one command.
+ *
+ * `allow` is the binary allowlist. Each entry matches the command word
+ * literally, and any command word containing `..` is rejected. The reason is
+ * the same string the warrant uses.
+ */
+export function checkShlex(allow: readonly string[], command: string): ShlexCheck {
+  return loadWasm().shlex_inspect([...allow], command);
 }
 
 /**

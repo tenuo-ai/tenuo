@@ -301,6 +301,7 @@ async def _run_workflow(
     workflows: Optional[List[Any]] = None,
     activities: Optional[List[Any]] = None,
     plugin_config: Optional[dict[str, Any]] = None,
+    warrant_chain: Optional[List[Any]] = None,
 ):
     """Start a worker + run a single workflow, return the result."""
     control, agent = keys
@@ -314,7 +315,7 @@ async def _run_workflow(
     if send_headers:
         client_interceptor.set_headers_for_workflow(
             workflow_id,
-            tenuo_headers(warrant, "agent1"),
+            tenuo_headers(warrant, "agent1", warrant_chain=warrant_chain),
         )
 
     events: list[TemporalAuditEvent] = []
@@ -570,6 +571,46 @@ class TestLiveDelegationAndContinuation:
         assert result == "echo:hello:1"
         allow_events = [e for e in events if e.decision == "ALLOW"]
         assert len(allow_events) >= 2
+
+
+@pytest.mark.temporal_live
+class TestLiveDelegatedStart:
+    """A workflow started with a delegated warrant; the worker trusts only the root."""
+
+    @staticmethod
+    def _delegated(keys):
+        control, agent = keys
+        orchestrator = SigningKey.generate()
+        root = (
+            Warrant.mint_builder()
+            .holder(orchestrator.public_key)
+            .capability("echo", message=Pattern("*"))
+            .ttl(3600)
+            .mint(control)
+        )
+        leaf = (
+            root.grant_builder()
+            .holder(agent.public_key)
+            .capability("echo", message=Pattern("*"))
+            .ttl(1800)
+            .grant(orchestrator)
+        )
+        return root, leaf
+
+    @pytest.mark.asyncio
+    async def test_start_with_warrant_chain_authorizes_activity(self, keys):
+        root, leaf = self._delegated(keys)
+        async with await WorkflowEnvironment.start_local() as env:
+            result, events = await _run_workflow(env, keys, leaf, AuthorizedFileWorkflow, "hello", warrant_chain=[root])
+        assert result == "echo:hello"
+        assert any(e.decision == "ALLOW" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_start_without_warrant_chain_is_denied(self, keys):
+        _root, leaf = self._delegated(keys)
+        async with await WorkflowEnvironment.start_local() as env:
+            with pytest.raises(WorkflowFailureError):
+                await _run_workflow(env, keys, leaf, AuthorizedFileWorkflow, "hello")
 
 
 @pytest.mark.temporal_live

@@ -1,13 +1,37 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import init, { decode_warrant, SdkContext, create_sample_warrant, create_warrant_from_config, init_panic_hook, decode_pem_chain_wasm, sdkDecodeChain, sdkVerifyReceipt, sdkVerifyReceiptChain } from './wasm/tenuo_wasm'
 import wasmUrl from './wasm/tenuo_wasm_bg.wasm?url'
 import { cleanInput, truncate, generateId } from './utils';
+import { SAMPLE_RECEIPTS } from './sampleReceipts';
 
 // Types
-interface AuthResult {
-  authorized: boolean;
+interface DiagnosticResult {
+  checksPassed: boolean;
+  chainStatus?: string;
+  constraintStatus?: string;
+  approvalStatus?: string;
   reason?: string;
   deny_code?: string;
+}
+
+/** Diagnostic projection for the explorer UI; never an execution decision. */
+function explainCall(warrants: string | string[], tool: string, args: unknown, root: string): DiagnosticResult {
+  const context = SdkContext.fromTrustedRoots([root]);
+  try {
+    const report = context.explainWarrant(warrants, tool, args, []);
+    return {
+      checksPassed: report.chain.status === 'valid'
+        && report.constraints.status === 'satisfied'
+        && ['satisfied', 'not_required'].includes(report.approvals.status),
+      chainStatus: report.chain.status,
+      constraintStatus: report.constraints.status,
+      approvalStatus: report.approvals.status,
+      reason: `Chain: ${report.chain.status}; constraints: ${report.constraints.status}; approvals: ${report.approvals.status}; possession: ${report.possession.status}. ${report.message ?? ''}`,
+      deny_code: report.code,
+    };
+  } finally {
+    context.free();
+  }
 }
 
 interface DecodedWarrant {
@@ -19,6 +43,7 @@ interface DecodedWarrant {
   expires_at: number;
   authorized_holder: string;
   depth: number;
+  max_depth?: number | null;
   approval_gates?: Record<string, any> | null;
 }
 
@@ -65,7 +90,7 @@ interface ValidationWarning {
 type ExplorerMode = 'decoder' | 'builder' | 'chain' | 'diff' | 'receipt';
 
 const MODE_META: Record<ExplorerMode, { label: string; description: string }> = {
-  decoder: { label: 'Inspect', description: 'Decode a warrant and simulate an authorization decision.' },
+  decoder: { label: 'Inspect', description: 'Decode a warrant and examine a proposed call.' },
   builder: { label: 'Build', description: 'Create a scoped warrant from real constraints and export working code.' },
   diff: { label: 'Compare', description: 'See exactly how authority changes between two warrants.' },
   chain: { label: 'Delegate', description: 'Validate multi-hop delegation and monotonic attenuation.' },
@@ -107,7 +132,7 @@ const SAMPLE_TEMPLATES: Record<string, {
 }> = {
   valid_read: {
     name: "Valid Read",
-    description: "Authorized: path matches docs/* constraint",
+    description: "Policy match: path matches docs/* constraint",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",
@@ -117,7 +142,7 @@ const SAMPLE_TEMPLATES: Record<string, {
   },
   valid_nested: {
     name: "Nested Path",
-    description: "Authorized: nested paths like docs/api/guide.md",
+    description: "Policy match: nested paths like docs/api/guide.md",
     wasmTool: "read_file",
     wasmField: "path",
     wasmPattern: "docs/*",
@@ -488,7 +513,7 @@ const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
   decoded: DecodedWarrant | null;
   tool: string;
   args: string;
-  authResult: AuthResult | null;
+  authResult: DiagnosticResult | null;
 }) => {
   if (!decoded) return null;
 
@@ -499,10 +524,12 @@ const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
 
 
   const steps = [
-    { name: 'Signature Chain', status: 'pass', detail: 'Cryptographic signatures verified (dry run mode)' },
+    { name: 'Signature Chain', status: authResult?.chainStatus === 'valid' ? 'pass' : authResult?.chainStatus === 'invalid' ? 'fail' : 'pending', detail: authResult?.chainStatus ?? 'Not evaluated' },
     { name: 'Expiration Check', status: isExpired ? 'fail' : 'pass', detail: isExpired ? `Expired ${Math.floor(now - decoded.expires_at)}s ago` : `Valid for ${Math.floor(decoded.expires_at - now)}s` },
     { name: 'Tool Matching', status: toolMatch ? 'pass' : 'fail', detail: toolMatch ? `"${tool}" found in authorized tools` : `"${tool}" not in [${decoded.tools.join(', ')}]` },
-    { name: 'Constraint Evaluation', status: authResult?.authorized ? 'pass' : (authResult ? 'fail' : 'pending'), detail: authResult?.reason || 'Run authorization check to evaluate constraints' },
+    { name: 'Constraint Evaluation', status: authResult?.constraintStatus === 'satisfied' ? 'pass' : authResult?.constraintStatus === 'unsatisfied' ? 'fail' : 'pending', detail: authResult?.constraintStatus ?? 'Not evaluated' },
+    { name: 'Approvals', status: ['satisfied', 'not_required'].includes(authResult?.approvalStatus ?? '') ? 'pass' : authResult?.approvalStatus === 'required' ? 'fail' : 'pending', detail: authResult?.approvalStatus ?? 'Not evaluated' },
+    { name: 'Possession', status: 'pending', detail: 'Not checked. Execution requires verify() with a holder-signed invocation.' },
   ];
 
   return (
@@ -881,7 +908,8 @@ holder_key = SigningKey.generate()
 warrant = (Warrant.mint_builder()
 ${capabilityBlocks}
     .holder(holder_key.public_key)
-    .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}
+    .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
+    .max_depth(${Math.max(0, decoded.max_depth - decoded.depth)})` : ''}
     .mint(issuer_key))
 
 # Test authorization with Proof-of-Possession
@@ -951,7 +979,8 @@ ${constraintDefs}
     let warrant = Warrant::builder()
 ${capabilityLines}
         .holder(holder_key.public_key())
-        .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}
+        .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}${decoded.max_depth != null ? `
+        .max_depth(${Math.max(0, decoded.max_depth - decoded.depth)})` : ''}
         .build(&issuer_key)?;
 
     // Build args for authorization
@@ -1129,6 +1158,10 @@ interface ToolConstraint {
 const validateConstraintValue = (type: string, value: string): { valid: boolean; error?: string; hint?: string } => {
   if (!value.trim()) return { valid: true }; // Empty is ok while typing
 
+  if (['oneof', 'notoneof', 'anyof', 'contains', 'url_safe'].includes(type) && value.split(',').some(v => !v.trim())) {
+    return { valid: false, error: 'List entries must not be empty' };
+  }
+
   switch (type) {
     case 'pattern':
       // Pattern should be a glob string
@@ -1219,11 +1252,53 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
   }
 };
 
-const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void }) => {
-  const [tools, setTools] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
-  const [ttl, setTtl] = useState(3600);
-  const [maxDepth, setMaxDepth] = useState(3);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+/**
+ * Every problem that should stop generation, keyed by row. Derived from the
+ * current input on each render so edits, removals and templates never leave a
+ * stale verdict behind. A row that cannot be sent as written blocks generation
+ * rather than being dropped, since dropping a constraint broadens the warrant.
+ */
+export function builderIssues(tools: ToolConstraint[], ttl: number, maxDepth = 3): { rows: Record<string, string>; form: string[] } {
+  const rows: Record<string, string> = {};
+  const form: string[] = [];
+  if (!Number.isInteger(maxDepth) || maxDepth < 0 || maxDepth > 64) form.push('Depth must be a whole number from 0 to 64');
+  if (!Number.isInteger(ttl) || ttl <= 0) form.push('TTL must be a positive whole number of seconds');
+  if (!tools.some(t => t.name.trim())) form.push('Add at least one tool');
+  const names = new Set<string>();
+  tools.forEach((tool, ti) => {
+    const name = tool.name.trim();
+    if (!name) {
+      if (tool.constraints.length > 0) rows[`${ti}`] = 'Tool name is required';
+    } else if (names.has(name)) {
+      rows[`${ti}`] = `Duplicate tool "${name}"`;
+    }
+    names.add(name);
+    const keys = new Set<string>();
+    tool.constraints.forEach((con, ci) => {
+      const id = `${ti}-${ci}`;
+      const key = con.key.trim();
+      if (!key) { rows[id] = 'Argument name is required'; return; }
+      if (keys.has(key)) { rows[id] = `Duplicate argument "${key}"`; return; }
+      keys.add(key);
+      if (con.type !== 'url_safe' && !con.value.trim()) { rows[id] = 'Value is required'; return; }
+      const v = validateConstraintValue(con.type, con.value);
+      if (!v.valid) rows[id] = v.error || 'Invalid';
+    });
+  });
+  return { rows, form };
+}
+
+const WarrantBuilder = ({ onGenerate, onEdit }: { onGenerate: (config: unknown) => void; onEdit?: () => void }) => {
+  const [tools, setToolsState] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
+  const [ttl, setTtlState] = useState(3600);
+  const [maxDepth, setMaxDepthState] = useState(3);
+  const setMaxDepth = (next: number) => { setMaxDepthState(next); onEdit?.(); };
+  // Any edit makes an earlier preview describe a different configuration.
+  const setTools = (next: ToolConstraint[]) => { setToolsState(next); onEdit?.(); };
+  const setTtl = (next: number) => { setTtlState(next); onEdit?.(); };
+  const issues = useMemo(() => builderIssues(tools, ttl, maxDepth), [tools, ttl, maxDepth]);
+  const errors = issues.rows;
+  const issueCount = Object.keys(issues.rows).length + issues.form.length;
 
   const addTool = () => setTools([...tools, { name: '', constraints: [] }]);
   const removeTool = (i: number) => setTools(tools.filter((_, idx) => idx !== i));
@@ -1234,29 +1309,19 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   };
   const addConstraint = (toolIdx: number) => {
     const updated = [...tools];
-    updated[toolIdx].constraints.push({ key: '', type: 'pattern', value: '' });
+    updated[toolIdx] = { ...updated[toolIdx], constraints: [...updated[toolIdx].constraints, { key: '', type: 'pattern', value: '' }] };
     setTools(updated);
   };
   const updateConstraint = (toolIdx: number, constIdx: number, field: string, value: string) => {
     const updated = [...tools];
-    const constraint = { ...updated[toolIdx].constraints[constIdx], [field]: value };
-    updated[toolIdx].constraints[constIdx] = constraint;
+    const constraints = [...updated[toolIdx].constraints];
+    constraints[constIdx] = { ...constraints[constIdx], [field]: value };
+    updated[toolIdx] = { ...updated[toolIdx], constraints };
     setTools(updated);
-
-    // Validate on change
-    const errorKey = `${toolIdx}-${constIdx}`;
-    if (field === 'value' || field === 'type') {
-      const validation = validateConstraintValue(constraint.type, constraint.value);
-      if (!validation.valid) {
-        setErrors(prev => ({ ...prev, [errorKey]: validation.error || 'Invalid' }));
-      } else {
-        setErrors(prev => { const { [errorKey]: _, ...rest } = prev; return rest; });
-      }
-    }
   };
   const removeConstraint = (toolIdx: number, constIdx: number) => {
     const updated = [...tools];
-    updated[toolIdx].constraints = updated[toolIdx].constraints.filter((_, i) => i !== constIdx);
+    updated[toolIdx] = { ...updated[toolIdx], constraints: updated[toolIdx].constraints.filter((_, i) => i !== constIdx) };
     setTools(updated);
   };
 
@@ -1272,11 +1337,14 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
   ];
 
   const applyTemplate = (template: typeof templates[0]) => {
-    setTools(template.tools);
+    // Copy, so editing a row never mutates the template itself.
+    setTools(template.tools.map(t => ({ ...t, constraints: t.constraints.map(c => ({ ...c })) })));
     setTtl(template.ttl);
   };
 
   const generatePreview = () => {
+    // Revalidate at submission; the button state alone is not the check.
+    if (issueCount > 0) return;
     const config = {
       tools: tools.reduce((acc, t) => {
         if (t.name) {
@@ -1297,10 +1365,10 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
               }
             }
             return c;
-          }, {} as Record<string, unknown>);
+          }, Object.create(null) as Record<string, unknown>);
         }
         return acc;
-      }, {} as Record<string, unknown>),
+      }, Object.create(null) as Record<string, unknown>),
       ttl,
       max_depth: maxDepth
     };
@@ -1331,7 +1399,7 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
         </div>
         <div>
           <label className="label">Max Delegation Depth</label>
-          <input className="input" type="number" value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} min={0} max={10} />
+          <input className="input" type="number" value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} min={0} max={64} />
         </div>
       </div>
 
@@ -1348,6 +1416,9 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
               <input className="input" placeholder="Tool name (e.g., read_file)" value={tool.name} onChange={e => updateTool(ti, 'name', e.target.value)} style={{ flex: 1 }} />
               <button onClick={() => removeTool(ti)} className="close-btn">✕</button>
             </div>
+            {errors[`${ti}`] && (
+              <div style={{ fontSize: '11px', color: 'var(--red)', margin: '-4px 0 8px' }}>❌ {errors[`${ti}`]}</div>
+            )}
 
             {tool.constraints.map((con, ci) => {
               const errorKey = `${ti}-${ci}`;
@@ -1404,7 +1475,15 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
         ))}
       </div>
 
-      <button onClick={generatePreview} className="btn btn-primary" style={{ width: '100%' }}>
+      {issueCount > 0 && (
+        <div role="alert" style={{ fontSize: '12px', color: 'var(--red)', marginBottom: '8px' }}>
+          {issues.form.map(f => <div key={f}>❌ {f}</div>)}
+          {Object.keys(issues.rows).length > 0 && (
+            <div>Fix {Object.keys(issues.rows).length} highlighted row{Object.keys(issues.rows).length === 1 ? '' : 's'} before generating. Nothing is dropped from a warrant to make it valid.</div>
+          )}
+        </div>
+      )}
+      <button onClick={generatePreview} className="btn btn-primary" style={{ width: '100%' }} disabled={issueCount > 0}>
         Generate Preview
       </button>
 
@@ -1492,7 +1571,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
     if (initial && initial.chain.length > 0) return decodeChainInput(initial.chain[0]).decoded?.issuer ?? '';
     return '';
   });
-  const [verifyResult, setVerifyResult] = useState<AuthResult | null>(null);
+  const [verifyResult, setVerifyResult] = useState<DiagnosticResult | null>(null);
 
   // Load sample chain: Root → Orchestrator → Worker
   const loadSampleChain = () => {
@@ -1602,23 +1681,23 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
   const verifyChain = () => {
     const validWarrants = warrants.filter(w => w.b64.trim());
     if (validWarrants.length < 1) {
-      setVerifyResult({ authorized: false, reason: 'Need at least one warrant' });
+      setVerifyResult({ checksPassed: false, reason: 'Need at least one warrant' });
       return;
     }
 
     if (!rootKeyHex.trim()) {
-      setVerifyResult({ authorized: false, reason: 'Root key (issuer public key) is required' });
+      setVerifyResult({ checksPassed: false, reason: 'Root key (issuer public key) is required' });
       return;
     }
 
     try {
       const args = JSON.parse(argsJson || '{}');
       const warrantList = validWarrants.map(w => w.b64.trim());
-      // Always dry_run in explorer (we don't have holder private keys to sign PoP)
-      const result = check_chain_access(warrantList, tool, args, rootKeyHex.trim(), true);
+      // Shared diagnostics only; this never establishes possession.
+      const result = explainCall(warrantList, tool, args, rootKeyHex.trim());
       setVerifyResult(result);
     } catch (e) {
-      setVerifyResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Unknown'}` });
+      setVerifyResult({ checksPassed: false, reason: `Error: ${e instanceof Error ? e.message : 'Unknown'}` });
     }
   };
 
@@ -1674,7 +1753,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
 
               {warrant.decoded && (
                 <div style={{ fontSize: '11px', marginTop: '8px', padding: '8px', background: 'var(--surface-2)', borderRadius: '6px' }}>
-                  <div style={{ color: 'var(--green)', marginBottom: '4px' }}>✓ Valid warrant</div>
+                  <div style={{ color: 'var(--green)', marginBottom: '4px' }}>✓ Decoded warrant</div>
 
                   <div style={{ color: 'var(--muted)', marginBottom: '4px' }}>
                     <strong>Capabilities:</strong>
@@ -1789,7 +1868,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
 
       {/* Authorization Test */}
       <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-2)', borderRadius: '8px' }}>
-        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Test Authorization</div>
+        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>Explain Proposed Call</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
           <div>
@@ -1820,7 +1899,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
         </div>
 
         <button onClick={verifyChain} className="btn btn-primary" style={{ width: '100%' }} disabled={validCount < 1}>
-          Verify Chain Authorization
+          Explain Chain
         </button>
 
         {verifyResult && (
@@ -1828,16 +1907,16 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
             marginTop: '12px',
             padding: '12px',
             borderRadius: '8px',
-            background: verifyResult.authorized ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            border: `1px solid ${verifyResult.authorized ? 'var(--green)' : 'var(--red)'}`,
+            background: verifyResult.checksPassed ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${verifyResult.checksPassed ? 'var(--green)' : 'var(--red)'}`,
           }}>
             <div style={{
               fontSize: '14px',
               fontWeight: 600,
-              color: verifyResult.authorized ? 'var(--green)' : 'var(--red)',
+              color: verifyResult.checksPassed ? 'var(--green)' : 'var(--red)',
               marginBottom: '4px'
             }}>
-              {verifyResult.authorized ? '✓ Chain Authorized' : '✗ Chain Denied'}
+              {verifyResult.checksPassed ? '✓ Policy checks passed' : '✗ Requirements not satisfied'}
             </div>
             {verifyResult.reason && (
               <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
@@ -1856,7 +1935,7 @@ const ChainTester = ({ initial }: { initial?: SharedChain }) => {
           <li><strong>Signature chain</strong>: Each delegation must be signed by the parent's holder</li>
           <li><strong>TTL cascade</strong>: Child TTL ≤ parent TTL</li>
         </ul>
-        <p style={{ marginTop: '8px' }}>The root key must match the first warrant's issuer.</p>
+        <p style={{ marginTop: '8px' }}>The root key must match the first warrant's issuer. It is initially copied from the warrant; replace it with an independently trusted key when checking trust. Possession is not checked, no approvals are supplied, and no revocation lists are loaded.</p>
       </Explainer>
     </div>
   );
@@ -2171,31 +2250,43 @@ function ReceiptMode() {
   const [rootsText, setRootsText] = useState('');
   const [authText, setAuthText] = useState('');
   const [rows, setRows] = useState<ReceiptRow[]>([]);
+  const [failed, setFailed] = useState<{ line: number; error: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [usingSample, setUsingSample] = useState(false);
+  const verificationGeneration = useRef(0);
+  const invalidateResults = () => {
+    verificationGeneration.current += 1;
+    setRows([]); setFailed([]); setError(null); setUsingSample(false);
+  };
+  useEffect(() => () => { verificationGeneration.current += 1; }, []);
 
-  const verify = async () => {
+  const verify = async (inputText = input, rootsInput = rootsText, authInput = authText) => {
+    const generation = ++verificationGeneration.current;
     setError(null);
     setRows([]);
+    setFailed([]);
 
-    const lines = input
+    const lines = inputText
       .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      // accept the JSONL a FileReceiptSink writes, or bare hex
-      .map((l) => (l.startsWith('{') ? (JSON.parse(l).receipt as string) : l));
+      .map((l) => l.trim());
 
-    if (lines.length === 0) {
+    if (!lines.some(Boolean)) {
       setError('Paste a receipt in hex or the JSONL a FileReceiptSink writes.');
       return;
     }
 
-    const roots = rootsText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean);
-    const authSet = new Set(authText.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean));
+    const roots = rootsInput.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean);
+    const authSet = new Set(authInput.split('\n').map((l) => l.trim().toLowerCase()).filter(Boolean));
 
+    // Each line stands or falls on its own: one bad receipt must not hide
+    // whether the others verify.
     const verified: ReceiptRow[] = [];
+    const rejected: { line: number; error: string }[] = [];
     for (let i = 0; i < lines.length; i += 1) {
-      const wire = lines[i];
+      if (!lines[i]) continue;
       try {
+        // accept the JSONL a FileReceiptSink writes, or bare hex
+        const wire = lines[i].startsWith('{') ? String(JSON.parse(lines[i]).receipt ?? '') : lines[i];
         const payload = sdkVerifyReceipt(wire) as VerifiedReceipt;
         const row: ReceiptRow = { line: i + 1, wire, digest: await sha256Hex(hexToBytes(wire)), payload };
         // Root-anchored: the chain is signed by the root and the holder, not
@@ -2210,11 +2301,21 @@ function ReceiptMode() {
         }
         verified.push(row);
       } catch (e) {
-        setError(`Receipt on line ${i + 1} does not verify: ${e instanceof Error ? e.message : String(e)}`);
-        return;
+        rejected.push({ line: i + 1, error: e instanceof Error ? e.message : String(e) });
       }
     }
+    if (verificationGeneration.current !== generation) return;
     setRows(verified);
+    setFailed(rejected);
+  };
+
+  const loadSample = () => {
+    const text = SAMPLE_RECEIPTS.receipts.join('\n');
+    setInput(text);
+    setRootsText(SAMPLE_RECEIPTS.trustedRoot);
+    setAuthText('');
+    setUsingSample(true);
+    void verify(text, SAMPLE_RECEIPTS.trustedRoot, '');
   };
 
   // A link pointing at a receipt that is not present means one was removed from
@@ -2231,7 +2332,7 @@ function ReceiptMode() {
         <textarea
           className="input"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => { invalidateResults(); setInput(e.target.value); }}
           placeholder="a46f7265636569707476657273696f6e01…"
           rows={12}
           style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2241,7 +2342,7 @@ function ReceiptMode() {
           <textarea
             className="input"
             value={rootsText}
-            onChange={(e) => setRootsText(e.target.value)}
+            onChange={(e) => { invalidateResults(); setRootsText(e.target.value); }}
             placeholder="verifies each embedded chain at its decision instant"
             rows={2}
             style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
@@ -2252,15 +2353,29 @@ function ReceiptMode() {
           <textarea
             className="input"
             value={authText}
-            onChange={(e) => setAuthText(e.target.value)}
+            onChange={(e) => { invalidateResults(); setAuthText(e.target.value); }}
             placeholder="each receipt's signer must be in this set"
             rows={2}
             style={{ fontFamily: 'monospace', fontSize: '11px', width: '100%' }}
           />
         </div>
-        <button onClick={verify} className="btn" style={{ marginTop: '12px' }}>
-          Verify
-        </button>
+        <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+          <button onClick={() => { setUsingSample(false); void verify(); }} className="btn">
+            Verify
+          </button>
+          <button onClick={loadSample} className="btn btn-secondary">
+            Load sample receipts
+          </button>
+        </div>
+        {usingSample && (
+          <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }} data-testid="sample-receipts-note">
+            Three receipts from a real Tenuo run: an allowed <code>read_file</code> of
+            <code> docs/readme.md</code>, a denied one for <code>secrets/.env</code>, and the denial
+            again with one byte changed. The trusted root is the sample's own issuer key, generated
+            for this page. A verified signature shows a receipt is unchanged since it was signed. It
+            does not show the signing key speaks for anyone you trust.
+          </p>
+        )}
         <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '12px', lineHeight: 1.5 }}>
           Paste a whole stream to check the chain. Everything runs locally in
           WebAssembly. No receipt leaves your browser.
@@ -2274,6 +2389,19 @@ function ReceiptMode() {
           </div>
         )}
 
+        {failed.map((f) => (
+          <div key={`failed-${f.line}`} className="panel" style={{ borderColor: '#dc2626' }} data-testid="receipt-failed">
+            <h2 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '8px', color: '#dc2626' }}>
+              ❌ Line {f.line}: verification failed
+            </h2>
+            <p style={{ fontSize: '12px', lineHeight: 1.6 }}>
+              This line could not be verified. Check the receipt and verification settings;
+              the error below explains which check failed.
+            </p>
+            <p style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'monospace', marginTop: '6px', wordBreak: 'break-word' }}>{f.error}</p>
+          </div>
+        ))}
+
         {rows.length > 0 && (
           <>
             <div className="panel" style={{ borderColor: breaks.length ? '#dc2626' : undefined }}>
@@ -2281,7 +2409,9 @@ function ReceiptMode() {
                 {breaks.length === 0 ? '✅' : '❌'} Chain
               </h2>
               <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
-                {rows.length} receipt{rows.length === 1 ? '' : 's'}, all signatures verify.
+                {failed.length === 0
+                  ? <>{rows.length} receipt{rows.length === 1 ? '' : 's'}, all signatures verify.</>
+                  : <>{rows.length} of {rows.length + failed.length} receipts verify. Links are checked among those that do.</>}
                 {breaks.length === 0 ? (
                   <div style={{ marginTop: '8px' }}>Every link resolves to a receipt you pasted.</div>
                 ) : (
@@ -2383,7 +2513,7 @@ function App() {
   const [tool, setTool] = useState("");
   const [argsJson, setArgsJson] = useState("{}");
   const [decoded, setDecoded] = useState<DecodedWarrant | string | null>(null);
-  const [authResult, setAuthResult] = useState<AuthResult | null>(null);
+  const [authResult, setDiagnosticResult] = useState<DiagnosticResult | null>(null);
   const [shareUrl, setShareUrl] = useState("");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showSamples, setShowSamples] = useState(false);
@@ -2392,6 +2522,7 @@ function App() {
   const [sharedChain, setSharedChain] = useState<SharedChain | undefined>(undefined);
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
   const [showBuilderJson, setShowBuilderJson] = useState(false);
+  useEffect(() => { setBuilderPreview(null); }, [mode]);
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
@@ -2508,7 +2639,7 @@ function App() {
       setTool(sample.tool);
       setArgsJson(sample.args);
       setDecoded(null);
-      setAuthResult(null);
+      setDiagnosticResult(null);
       setShowSamples(false);
     }
   };
@@ -2519,6 +2650,19 @@ function App() {
     tool?: string;
     args?: string;
   }>({});
+
+  // Results describe the input they were computed from. Editing the warrant
+  // invalidates its decode and any check; editing the call invalidates the check.
+  useEffect(() => {
+    setDecoded(null);
+    setChainResult(null);
+    setDiagnosticResult(null);
+    setPemDetected(false);
+    setValidationErrors({});
+  }, [warrantB64]);
+  useEffect(() => {
+    setDiagnosticResult(null);
+  }, [tool, argsJson]);
 
   const validateInputs = (forAuth: boolean = false): boolean => {
     const errors: typeof validationErrors = {};
@@ -2570,6 +2714,10 @@ function App() {
       console.warn('[Tenuo Explorer] Decode blocked: WASM not ready');
       return;
     }
+    // Never leave an earlier decode on screen next to new input.
+    setDecoded(null);
+    setChainResult(null);
+    setDiagnosticResult(null);
     if (!validateInputs(false)) {
       console.warn('[Tenuo Explorer] Decode blocked: validation failed', validationErrors);
       return;
@@ -2600,7 +2748,7 @@ function App() {
       }
 
       setPemDetected(isPem);
-      setAuthResult(null);
+      setDiagnosticResult(null);
       setValidationErrors({});
 
       // Add to history
@@ -2625,32 +2773,23 @@ function App() {
 
   const handleAuthorize = () => {
     if (!wasmReady) return;
+    setDiagnosticResult(null);
     if (!validateInputs(true)) return;
 
     try {
       const args = JSON.parse(argsJson || '{}');
 
-      // Check expiration first (WASM dry run doesn't check TTL)
-      if (decodedWarrant) {
-        const now = Date.now() / 1000;
-        if (decodedWarrant.expires_at < now) {
-          setAuthResult({
-            authorized: false,
-            reason: `Warrant expired ${Math.floor(now - decodedWarrant.expires_at)} seconds ago`,
-            deny_code: 'EXPIRED'
-          });
-          return;
-        }
-      }
-
-      // For single-warrant auth, the trusted root is the warrant's own issuer
-      // Decode inline if not already decoded
-      const issuer = decodedWarrant?.issuer || decode_warrant(warrantB64.trim()).issuer;
-      const result = check_access(warrantB64.trim(), tool.trim(), args, issuer, true);
-      setAuthResult(result);
+      // Re-decode the current input: Inspect displays the leaf of a PEM chain,
+      // but the preview trust anchor is always its first warrant's issuer.
+      const { b64, isPem } = cleanInput(warrantB64);
+      const input = isPem ? warrantB64.trim() : b64;
+      const preview = sdkDecodeChain(input) as { issuer: string }[];
+      if (!preview.length) throw new Error('Warrant chain is empty');
+      const result = explainCall(input, tool.trim(), args, preview[0].issuer);
+      setDiagnosticResult(result);
       setValidationErrors({});
     } catch (e) {
-      setAuthResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Invalid input'}` });
+      setDiagnosticResult({ checksPassed: false, reason: `Error: ${e instanceof Error ? e.message : 'Invalid input'}` });
     }
   };
 
@@ -2659,7 +2798,7 @@ function App() {
     setTool("");
     setArgsJson("{}");
     setDecoded(null);
-    setAuthResult(null);
+    setDiagnosticResult(null);
   };
 
   const handleShare = async () => {
@@ -2703,7 +2842,7 @@ function App() {
     setTool(item.tool);
     setArgsJson(item.args);
     setDecoded(null);
-    setAuthResult(null);
+    setDiagnosticResult(null);
   };
 
   const clearHistory = () => {
@@ -2758,7 +2897,7 @@ function App() {
           {/* Builder Mode */}
           {mode === 'builder' && (
             <div className="two-column-grid">
-              <WarrantBuilder onGenerate={(config) => {
+              <WarrantBuilder onEdit={() => setBuilderPreview(null)} onGenerate={(config) => {
                 // Generate real warrant from config using WASM
                 const result = create_warrant_from_config(config);
                 // Store both the WASM result and the original config for code generation
@@ -2856,7 +2995,8 @@ function App() {
                             issued_at: Math.floor(Date.now() / 1000),
                             expires_at: Math.floor(Date.now() / 1000) + ((builderPreview as { config?: { ttl?: number } }).config?.ttl || 3600),
                             authorized_holder: (builderPreview as { holder_public_key_hex: string }).holder_public_key_hex,
-                            depth: 0
+                            depth: 0,
+                            max_depth: (builderPreview as { config?: { max_depth?: number } }).config?.max_depth,
                           }}
                           tool={(builderPreview as { tools: string[] }).tools?.[0] || ''}
                           args="{}"
@@ -2946,7 +3086,11 @@ function App() {
                           placeholder="Paste your warrant here..."
                           value={warrantB64}
                           onChange={(e) => setWarrantB64(e.target.value)}
+                          aria-invalid={!!validationErrors.warrant}
                         />
+                        {validationErrors.warrant && (
+                          <div role="alert" data-testid="warrant-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.warrant}</div>
+                        )}
                       </div>
 
                       <button onClick={handleDecode} disabled={!wasmReady || !warrantB64} className="btn btn-secondary">
@@ -2974,7 +3118,7 @@ function App() {
                   {/* Authorization Check Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Check Authorization</h2>
+                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Explain Call</h2>
                     </div>
 
                     {decodedWarrant && decodedWarrant.tools.length > 0 && (
@@ -3021,11 +3165,17 @@ function App() {
                       <div>
                         <label className="label">Tool Name</label>
                         <input className="input" placeholder="e.g., read_file" value={tool} onChange={(e) => setTool(e.target.value)} />
+                        {validationErrors.tool && (
+                          <div role="alert" data-testid="tool-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.tool}</div>
+                        )}
                       </div>
 
                       <div>
                         <label className="label">Arguments (JSON)</label>
                         <textarea className="input" style={{ height: '80px', minHeight: '50px', maxHeight: '200px', resize: 'vertical' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
+                        {validationErrors.args && (
+                          <div role="alert" data-testid="args-error" style={{ fontSize: '12px', color: 'var(--red)', marginTop: '4px' }}>❌ {validationErrors.args}</div>
+                        )}
                       </div>
 
                       <Explainer title="About Proof-of-Possession (PoP)" docLink="https://tenuo.ai/security">
@@ -3034,11 +3184,11 @@ function App() {
                         <p style={{ marginTop: '8px' }}><strong>Why this matters:</strong></p>
                         <p>• Without PoP: Intercepted warrant = full access</p>
                         <p>• With PoP: Intercepted warrant = useless (no private key)</p>
-                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>This explorer runs in <strong>dry run mode</strong> (policy-only check). Real PoP requires the holder's private key, which we don't have.</p>
+                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>This explorer reports <strong>diagnostic checks only</strong>. Possession is not checked, no approvals are supplied, and no revocation lists are loaded. Execution still requires a holder-signed invocation and full verification. The single-warrant preview uses the embedded issuer as its trust root; it does not establish that you trust that issuer.</p>
                       </Explainer>
 
                       <button onClick={handleAuthorize} disabled={!wasmReady || !warrantB64 || !tool} className="btn btn-primary">
-                        Check Authorization
+                        Explain Call
                       </button>
                     </div>
                   </div>
@@ -3242,18 +3392,18 @@ function App() {
                   {/* Result Panel */}
                   <div className="panel">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Authorization Result</h2>
+                      <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Diagnostic Result</h2>
                     </div>
 
                     {authResult ? (
-                      <div className={`result-box ${authResult.authorized ? 'success' : 'error'}`}>
-                        <div style={{ fontSize: '40px', marginBottom: '8px' }}>{authResult.authorized ? '✓' : '✕'}</div>
-                        <p style={{ fontSize: '20px', fontWeight: 600, marginBottom: '6px', color: authResult.authorized ? 'var(--green)' : 'var(--red)' }}>
-                          {authResult.authorized ? 'Authorized' : 'Denied'}
+                      <div className={`result-box ${authResult.checksPassed ? 'success' : 'error'}`}>
+                        <div style={{ fontSize: '40px', marginBottom: '8px' }}>{authResult.checksPassed ? '✓' : '✕'}</div>
+                        <p style={{ fontSize: '20px', fontWeight: 600, marginBottom: '6px', color: authResult.checksPassed ? 'var(--green)' : 'var(--red)' }}>
+                          {authResult.checksPassed ? 'Policy checks passed' : 'Requirements not satisfied'}
                         </p>
-                        {authResult.authorized ? (
+                        {authResult.checksPassed ? (
                           <p style={{ fontSize: '13px', color: 'var(--muted)' }}>
-                            Policy check passed <span style={{ opacity: 0.6 }}>(dry run)</span>
+                            {authResult.reason}
                           </p>
                         ) : (
                           <>
@@ -3264,7 +3414,7 @@ function App() {
                       </div>
                     ) : (
                       <div className="empty-state">
-                        <p>Run an authorization check to see results</p>
+                        <p>Explain a proposed call to see diagnostic results</p>
                       </div>
                     )}
                   </div>

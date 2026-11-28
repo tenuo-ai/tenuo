@@ -1,0 +1,44 @@
+name: Publish Rust crate (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag to test and publish to crates.io
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Deep wire-format tests need more than the runner's default test-thread stack
+  # in optimized builds.
+  RUST_MIN_STACK: 8388608
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.release_tag }} to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: stable
+
+      - name: Verify crate builds
+        working-directory: tenuo-core
+        run: cargo build --release --locked
+
+      - name: Run tests
+        working-directory: tenuo-core
+        run: cargo test --release --locked
+
+      - name: Publish to crates.io
+        working-directory: tenuo-core
+        run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

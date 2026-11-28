@@ -2,10 +2,15 @@ export type {
   ApprovalGateInspection,
   ApprovalRequirement,
   ApprovalRequirementStatus,
+  ConstraintDiagnostics,
+  ConstraintViolationKind,
+  ShlexCheck,
 } from "./wasm.ts";
 
 export {
   approvalRequirement,
+  checkShlex,
+  diagnoseConstraints,
   evaluateApprovalGates,
   inspectApprovalGate,
   parseStrictJson,
@@ -21,6 +26,8 @@ export type {
   ApprovalRequestSummary,
   ArgApprovalGate,
   CelConstraint,
+  ExplainWarrantOptions,
+  WarrantExplanation,
   CidrConstraint,
   Clearance,
   ConstraintExpr,
@@ -81,6 +88,7 @@ export type {
   UnderConstraint,
   UrlPatternConstraint,
   UrlSafeConstraint,
+  WarrantInfo,
   WarrantPart,
   WildcardConstraint,
 } from "./api.ts";

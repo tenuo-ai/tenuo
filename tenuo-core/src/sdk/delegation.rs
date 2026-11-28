@@ -87,7 +87,7 @@ impl PresentedAuthority {
             builder = builder.tool(tool.clone(), constraints.clone());
         }
         if let Some(ttl) = profile.ttl {
-            builder = builder.ttl(ttl);
+            builder = builder.ttl_capped_to_parent(ttl);
         }
         if profile.terminal {
             builder = builder.max_depth(self.leaf().depth() + 1);
@@ -243,6 +243,20 @@ mod tests {
         assert_eq!(chain[1].authorized_holder(), &remote.public_key());
         let child = PresentedAuthority::new(chain, Arc::new(LocalSigner::new(remote))).unwrap();
         assert_ne!(child.holder(), root.holder());
+    }
+
+    #[test]
+    fn delegation_profile_ttl_is_capped_at_parent_expiry() {
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let remote = SigningKey::generate();
+        let root = authority(&issuer, holder, "read");
+        let profile = DelegationProfile::new()
+            .capability("read", ConstraintSet::new())
+            .ttl(Duration::from_secs(3600));
+
+        let chain = root.delegate_to(&remote.public_key(), &profile).unwrap();
+        assert_eq!(chain[1].expires_at(), chain[0].expires_at());
     }
 
     #[test]
