@@ -27,6 +27,7 @@ uvicorn = pytest.importorskip("uvicorn")
 
 from tenuo import Authorizer, Exact, SigningKey
 from tenuo.oauth import (
+    ENTRA_ID,
     GITHUB_ACTIONS,
     ClaimMap,
     OAuthError,
@@ -49,16 +50,6 @@ REQUIRED = os.environ.get("TENUO_REQUIRE_ENTRA") == "1"
 pytestmark = pytest.mark.skipif(
     not (TENANT and API and CLIENT and REQUEST_URL and REQUEST_TOKEN) and not REQUIRED,
     reason="Needs an Entra tenant set up for this repository and a job with permissions: id-token: write",
-)
-
-# Entra ID version 2.0 access tokens for an application acting as itself: the
-# client is in ``azp`` and its permissions are application roles, in a list.
-ENTRA_V2 = ClaimMap(
-    client=("azp",),
-    scopes=("roles",),
-    header_type="JWT",
-    extra_headers=frozenset({"x5t"}),
-    constants={"ver": "2.0"},
 )
 
 
@@ -98,7 +89,7 @@ def trust(**changes):
         issuer=base + "/v2.0",
         audience=API,
         jwks_url=base + "/discovery/v2.0/keys",
-        claims=ENTRA_V2,
+        claims=ENTRA_ID,
         clients=frozenset({CLIENT}),
         where={"tid": TENANT},
         required_scopes=frozenset({ROLE}),

@@ -74,17 +74,18 @@ discovery, and redirects are not followed.
 
 ### Providers
 
-These three are tested against the real provider in CI:
+These four are tested against the real provider in CI:
 
 | Preset | Token it accepts |
 |---|---|
 | `KEYCLOAK` | Keycloak access tokens: header `typ: JWT`, payload `typ: Bearer`, client in `azp`. An ID token is refused. |
 | `RFC9068` | JWT access tokens as [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068) defines them: header `typ: at+jwt`, `client_id`, `jti`. Tested with node-oidc-provider. |
 | `GITHUB_ACTIONS` | The OIDC token GitHub gives a workflow run. No client and no scopes: `where` says which runs you trust. |
+| `ENTRA_ID` | Microsoft Entra ID version 2.0 access tokens for an application acting as itself (client credentials). Client in `azp`; application roles are read as scopes. |
 
 Any other provider is a `ClaimMap` you write from one of its tokens. Okta,
-Entra ID, Auth0 and Cognito are not tested in this repository, so no preset
-for them is shipped. Decode one of your tokens and fill in what you see:
+Auth0 and Cognito are not tested in this repository, so no preset for them
+is shipped. Decode one of your tokens and fill in what you see:
 
 ```python
 from tenuo.oauth import ClaimMap
@@ -294,6 +295,41 @@ Things to know:
 - The policy reads the rest from `identity.claims`: `workflow`, `sha`,
   `run_id`, `actor`, `event_name`.
 
+## Microsoft Entra ID
+
+```python
+from tenuo.oauth import ENTRA_ID, OAuthTokens, Trust
+
+tenant = "00000000-0000-0000-0000-000000000000"  # Your tenant ID.
+services = OAuthTokens(
+    Trust(
+        issuer=f"https://login.microsoftonline.com/{tenant}/v2.0",
+        audience="11111111-1111-1111-1111-111111111111",  # The client ID of the API's app registration.
+        jwks_url=f"https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys",
+        claims=ENTRA_ID,
+        clients=frozenset({"22222222-2222-2222-2222-222222222222"}),  # The calling application's client ID.
+        required_scopes=frozenset({"Warrants.Request"}),  # An application role on the API.
+    )
+)
+```
+
+Things to know:
+
+- Register the issuer as an API of its own (an app registration with an
+  Application ID URI), and set `requestedAccessTokenVersion` to `2` in its
+  manifest. Version 1.0 tokens have another issuer and client claim, and
+  are refused.
+- The audience of a version 2.0 token is the API's client ID, not its URI.
+- An application's permissions are application roles, in the `roles` claim.
+  Grant the role to the calling application with admin consent, and require
+  it with `required_scopes`. Without a role an application in your tenant can
+  still get a token for the API, so `clients` matters too.
+- Tested with tokens an application gets for itself. Tokens issued for a
+  signed-in user carry `scp` instead of `roles` and are not tested here.
+- A CI job needs no stored secret: Entra accepts the job's GitHub Actions
+  token as the client assertion (workload identity federation). The
+  [test](../tenuo-python/tests/e2e/test_oauth_entra.py) does exactly that.
+
 ## OAuth 2.0 Token Exchange request shape
 
 For callers and gateways that already speak [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693),
@@ -434,8 +470,8 @@ was denied or failed can be sent again.
 - It does not introspect opaque tokens or check token revocation lists.
 - It does not provide an audit backend, key management, or rate limiting by
   network address. Put those at your ingress and in your own services.
-- The three tested providers are evidence about those providers at the pinned
-  versions. They are not a claim about every OAuth deployment.
+- The four tested providers are evidence about those providers as tested
+  (pinned versions where there is one). They are not a claim about every OAuth deployment.
 
 The SPIFFE adapter's JWT-SVID and forwarded-identity endpoints run on the same
 issuance code as this one. See [the SPIFFE guide](spiffe.md) if your workloads

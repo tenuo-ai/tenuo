@@ -65,6 +65,7 @@ from tenuo._issuance_http import (
 )
 
 __all__ = [
+    "ENTRA_ID",
     "GITHUB_ACTIONS",
     "KEYCLOAK",
     "RFC9068",
@@ -196,6 +197,12 @@ KEYCLOAK = ClaimMap(client=("azp",), header_type="JWT", constants={"typ": "Beare
 GITHUB_ACTIONS = ClaimMap(client=(), scopes=(), header_type="JWT", extra_headers=frozenset({"x5t"}), has_clients=False)
 """GitHub Actions OIDC tokens. A workflow run is not an OAuth client and has no scopes:
 say which runs you trust with ``Trust.where`` (``repository``, ``ref``, ``environment``)."""
+
+ENTRA_ID = ClaimMap(client=("azp",), scopes=("roles",), header_type="JWT", constants={"ver": "2.0"})
+"""Microsoft Entra ID version 2.0 access tokens for an application acting as itself
+(client credentials). The client is in ``azp`` and its permissions are application
+roles, read here as scopes. Set ``requestedAccessTokenVersion`` to 2 on the API's
+registration: version 1.0 tokens are refused. The audience is the API's client ID."""
 
 Condition = Union[str, FrozenSet[str]]
 

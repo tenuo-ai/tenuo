@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identity provider names an approved task and gets a warrant for that task,
   bound to its holder key. A `Trust` says whose tokens are accepted (issuer,
   audience, claim layout, required claim values), with presets for Keycloak,
-  RFC 9068 and GitHub Actions, each tested against the real provider in CI.
+  RFC 9068, GitHub Actions and Microsoft Entra ID, each tested against the
+  real provider in CI.
   The endpoint accepts a compact JSON request or an OAuth 2.0 Token Exchange
   (RFC 8693) request. A recipe adds warrant checks to an Envoy gateway that
   already validates Keycloak tokens. See [the guide](docs/oauth.md).
