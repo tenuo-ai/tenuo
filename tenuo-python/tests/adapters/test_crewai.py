@@ -1729,6 +1729,47 @@ class TestGuardedCrewIssuerChain:
         guard = self._agent_guard(issuer, issuer_key, root_key)
         assert isinstance(guard._authorize("search", {"query": "arxiv:2401.00001"}), DenialResult)
 
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    def test_directly_trusted_issuer(self, asynchronous):
+        import asyncio
+        from tenuo import SigningKey, Warrant
+
+        root, issuer_key = SigningKey.generate(), SigningKey.generate()
+        issuer = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(issuer_key.public_key).mint(root))
+        guard = self._agent_guard(issuer, issuer_key, issuer_key)
+        args = {"query": "arxiv:2401.00001"}
+        result = asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
+        assert result is None
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("includes_issuer", [False, True])
+    def test_ambient_parents_resolved_at_call_time(self, asynchronous, includes_issuer):
+        import asyncio
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+        from tenuo.decorators import chain_scope
+
+        root, parent_key, issuer_key = [SigningKey.generate() for _ in range(3)]
+        parent = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(parent_key.public_key).mint(root))
+        issuer = WarrantDelegator().delegate(
+            parent_warrant=parent, parent_key=parent_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+        guard = self._agent_guard(issuer, issuer_key, root)
+        args = {"query": "arxiv:2401.00001"}
+        def call():
+            return asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
+
+        assert isinstance(call(), DenialResult)
+        with chain_scope([parent, issuer] if includes_issuer else [parent]):
+            assert call() is None
+        assert isinstance(call(), DenialResult)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
