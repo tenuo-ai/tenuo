@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-- **Cloud-backed token budgets:** keep Cloud-connected SDK clients on 0.3.8
-  until their Cloud server supports `POST /v1/triggers/{id}/acquire`.
-  Cloud deployment is separate from this core release. Upgrading a
-  `CloudLeases` client against an older server fails closed with
-  `lease_unavailable`; this prerequisite does not apply to local token budgets.
+- **Remote token-budget leases:** the HTTP lease adapter requires an issuer
+  that supports `POST /v1/triggers/{id}/acquire`. Upgrade the lease service
+  before upgrading its SDK clients from 0.3.8. An incompatible service
+  returns 404, and model calls fail closed with `lease_unavailable`.
+  Local token budgets and custom `LeaseSource` implementations are unaffected.
 - TypeScript packages remain prereleases (`0.3.9-beta.0`) on the `beta` npm
   channel. Rust users of `tenuo::aat` must apply the source migration below.
 
@@ -84,12 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Token budgets: `CloudLeases` asks again when Cloud does not answer
-  (Python).** A lease request or a return that gets no answer is sent again
+- **Token budgets: retry unanswered remote lease requests (Python).** A lease
+  request or a return that gets no answer is sent again
   within `timeout`, and a lease whose answer was lost is the lease the next
   request receives, so a dropped connection no longer leaves a lease charged
   and unused. Leases are now taken through
-  `POST /v1/triggers/{id}/acquire`: upgrade Tenuo Cloud before the SDK. A
+  `POST /v1/triggers/{id}/acquire`: upgrade the lease service before the SDK. A
   server without that route answers 404, grants nothing, and calls are
   refused with `lease_unavailable`. See
   [token budgets](docs/token-budgets.md#how-a-period-budget-is-handed-out).
