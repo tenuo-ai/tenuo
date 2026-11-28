@@ -15,7 +15,7 @@ import ssl
 import sys
 
 from tenuo import SigningKey
-from tenuo._spiffe_http import _request_body
+from tenuo._issuance_http import _request_body
 from tenuo.spiffe_forwarded import sign_forwarded_holder_proof
 
 ISSUER = "spiffe://cluster.local/ns/tenuo/sa/issuer"

@@ -1,0 +1,43 @@
+# An OAuth gateway that also checks warrants: Keycloak, Envoy, the Tenuo
+# authorizer and a stand-in payments backend. `check.py` starts this, runs the
+# warrant issuer on the host, and tears it down. Ports are fixed because the
+# token's issuer URL is part of the gateway's configuration:
+#   127.0.0.1:18180  the gateway (Envoy)
+#   127.0.0.1:18190  Keycloak
+#   host port 18181  the warrant issuer, reached by Envoy as host.docker.internal
+name: tenuo-oauth-gateway
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:7e66a96e4739239070aeaf72e4c5decf0f7f682cfc725b9f7ea2b336eaba38b3
+    command: ["start-dev", "--import-realm"]
+    volumes:
+      - ./realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "127.0.0.1:18190:8080"
+
+  tenuo-authorizer:
+    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.8}
+    command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
+    environment:
+      RUST_LOG: info
+      TENUO_TRUSTED_KEYS: ${TENUO_TRUSTED_KEYS:?set TENUO_TRUSTED_KEYS to the warrant issuer's public key (hex)}
+    volumes:
+      - ./gateway.yaml:/etc/tenuo/gateway.yaml:ro
+
+  envoy:
+    image: envoyproxy/envoy:v1.39.1
+    command: ["envoy", "-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "127.0.0.1:18180:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - keycloak
+      - tenuo-authorizer
+      - payments
+
+  payments:
+    image: mccutchen/go-httpbin:2.25.0

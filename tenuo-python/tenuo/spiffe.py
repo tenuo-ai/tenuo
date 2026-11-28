@@ -19,11 +19,9 @@ import base64
 import binascii
 import contextlib
 import hashlib
-import heapq
 import ipaddress
 import json
 import logging
-import math
 import os
 import re
 import secrets
@@ -51,6 +49,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    cast,
 )
 
 try:
@@ -69,7 +68,23 @@ try:
 except ImportError as exc:
     raise ImportError("SPIFFE integration requires pip install 'tenuo[spiffe]'") from exc
 
-from tenuo import Authorizer, PublicKey, SigningKey, Warrant
+from tenuo import PublicKey, SigningKey, Warrant
+from tenuo._issuance import (
+    HolderProof,
+    IssuanceBusy,
+    IssuanceError,
+    MemoryProofStore,
+    ProofStore,
+    SingleRequestIssuer,
+    SQLiteProofStore,
+    Wording,
+    _CallbackFailed,
+    _consume_result,
+    _from_callback,
+    _positive_int,
+    _seconds,
+)
+from tenuo._issuance import _checked_warrant as _checked_warrant_as
 
 __all__ = [
     "ANY_ARGUMENTS",
@@ -85,6 +100,9 @@ __all__ = [
     "arequest_warrant",
     "request_warrant",
     "sign_holder_challenge",
+    "MemoryProofStore",
+    "ProofStore",
+    "SQLiteProofStore",
 ]
 
 logger = logging.getLogger("tenuo.spiffe")
@@ -141,11 +159,11 @@ _VALIDATION_KEY = SigningKey.generate()
 ANY_ARGUMENTS: Mapping[str, Any] = MappingProxyType({})
 
 
-class SpiffeError(ValueError):
+class SpiffeError(IssuanceError):
     """Authentication, holder proof, or issuance was rejected."""
 
 
-class _IssuerBusy(SpiffeError):
+class _IssuerBusy(SpiffeError, IssuanceBusy):
     """The issuer cannot take the request right now; the caller should retry."""
 
 
@@ -1223,19 +1241,7 @@ class SpiffeGrant:
     max_depth: int = 0
 
 
-@dataclass(frozen=True)
-class SpiffeHolderProof:
-    """A holder key's signed statement for one single-request exchange.
-
-    Build it with :func:`tenuo.spiffe_jwt.sign_jwt_holder_proof` or
-    :func:`tenuo.spiffe_forwarded.sign_forwarded_holder_proof`.
-    """
-
-    timestamp: int
-    nonce: bytes
-    signature: bytes
-
-
+SpiffeHolderProof = HolderProof
 SpiffeJWTProof = SpiffeHolderProof
 
 
@@ -1258,38 +1264,6 @@ class _Pending:
     task_id: str
     grant: SpiffeGrant
     deadline: float
-
-
-def _positive_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _run_callback(callback: Callable[..., Any], *arguments: Any) -> Any:
-    """Call a policy or audit callback, marking whatever it raises as the callback's own failure.
-
-    The exception still reaches a direct caller unchanged. The bundled
-    endpoints read the mark: a callback may raise anything, a ``SpiffeError``
-    included, and that is the issuer failing, not the workload being refused.
-    """
-    try:
-        return callback(*arguments)
-    except Exception as exc:
-        try:
-            exc._tenuo_callback_failure = True  # type: ignore[attr-defined]
-        except AttributeError:
-            raise _CallbackFailed() from exc  # An exception type that takes no attributes.
-        raise
-
-
-def _from_callback(exc: BaseException) -> bool:
-    return getattr(exc, "_tenuo_callback_failure", False) is True
-
-
-def _seconds(name: str, value: Any) -> float:
-    """A positive, finite number of seconds. NaN and infinity would switch a limit off without saying so."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-        raise ValueError(f"{name} must be positive and finite")
-    return float(value)
 
 
 def _validate_grant(grant: Any) -> SpiffeGrant:
@@ -1339,6 +1313,9 @@ class SpiffeWarrantIssuer:
     exact replays, and asks callers to retry when that memory is full. One
     SPIFFE ID may hold at most ``max_jwt_proofs_per_identity`` of them (a
     quarter by default), so one busy workload cannot keep the others out.
+    Pass ``proof_store`` to keep that memory somewhere else: a
+    ``SQLiteProofStore`` shares it between issuer processes on one host, and
+    its own limits then apply instead of these two.
     """
 
     def __init__(
@@ -1354,6 +1331,7 @@ class SpiffeWarrantIssuer:
         max_jwt_proofs: int = _JWT_PROOF_MEMORY,
         forwarded: Optional[Any] = None,
         max_jwt_proofs_per_identity: Optional[int] = None,
+        proof_store: Optional[ProofStore] = None,
     ):
         if tls is None and jwt is None and forwarded is None:
             raise ValueError(
@@ -1377,13 +1355,31 @@ class SpiffeWarrantIssuer:
         self.tls = tls
         self.jwt = jwt  # A tenuo.spiffe_jwt.SpiffeJWT, or None.
         self.forwarded = forwarded  # A tenuo.spiffe_forwarded.SpiffeForwardedIdentity, or None.
-        # Each remembered proof: the wall-clock time until which its timestamp stays
-        # acceptable, and whose it is. The heap orders them by that time; an entry
-        # dropped early (a failed request) stays in the heap until it is skipped.
-        self._proofs: Dict[bytes, Tuple[float, str]] = {}
-        self._proof_order: List[Tuple[float, bytes]] = []
-        self._proofs_held: Dict[str, int] = {}
-        self._proofs_forgotten_to = float("-inf")  # Proofs acceptable no later than this have been forgotten.
+        # Holder proofs of the single-request exchanges are remembered in this
+        # process unless a store shared by several is given.
+        self._proof_store: ProofStore = (
+            MemoryProofStore(max_jwt_proofs, max_jwt_proofs_per_identity) if proof_store is None else proof_store
+        )
+        self._single = SingleRequestIssuer(
+            signing_key=signing_key,
+            # Looked up at each call: the callbacks may be replaced on a running issuer.
+            policy=lambda identity, task_id: self._policy(identity, task_id),
+            audit=lambda record: self._audit(record) if self._audit is not None else None,
+            store=self._proof_store,
+            refused=SpiffeError,
+            busy=_IssuerBusy,
+            validate=_validate_grant,
+            record=lambda identity, task_id, holder, warrant, grant: SpiffeIssuance(
+                identity, task_id, holder, warrant.id, warrant.expires_at(), tuple(grant.capabilities)
+            ),
+            logger=logger,
+            wording=Wording(
+                denied="Workload is not authorized for this task",
+                ends_too_soon="SVID expires too soon to issue a warrant",
+                outlives="Warrant would outlive the authenticated SVID",
+                who="workload",
+            ),
+        )
         self._key = signing_key
         self._issuer_hex = bytes(signing_key.public_key.to_bytes()).hex()
         self._policy = policy
@@ -1469,111 +1465,28 @@ class SpiffeWarrantIssuer:
         statement: Callable[[bytes, int, bytes], bytes],
     ) -> Warrant:
         """The single-request exchange: check the holder's signed statement, then policy, then mint."""
-        if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
-            raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
-        if not isinstance(holder, PublicKey):
-            raise SpiffeError("holder must be a Tenuo PublicKey")
-        if not isinstance(proof, SpiffeHolderProof):
-            raise SpiffeError("Invalid holder proof")
-        timestamp, nonce, signature = proof.timestamp, proof.nonce, proof.signature
-        if (
-            not _positive_int(timestamp)
-            or not 0 <= timestamp < 2**40
-            or abs(time.time() - timestamp) > _JWT_PROOF_SECONDS
-        ):
-            raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
-        if (
-            not isinstance(nonce, bytes)
-            or len(nonce) != _JWT_NONCE_BYTES
-            or not isinstance(signature, bytes)
-            or len(signature) != 64
-        ):
-            raise SpiffeError("Invalid holder proof")
-        key = bytes(holder.to_bytes())
-        message = statement(key, timestamp, nonce)
-        try:
-            Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
-        except (InvalidSignature, ValueError) as exc:
-            raise SpiffeError("Invalid holder proof") from exc
-        # Refuse an exact replay seen by this process. The proof is reserved
-        # while the request runs and kept only if a warrant is issued, so a
-        # denied or failed request leaves nothing behind and can be retried.
-        # It is remembered until the wall clock passes the last moment its
-        # timestamp is acceptable: the same clock that judges freshness above.
-        # A live entry is never dropped to make room: when the memory is full,
-        # or this workload holds its share, new requests wait their turn instead.
-        spiffe_id = identity.spiffe_id
-        keep_until = float(timestamp + _JWT_PROOF_SECONDS + 1)
-        with self._lock:
-            self._forget_old_proofs()
-            if keep_until <= self._proofs_forgotten_to:
-                # Had this proof been used, it would be forgotten by now. That only
-                # happens to a timestamp that passed the check above when the clock
-                # has been set back, so it cannot be told from a replay.
-                raise SpiffeError("Holder proof is too old or from the future; check the clocks on both sides")
-            if signature in self._proofs:
-                raise SpiffeError("This holder proof was already used; sign a new one")
-            if len(self._proofs) >= self._max_jwt_proofs:
-                raise _IssuerBusy("Issuer is at its limit for recent single-request exchanges; retry shortly")
-            if self._proofs_held.get(spiffe_id, 0) >= self._max_jwt_proofs_per_identity:
-                raise _IssuerBusy("This workload is at its limit for recent single-request exchanges; retry shortly")
-            self._proofs[signature] = (keep_until, spiffe_id)
-            self._proofs_held[spiffe_id] = self._proofs_held.get(spiffe_id, 0) + 1
-            heapq.heappush(self._proof_order, (keep_until, signature))
-        try:
-            grant = _run_callback(self._policy, identity, task_id)
-            if grant is None:
-                raise SpiffeError("Workload is not authorized for this task")
-            try:
-                grant = _validate_grant(grant)
-            except SpiffeError as exc:
-                logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
-                raise
-            return self._mint(identity, key, task_id, grant)
-        except BaseException:
-            with self._lock:
-                self._forget_proof(signature)
-            raise
+        return self._single.issue(
+            identity,
+            owner=identity.spiffe_id,
+            expires_at=identity.expires_at,
+            holder=holder,
+            task_id=task_id,
+            proof=proof,
+            statement=statement,
+        )
 
-    def _forget_proof(self, signature: bytes) -> None:
-        """Drop one remembered proof. Call with the lock held."""
-        entry = self._proofs.pop(signature, None)
-        if entry is None:
-            return
-        held = self._proofs_held[entry[1]] - 1
-        if held:
-            self._proofs_held[entry[1]] = held
-        else:
-            del self._proofs_held[entry[1]]
+    @property
+    def _proofs(self) -> Dict[str, Tuple[float, str]]:
+        """The proofs remembered in this process (not available with a store of another kind)."""
+        return cast(MemoryProofStore, self._proof_store)._entries
 
-    def _forget_old_proofs(self) -> None:
-        """Drop the proofs whose timestamps are no longer acceptable. Call with the lock held."""
-        now, order = time.time(), self._proof_order
-        self._proofs_forgotten_to = max(self._proofs_forgotten_to, now)
-        while order and order[0][0] <= now:
-            until, signature = heapq.heappop(order)
-            entry = self._proofs.get(signature)
-            if entry is not None and entry[0] == until:
-                self._forget_proof(signature)
-        # Entries of failed requests are skipped above only when their time comes.
-        # Rebuild before they outnumber the live ones by much.
-        if len(order) > 2 * len(self._proofs) + 1024:
-            self._proof_order = [(until, signature) for signature, (until, _) in self._proofs.items()]
-            heapq.heapify(self._proof_order)
+    @property
+    def _proofs_held(self) -> Dict[str, int]:
+        return cast(MemoryProofStore, self._proof_store)._held
 
     def _challenge(self, identity: SpiffeIdentity, holder: PublicKey, task_id: str) -> bytes:
-        if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
-            raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
-        if not isinstance(holder, PublicKey):
-            raise SpiffeError("holder must be a Tenuo PublicKey")
-        grant = _run_callback(self._policy, identity, task_id)
-        if grant is None:
-            raise SpiffeError("Workload is not authorized for this task")
-        try:
-            grant = _validate_grant(grant)
-        except SpiffeError as exc:
-            logger.warning("Invalid policy grant for %s task %r: %s", identity.spiffe_id, task_id, exc)
-            raise
+        self._single.check_request(holder, task_id)
+        grant = self._single.grant(identity, identity.spiffe_id, task_id)
         key = bytes(holder.to_bytes())
         payload = json.dumps(
             {
@@ -1619,22 +1532,7 @@ class SpiffeWarrantIssuer:
 
     def _mint(self, identity: SpiffeIdentity, holder: bytes, task_id: str, grant: SpiffeGrant) -> Warrant:
         """Mint a validated grant for a proven holder key, bounded by the SVID's expiry."""
-        ttl = min(grant.ttl_seconds, int(identity.expires_at - time.time()) - 1)
-        if ttl < 1:
-            raise SpiffeError("SVID expires too soon to issue a warrant")
-        builder = Warrant.mint_builder().holder(PublicKey.from_bytes(holder)).ttl(ttl).max_depth(grant.max_depth)
-        for tool, constraints in grant.capabilities.items():
-            builder.capability(tool, dict(constraints))
-        warrant = builder.mint(self._key)
-        if datetime.fromisoformat(warrant.expires_at()).timestamp() > identity.expires_at:
-            raise SpiffeError("Warrant would outlive the authenticated SVID")
-        record = SpiffeIssuance(
-            identity, task_id, holder.hex(), warrant.id, warrant.expires_at(), tuple(grant.capabilities)
-        )
-        if self._audit is not None:
-            _run_callback(self._audit, record)
-        logger.info("Issued warrant %s to %s for task %r", warrant.id, identity.spiffe_id, task_id)
-        return warrant
+        return self._single.mint(identity, identity.spiffe_id, identity.expires_at, holder, task_id, grant)
 
     def _discard(self, challenge: Optional[bytes]) -> None:
         if challenge is not None:
@@ -1794,16 +1692,7 @@ def request_warrant(
 
 def _checked_warrant(encoded: Any, trusted: List[PublicKey], holder_key: SigningKey) -> Warrant:
     """Accept an issuer's reply only if it is a current warrant from a trusted key for this holder."""
-    if not isinstance(encoded, str):
-        raise SpiffeError("Invalid warrant response")
-    try:
-        warrant = Warrant.from_base64(encoded)
-        Authorizer(trusted_roots=trusted).verify(warrant)
-    except Exception as exc:
-        raise SpiffeError("Issued warrant failed verification") from exc
-    if warrant.authorized_holder != holder_key.public_key:
-        raise SpiffeError("Issued warrant is bound to a different holder")
-    return warrant
+    return _checked_warrant_as(encoded, trusted, holder_key, SpiffeError)
 
 
 async def arequest_warrant(tls: SpiffeTLS, address: Tuple[str, int], **kwargs: Any) -> Warrant:
@@ -1884,16 +1773,6 @@ class _ServerConnection:
         except (ConnectionError, OSError):
             pass
         self._writer.close()
-
-
-class _CallbackFailed(Exception):
-    """A policy or audit callback raised. The cause is chained."""
-
-
-def _consume_result(work: "asyncio.Future[Any]") -> None:
-    """Retrieve a shielded result nobody awaited, so it is not logged as unhandled."""
-    if not work.cancelled():
-        work.exception()
 
 
 class SpiffeIssuerServer:

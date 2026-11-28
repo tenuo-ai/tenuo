@@ -26,7 +26,7 @@ if os.name == "nt":
     pytest.skip("starts POSIX server processes", allow_module_level=True)
 
 from tenuo import SigningKey  # noqa: E402
-from tenuo._spiffe_http import _request_body  # noqa: E402
+from tenuo._issuance_http import _request_body  # noqa: E402
 from tenuo.spiffe_forwarded import sign_forwarded_holder_proof  # noqa: E402
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]

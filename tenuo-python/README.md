@@ -294,6 +294,14 @@ keyring = Keyring(
 all_pubkeys = keyring.all_public_keys
 ```
 
+## OAuth Integration
+
+If your agents already sign in with OAuth (through Keycloak, an API gateway,
+or as a GitHub Actions run), the [OAuth adapter](../docs/oauth.md) gives each
+task a warrant for only what that task needs. Your login flow and gateway stay
+as they are. See the [gateway recipe](examples/oauth/gateway/README.md) and the
+[browser-to-MCP example](examples/oauth/README.md).
+
 ## SPIFFE Integration
 
 Use SPIFFE/SPIRE workload identity to authenticate warrant issuance, then use

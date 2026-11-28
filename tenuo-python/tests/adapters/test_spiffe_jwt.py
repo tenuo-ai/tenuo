@@ -2679,7 +2679,7 @@ def test_endpoint_checks_tokens_off_the_event_loop_and_bounds_that_work(jwt_issu
         assert (third, checking, afterwards) == (503, 2, 0)
         assert served == [200, 200]  # Once their tokens were checked, both were admitted and served.
         # The first check of each token ran in the token pool, the second with the policy. None ran on the loop.
-        assert all(name.startswith("tenuo-spiffe-token") for name in threads[:2])
+        assert all(name.startswith("tenuo-issuance-check") for name in threads[:2])
         assert len(threads) == 4 and loop_thread not in threads
     finally:
         release.set()
@@ -2725,7 +2725,7 @@ def test_endpoint_reports_a_callback_that_raises_spiffe_error_as_an_issuer_error
 
 def test_exchanges_in_progress_or_left_behind_are_bounded(authority, monkeypatch):
     """A stalled name lookup cannot be interrupted. Calls that give up on one must not pile up threads without end."""
-    import tenuo._spiffe_http as http_module
+    import tenuo._issuance_http as http_module
 
     lookup, release = socket.getaddrinfo, threading.Event()
     stalled_lookups = []

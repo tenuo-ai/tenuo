@@ -1320,6 +1320,7 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | JWT request body deadline | 10 seconds, then HTTP 408 | `SpiffeJWTIssuerApp(body_timeout=)` |
 | JWT warrants per issuer process | 16384 in any minute, then HTTP 503 | `SpiffeWarrantIssuer(max_jwt_proofs=)` |
 | JWT warrants per SPIFFE ID | a quarter of that (4096) in any minute, then HTTP 503 | `SpiffeWarrantIssuer(max_jwt_proofs_per_identity=)` |
+| Holder proofs remembered across processes | not shared: each process remembers its own | `SpiffeWarrantIssuer(proof_store=SQLiteProofStore(path))` shares them between processes on one host and keeps them across restarts. The store's own `capacity` and `per_owner` then replace the two limits above. |
 | JWT request body and token size | 64 KiB and 16 KiB | fixed |
 | JWT bundle file check | every 5 seconds, while requests arrive | fixed |
 | JWT keys kept while the SPIRE agent is unreachable | 300 seconds | `SpiffeJWT.from_workload_api(max_stale_seconds=)` |
@@ -1536,8 +1537,9 @@ Content-Type: application/json
 ```
 
 The reply is `200 {"warrant": "<base64>"}`, or `{"error": ..., "message": ...}`
-with status 400 (malformed), 401 (token not accepted), 403 (refused), 408, 413,
-or 503 (busy, or the policy or audit callback failed). The token is checked
+with status 400 (malformed, including a duplicated JSON member), 401 (token
+not accepted), 403 (refused), 408, 413, or 503 (busy, or the policy or audit
+callback failed). The token is checked
 before the body is read, so a request with both a bad token and a bad body
 gets 401. `v` is the JSON integer `1`: `true` and `1.0` are refused, here and
 in the two other exchanges.
@@ -1656,7 +1658,7 @@ language. With a JWT-SVID it refuses plain `http://` except to loopback.
 | `SpiffeTLS.from_workload_api(trust_domain=, server_side=, socket_path=, spiffe_id=, timeout=, federates_with=)` | Takes credentials from the SPIRE agent and follows renewals. `close()` stops following. |
 | `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=, federated_bundle_files=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
 | `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
-| `SpiffeWarrantIssuer(tls=, jwt=, forwarded=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=, max_jwt_proofs=, max_jwt_proofs_per_identity=)` | Runs policy, challenges the holder key, mints warrants. |
+| `SpiffeWarrantIssuer(tls=, jwt=, forwarded=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=, max_jwt_proofs=, max_jwt_proofs_per_identity=, proof_store=)` | Runs policy, challenges the holder key, mints warrants. |
 | `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
 | `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=, federates_with=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=, federated_bundle_files=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
