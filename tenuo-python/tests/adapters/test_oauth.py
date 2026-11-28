@@ -538,6 +538,7 @@ def test_missing_fields_scope_and_expiry_cap(provider, setup):
         {"refund": {"payment_id": Exact("p1")}},  # Not a TaskGrant.
         TaskGrant({}),
         TaskGrant({"refund": {}}),  # A tool with no argument constraints would allow any call.
+        TaskGrant({"refund": {"_allow_unknown": True}}),  # A setting, not a constraint: the same thing.
         TaskGrant({"refund": {"payment_id": Exact("p1")}}, ttl_seconds=0),
         TaskGrant({"refund": {"payment_id": Exact("p1")}}, max_depth=99),
         TaskGrant(
@@ -552,6 +553,17 @@ def test_what_a_policy_returns_is_checked(provider, setup, grant):
     with pytest.raises(OAuthError):
         ask(issuer, provider["token"](), holder)
     assert audits == []
+
+
+def test_unlisted_arguments_are_refused_unless_the_grant_says_otherwise(provider, setup):
+    issuer, holder, root, *_ = setup
+    listed = {"payment_id": Exact("p1")}
+    for constraints, unlisted_allowed in ((listed, False), ({**listed, "_allow_unknown": True}, True)):
+        issuer.policy = lambda identity, task_id, constraints=constraints: TaskGrant({"refund": constraints})
+        warrant = ask(issuer, provider["token"](), holder)
+        assert allowed(root, warrant, holder, "refund", {"payment_id": "p1"})
+        assert allowed(root, warrant, holder, "refund", {"payment_id": "p1", "note": "x"}) is unlisted_allowed
+        assert not allowed(root, warrant, holder, "refund", {"payment_id": "p2", "note": "x"})
 
 
 def test_a_grant_is_copied_when_it_is_checked(provider, setup):
@@ -701,6 +713,19 @@ def test_store_limits_and_expiry(tmp_path):
     assert store.claim("c1", time.time() + 100, "carol") == "full"
     store.release("a1")
     assert store.claim("c1", time.time() + 100, "carol") == "claimed"
+
+
+def test_sqlite_store_finds_expired_proofs_by_index(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "proofs.db")
+    SQLiteProofStore(path)
+    db = sqlite3.connect(path)
+    try:
+        plan = " ".join(row[-1] for row in db.execute("EXPLAIN QUERY PLAN DELETE FROM proofs WHERE expires <= 1"))
+    finally:
+        db.close()
+    assert "proofs_expires" in plan and "SCAN" not in plan
 
 
 def test_sqlite_store_closes_what_it_opens(tmp_path, recwarn):

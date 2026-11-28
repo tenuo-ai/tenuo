@@ -627,7 +627,9 @@ def _validated(grant: Any) -> TaskGrant:
         if not isinstance(constraints, Mapping):
             raise OAuthError("Tools must have explicit argument constraints")
         copied = dict(constraints)
-        if not copied:
+        # The core reads this key as a setting (accept arguments that are not listed),
+        # not as a constraint. On its own it would allow any call to the tool.
+        if not any(name != "_allow_unknown" for name in copied):
             raise OAuthError("Tools must have explicit argument constraints")
         capabilities[tool] = MappingProxyType(copied)
     if not capabilities:

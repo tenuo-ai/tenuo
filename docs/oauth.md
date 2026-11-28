@@ -101,6 +101,10 @@ MY_PROVIDER = ClaimMap(
 Then test it with a real token from your tenant, and with an ID token from the
 same tenant, which must be refused.
 
+A `ClaimMap` cannot describe every provider. A token must carry `iss`, `sub`,
+`aud`, `iat` and `exp`. Amazon Cognito access tokens have no `aud` claim, so
+they are refused today.
+
 All providers: RS256 (RSA of 2048 bits or more) or ES256, with a key ID. The
 only headers accepted are `alg`, `kid`, `typ` and those the preset names.
 Refused: opaque tokens, encrypted tokens, unsigned tokens, tokens with
@@ -167,6 +171,10 @@ def policy(identity, task_id):
 
 `identity.claims` holds the token's other string claims. Everything in it was
 signed by the provider; nothing was supplied by the agent.
+
+Every tool in a grant needs at least one argument constraint. A call with an
+argument the grant does not list is refused, unless the grant also sets the
+core's `"_allow_unknown": True` for that tool.
 
 ## Step 3: Run the issuer
 

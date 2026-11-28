@@ -214,6 +214,8 @@ class SQLiteProofStore:
         with self._db() as db:
             db.execute("CREATE TABLE IF NOT EXISTS proofs (key TEXT PRIMARY KEY, expires REAL NOT NULL, owner TEXT)")
             db.execute("CREATE INDEX IF NOT EXISTS proofs_owner ON proofs (owner)")
+            # Each claim removes what has expired while it holds the write lock: found by index, not by a scan.
+            db.execute("CREATE INDEX IF NOT EXISTS proofs_expires ON proofs (expires)")
             db.execute("CREATE TABLE IF NOT EXISTS forgotten (one INTEGER PRIMARY KEY CHECK (one = 1), until REAL)")
             db.execute("INSERT OR IGNORE INTO forgotten VALUES (1, 0)")
 
