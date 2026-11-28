@@ -2708,15 +2708,22 @@ class _GuardedCrewImpl:
 
     def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
         """Create a hook that routes to the appropriate per-agent guard."""
-        from contextvars import copy_context
-        from .consumption import _set_current_idempotency_key, current_idempotency_key
+        from .config import _config_context, get_config
+        from .consumption import _set_current_idempotency_key
+        from .decorators import _chain_context, chain_scope
+        from .runtime import _runtime_context, get_runtime
 
         guards = self._guards
-        kickoff_context = copy_context()
+        # Carry policy into CrewAI workers, not per-call outputs such as the
+        # idempotency key shared by hooks and the downstream tool handler.
+        policy_context = (
+            (_config_context, get_config()),
+            (_chain_context, list(chain_scope() or [])),
+            (_runtime_context, get_runtime()),
+        )
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
-            _set_current_idempotency_key(None)
             # Extract agent role from context
             agent = getattr(context, "agent", None)
             role = None
@@ -2729,27 +2736,29 @@ class _GuardedCrewImpl:
             if role is None:
                 # SECURITY: Fail-closed - cannot determine agent, block
                 logger.warning("GuardedCrew hook: cannot determine agent role, blocking")
+                _set_current_idempotency_key(None)
                 return False
 
             guard = guards.get(role)
             if guard is None:
                 # SECURITY: Fail-closed - agent not in policy
                 logger.warning(f"GuardedCrew hook: no guard for role '{role}', blocking")
+                _set_current_idempotency_key(None)
                 return False
 
-            # Delegate to the agent's guard hook (never raises; CrewAI would
-            # treat an escaped exception as "allow").
-            # CrewAI may invoke the hook from a worker without ContextVars.
-            # Each call gets its own copy so concurrent workers can safely
-            # use the kickoff's chain, Runtime, and authorization settings.
-            call_context = kickoff_context.copy()
-            call_context.run(_set_current_idempotency_key, None)
-            result = call_context.run(guard.authorize_hook, context, agent_role=role)
-            if result is None:
-                # Enforcement publishes this for the handler that runs next
-                # in the worker's context, outside the copied policy scope.
-                _set_current_idempotency_key(call_context.run(current_idempotency_key))
-            return result
+            tokens = [(var, var.set(value)) for var, value in policy_context]
+            try:
+                result = guard.authorize_hook(context, agent_role=role)
+                if result is False:
+                    _set_current_idempotency_key(None)
+                return result
+            except Exception:
+                _set_current_idempotency_key(None)
+                logger.exception("GuardedCrew hook failed; blocking tool call")
+                return False
+            finally:
+                for var, token in reversed(tokens):
+                    var.reset(token)
 
         return guarded_crew_hook
 
