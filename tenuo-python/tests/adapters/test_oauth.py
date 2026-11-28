@@ -182,6 +182,19 @@ def allowed(root, warrant, holder, tool, args):
         {"may_act": {"sub": "someone"}},
         {"exp": True},
         {"iat": 1.5},
+        {"iat": []},  # Claims of the wrong JSON type are a refusal like any other, with a reason.
+        {"iat": {"a": 1}},
+        {"exp": []},
+        {"exp": "soon"},
+        {"nbf": []},
+        {"nbf": {}},
+        {"aud": {"a": 1}},
+        {"aud": 7},
+        {"sub": []},
+        {"sub": 7},
+        {"azp": []},
+        {"scope": None},
+        {"jti": []},
         {"scope": {"refunds:write": True}},
         {"scope": 5},
         {"scope": ["refunds:write", 5]},
@@ -190,8 +203,9 @@ def allowed(root, warrant, holder, tool, args):
     ],
 )
 def test_reject_invalid_credentials(provider, validator, changes):
-    with pytest.raises(OAuthError):
+    with pytest.raises(OAuthError) as refused:
         validator.authenticate(provider["token"](**changes))
+    assert refused.value.reason and not isinstance(refused.value, OAuthUnavailable)
 
 
 @pytest.mark.parametrize(

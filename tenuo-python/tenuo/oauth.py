@@ -573,6 +573,13 @@ class OAuthTokens:
             if refused.unavailable:
                 raise OAuthUnavailable("OAuth signing keys unavailable", reason) from refused.__cause__
             raise OAuthError(refused.message, reason) from None
+        except OAuthError:
+            raise
+        except Exception as exc:
+            # Nothing above should get here. If something does, the token is refused, not let through or left unanswered.
+            reason = f"the token could not be checked ({type(exc).__name__})"
+            logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
+            raise OAuthError("Invalid OAuth access token", reason) from exc
 
     def _identity(self, token: str) -> OAuthIdentity:
         trust, shape = self.trust, self.trust.claims
@@ -627,7 +634,7 @@ class OAuthTokens:
             raise _NotAccepted(f"the token has no {exc.claim!r} claim") from None
         except jwt.InvalidSignatureError:
             raise _NotAccepted("the signature does not verify with the provider's key") from None
-        except jwt.PyJWTError as exc:
+        except Exception as exc:  # PyJWT's own errors, and whatever a claim of the wrong JSON type makes it raise.
             raise _NotAccepted(f"the token could not be verified ({type(exc).__name__})") from None
         if any(name in claims for name in ("cnf", "act", "may_act")):
             raise _NotAccepted(
