@@ -1370,6 +1370,59 @@ def test_requests_without_a_checked_token_have_only_a_share_of_the_places(provid
     assert slow[0] == 400 and app._places.unverified == 0
 
 
+def test_a_token_exchange_holds_its_share_until_its_token_is_checked(provider, setup, app, monkeypatch):
+    """Not only while its body is read: a slow check of one such request must not let more of them in."""
+    issuer, holder, *_ = setup
+    slow, other = provider["token"](), provider["token"](jti="another")
+    checking, release = threading.Event(), threading.Event()
+    real = issuer.authenticate
+
+    def authenticate(token):
+        if token == slow and not release.is_set():
+            checking.set()
+            release.wait(10)
+        return real(token)
+
+    monkeypatch.setattr(issuer, "authenticate", authenticate)
+    assert real(slow).subject == "alice"  # The keys are known: the checks below are slow only where made so.
+
+    async def post(headers, body):
+        sent = []
+
+        async def whole():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/warrants",
+            "headers": [(n.lower().encode(), v.encode()) for n, v in headers],
+        }
+        await app(scope, whole, send)
+        return sent[0]["status"], json.loads(sent[1]["body"])
+
+    async def run():
+        first = asyncio.ensure_future(post(FORM, exchange(slow, holder)))
+        for _ in range(400):
+            await asyncio.sleep(0.005)
+            if checking.is_set():
+                break
+        held = app._places.unverified
+        second = await post(FORM, exchange(other, holder))  # The fixture's endpoint has one such place.
+        compact_request = await post(bearer(other), compact(other, holder))
+        release.set()
+        return held, second, compact_request, await first
+
+    held, second, compact_request, first = asyncio.run(run())
+    assert held == 1
+    assert second == (503, {"error": "temporarily_unavailable", "error_description": "Issuer is busy; retry shortly"})
+    assert compact_request[0] == 200 and first[0] == 200
+    assert app._places.unverified == 0 and app._places.checking == 0
+
+
 # ---------------------------------------------------------------------------
 # The agent's side
 # ---------------------------------------------------------------------------

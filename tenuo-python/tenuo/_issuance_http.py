@@ -444,17 +444,30 @@ class _IssuerApp:
     async def _exchange(self, scope: _Scope, receive: _Receive) -> Warrant:
         """One RFC 8693 request: the token is in the body, so the body is read before the caller is known.
 
-        Only a share of the places is open to such requests, so callers who
-        have not shown a token yet cannot keep out those who have.
+        Only a share of the places is open to such requests, and one is held
+        until the token has been checked: reading and checking alike, callers
+        who have not shown a valid token yet cannot keep out those who have.
         """
         places = self._places
         if places.unverified >= max(1, self._max_concurrent // 4):
             raise _Refusal(503, "unavailable", "Issuer is busy; retry shortly")
         places.unverified += 1
         try:
-            body = await self._body(receive)
+            request, detail = self._exchange_fields(await self._body(receive))
+            holder, task_id, proof = self._holder_and_proof(detail)
+            self._same_token(scope, request["subject_token"])
+            credential = await self._checked(self._exchange_credential(request["subject_token"]))
         finally:
             places.unverified -= 1
+        slot = self._admit(credential)
+        try:
+            return await self._work(credential, holder, task_id, proof, slot)
+        finally:
+            if not slot.follows_work:
+                slot.release()
+
+    def _exchange_fields(self, body: bytes) -> Tuple[Dict[str, str], Dict[str, Any]]:
+        """The form fields of a token-exchange request and its one task detail, or a refusal."""
         try:
             fields = urllib.parse.parse_qs(
                 body.decode("ascii"), keep_blank_values=True, strict_parsing=True, max_num_fields=16
@@ -474,15 +487,7 @@ class _IssuerApp:
                 raise ValueError
         except (ValueError, TypeError, RecursionError, UnicodeError):
             raise _Refusal(400, "invalid_request", "Malformed token-exchange request") from None
-        holder, task_id, proof = self._holder_and_proof(detail)
-        self._same_token(scope, request["subject_token"])
-        credential = await self._checked(self._exchange_credential(request["subject_token"]))
-        slot = self._admit(credential)
-        try:
-            return await self._work(credential, holder, task_id, proof, slot)
-        finally:
-            if not slot.follows_work:
-                slot.release()
+        return request, detail
 
     @staticmethod
     def _decode_request(body: bytes) -> Any:

@@ -374,8 +374,9 @@ token the request carries an `Authorization` header as well, and it must be
 `Bearer` with that same token; any other `Authorization` header is refused.
 
 In this shape the token is in the body, so the body is read before the caller
-is known. Such requests get a quarter of the endpoint's places, so they cannot
-crowd out callers whose token is checked first.
+is known. Such requests get a quarter of the endpoint's places until their
+token has been checked, so they cannot crowd out callers whose token is
+checked first.
 
 ## Wire protocol
 
