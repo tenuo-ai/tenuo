@@ -430,9 +430,11 @@ was denied or failed can be sent again.
   one at a time for each provider, and at most every `refresh_interval`.
   Nobody waits for another caller's fetch. While one is under way, or after
   one failed, such a token gets 503 at once and should be sent again; it gets
-  401 only when a fetch succeeded and the key was not in it. So a provider
-  that does not answer costs one request at a time, and callers of your
-  other providers are not held up. The bundled endpoint fetches every
+  401 only when a fetch succeeded and the key was not in it. The caller that
+  fetches waits at most a second past `timeout`, even when the fetch is stuck
+  on something that cannot be interrupted, such as a name lookup. So a
+  provider that does not answer costs one request at a time, and callers of
+  your other providers are not held up. The bundled endpoint fetches every
   provider's keys before the server takes requests (ASGI lifespan start-up).
   If you mount it without lifespan events or call the issuer directly, call
   `OAuthTokens.refresh()` at start-up.

@@ -418,15 +418,48 @@ def test_known_keys_are_fetched_again_in_the_background_before_they_age_out(prov
     assert provider["calls"] == 2 and time.monotonic() - validator._loaded < 5
 
 
-def test_an_interrupted_fetch_does_not_stop_later_ones(provider, validator, monkeypatch):
+def test_a_fetch_that_ends_badly_does_not_stop_later_ones(provider, validator, monkeypatch):
     real = validator._fetch
-    monkeypatch.setattr(validator, "_fetch", lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
-    with pytest.raises(KeyboardInterrupt):
+    monkeypatch.setattr(validator, "_fetch", lambda: (_ for _ in ()).throw(SystemExit()))
+    with pytest.raises(OAuthUnavailable):
         validator.authenticate(provider["token"]())
     monkeypatch.setattr(validator, "_fetch", real)
     assert validator._under_way == 0
     time.sleep(0.02)
     assert validator.authenticate(provider["token"]()).subject == "alice"
+
+
+def test_a_fetch_that_hangs_holds_its_caller_only_to_the_deadline(provider, monkeypatch):
+    """A step that cannot be interrupted (a name lookup) must not hold a caller, nor be joined by more fetches."""
+    instance = tokens(provider, tenant_claim="tenant_id")
+    instance._timeout, instance._refresh_interval = 0.2, 0.01
+    release, started = threading.Event(), []
+    real = instance._fetch
+
+    def hang():
+        started.append(1)
+        release.wait(10)
+        return real()
+
+    monkeypatch.setattr(instance, "_fetch", hang)
+    token = provider["token"]()
+    began = time.monotonic()
+    with pytest.raises(OAuthUnavailable):
+        instance.authenticate(token)
+    assert 1 < time.monotonic() - began < 2  # One second past the deadline, and no longer.
+    for _ in range(5):  # While it hangs, others are answered at once and start nothing.
+        time.sleep(0.02)
+        began = time.monotonic()
+        with pytest.raises(OAuthUnavailable):
+            instance.authenticate(token)
+        assert time.monotonic() - began < 0.1
+    assert started == [1] and instance._under_way == 1
+    release.set()
+    for _ in range(200):
+        if not instance._under_way:
+            break
+        time.sleep(0.01)
+    assert instance.authenticate(token).subject == "alice"  # What it fetched in the end is used.
 
 
 def test_a_new_key_that_cannot_be_fetched_is_unavailable_not_invalid(provider, validator):
@@ -999,28 +1032,33 @@ def test_a_task_id_no_statement_can_carry_is_the_callers_mistake(provider, setup
     assert status in (400, 403), reply
 
 
-def test_an_unreachable_provider_does_not_hold_up_callers_of_another(provider, validator):
-    """Tokens that only name a provider whose key endpoint does not answer cost one check thread, not all of them."""
+def test_unreachable_providers_do_not_hold_up_callers_of_another(provider, validator):
+    """Tokens that only name a provider whose key endpoint does not answer cost one check thread for each such provider."""
     silent = socket.socket()
     silent.bind(("127.0.0.1", 0))
     silent.listen(64)  # Accepts connections and never answers.
-    url = f"http://127.0.0.1:{silent.getsockname()[1]}"
-    down = OAuthTokens(
-        Trust(url, AUDIENCE, url + "/keys", KEYCLOAK, clients=frozenset({"support"})),
-        allow_loopback_http=True,
-        timeout=3,
-    )
+    base = f"http://127.0.0.1:{silent.getsockname()[1]}"
+    downs = [
+        OAuthTokens(
+            Trust(f"{base}/{n}", AUDIENCE, base + "/keys", KEYCLOAK, clients=frozenset({"support"})),
+            allow_loopback_http=True,
+            timeout=1,
+        )
+        for n in range(5)
+    ]
     holder = SigningKey.generate()
     issuer = OAuthWarrantIssuer(
-        credentials=[validator, down],
+        credentials=[validator, *downs],
         signing_key=SigningKey.generate(),
         policy=lambda identity, task_id: TaskGrant({"refund": {"payment_id": Exact("p1")}}),
         audit=lambda record: None,
     )
     application = OAuthWarrantIssuerApp(issuer)
+    assert application._check_pool._max_workers == 4 + 6  # The usual four, and one for each provider's fetch.
     good = provider["token"]()
     assert validator.authenticate(good).subject == "alice"
-    forged = provider["token"](iss=url)  # Names the silent provider. Nothing about it is checked before its keys.
+    # Each names one silent provider. Nothing about a token is checked before its provider's keys.
+    forged = [provider["token"](iss=down.trust.issuer) for down in downs]
 
     async def post(token):
         sent = []
@@ -1041,10 +1079,10 @@ def test_an_unreachable_provider_does_not_hold_up_callers_of_another(provider, v
         return sent[0]["status"]
 
     async def run():
-        others = [asyncio.ensure_future(post(forged)) for _ in range(12)]
+        others = [asyncio.ensure_future(post(token)) for token in forged * 3]
         for _ in range(200):
             await asyncio.sleep(0.005)
-            if down._under_way:
+            if all(down._under_way for down in downs):
                 break
         began = time.monotonic()
         status = await asyncio.wait_for(post(good), 2)
@@ -1056,7 +1094,7 @@ def test_an_unreachable_provider_does_not_hold_up_callers_of_another(provider, v
     finally:
         application.close()
         silent.close()
-    assert status == 200 and waited < 1
+    assert status == 200 and waited < 0.5
     assert set(others) == {503}
 
 

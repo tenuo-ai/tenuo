@@ -257,9 +257,13 @@ class _IssuerApp:
     def _per_key(self) -> Dict[str, int]:
         return self._places.per_key
 
+    def _check_threads(self) -> int:
+        """How many threads check credentials, where that is done in a pool."""
+        return min(4, self._max_workers)
+
     def _new_pool(self) -> ThreadPoolExecutor:
         if self._check_in_pool:
-            self._check_pool = ThreadPoolExecutor(min(4, self._max_workers), thread_name_prefix="tenuo-issuance-check")
+            self._check_pool = ThreadPoolExecutor(self._check_threads(), thread_name_prefix="tenuo-issuance-check")
         return ThreadPoolExecutor(self._max_workers, thread_name_prefix="tenuo-issuance-http")
 
     def close(self) -> None:

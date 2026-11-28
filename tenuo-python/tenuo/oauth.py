@@ -111,6 +111,16 @@ class _FetchRefused(ValueError):
     """A key set this adapter will not use, for a reason it states itself."""
 
 
+class _Fetch:
+    """One fetch of a provider's keys, for the caller that started it to wait on."""
+
+    __slots__ = ("number", "done", "failure")
+
+    def __init__(self, number: int):
+        self.number, self.done = number, threading.Event()
+        self.failure: Optional[BaseException] = None
+
+
 def _json(raw: Any) -> Any:
     try:
         return _strict_json(raw)
@@ -249,7 +259,9 @@ class OAuthTokens:
     caller to fetch, one at a time and at most every ``refresh_interval``
     seconds. Nobody waits for someone else's fetch: while one is under way,
     or after one failed, such a token is answered "unavailable" at once, to be
-    tried again. No discovery, no redirects, no environment proxies.
+    tried again. The caller that fetches waits at most a second past
+    ``timeout``, whatever the fetch is stuck on.
+    No discovery, no redirects, no environment proxies.
     """
 
     def __init__(
@@ -380,43 +392,66 @@ class OAuthTokens:
             keys[kid] = (algorithm, key)
         return keys
 
-    def _begin(self) -> int:
-        """Count and number a fetch that is about to start. Call with the lock held."""
+    def _launch(self) -> Optional["_Fetch"]:
+        """Start a numbered fetch in a thread of its own. Call with the lock held.
+
+        A thread of its own, because one step of a fetch cannot be interrupted
+        (a name lookup that hangs), and no caller should be held by it for
+        longer than the deadline. Returns None if no thread could be started.
+        """
         self._begun += 1
         self._under_way += 1
         self._attempted = time.monotonic()
-        return self._begun
+        fetch = _Fetch(self._begun)
+        try:
+            threading.Thread(target=self._run, args=(fetch,), daemon=True, name="tenuo-oauth-keys").start()
+        except RuntimeError:
+            self._under_way -= 1
+            return None
+        return fetch
 
-    def _run(self, number: int) -> Optional[BaseException]:
-        """Carry out fetch ``number`` and record how it went. Returns what went wrong, or None."""
+    def _run(self, fetch: "_Fetch") -> None:
+        """Carry out one fetch and record how it went."""
         keys: Dict[str, Tuple[str, Any]] = {}
-        failure: Optional[BaseException] = OAuthUnavailable("The key fetch was interrupted")
+        failure: Optional[BaseException] = None
         try:
             keys = self._fetch()
-            failure = None
-        except Exception as exc:
+        except BaseException as exc:  # Whatever ended it, the fetch is over and its caller is told.
             failure = exc
-        finally:  # Whatever ended it, an interruption included, the fetch is over.
-            with self._lock:
-                self._under_way -= 1
-                if (
-                    failure is None and number > self._in_use
-                ):  # A set fetched later is never replaced by an earlier one.
-                    self._keys, self._loaded, self._in_use = keys, time.monotonic(), number
-                if number >= self._in_use:
-                    if failure is not None and not self._failed:
-                        # Our own reasons are fixed text. Anything else is named by its type only:
-                        # an error raised while reading someone else's document may quote from it.
-                        reason = str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
-                        logger.warning("Could not fetch signing keys from %s: %s", self.trust.jwks_url, reason)
-                    self._failed = failure is not None
-        return failure
+        with self._lock:
+            # Counted as under way until it has really ended, so a fetch that hangs
+            # is not joined by another: at most one such thread for each provider.
+            self._under_way -= 1
+            if failure is None and fetch.number > self._in_use:
+                # A set fetched later is never replaced by an earlier one.
+                self._keys, self._loaded, self._in_use = keys, time.monotonic(), fetch.number
+            if fetch.number >= self._in_use:
+                if failure is not None and not self._failed:
+                    # Our own reasons are fixed text. Anything else is named by its type only:
+                    # an error raised while reading someone else's document may quote from it.
+                    reason = str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
+                    logger.warning("Could not fetch signing keys from %s: %s", self.trust.jwks_url, reason)
+                self._failed = failure is not None
+        fetch.failure = failure
+        fetch.done.set()
+
+    def _wait(self, fetch: Optional["_Fetch"]) -> Optional[BaseException]:
+        """What went wrong with a fetch this caller started, or None.
+
+        The caller waits a little past the fetch's own deadline and no longer.
+        A fetch still going then is left to end by itself and counts as failed.
+        """
+        if fetch is None:
+            return OAuthUnavailable("No thread for the key fetch")
+        if not fetch.done.wait(self._timeout + 1):
+            return OAuthUnavailable("The key fetch did not end in time")
+        return fetch.failure
 
     def refresh(self) -> None:
         """Fetch the keys now, for example at start-up or right after the provider withdrew one."""
         with self._lock:
-            number = self._begin()
-        failure = self._run(number)
+            fetch = self._launch()
+        failure = self._wait(fetch)
         if failure is not None:
             raise OAuthUnavailable("OAuth signing keys unavailable") from failure
 
@@ -428,24 +463,19 @@ class OAuthTokens:
             due = self._under_way == 0 and now - self._attempted >= self._refresh_interval
             if usable and kid in self._keys:
                 if due and age >= self._cache_seconds / 2:
-                    # Fetch again well before the keys age out, without holding anyone up.
-                    number = self._begin()
-                    try:
-                        threading.Thread(target=self._run, args=(number,), daemon=True, name="tenuo-oauth-keys").start()
-                    except RuntimeError:  # No thread to be had: the next caller will try.
-                        self._under_way -= 1
+                    self._launch()  # Fetch again well before the keys age out. Nobody waits for it.
                 return self._keys[kid]
             if not due:
                 if not usable or self._under_way or self._failed:
                     # No keys to judge by, or a key that may be new and has not been fetched yet.
                     raise OAuthUnavailable("OAuth signing keys unavailable")
                 raise OAuthError("Invalid OAuth access token")
-            number = self._begin()
-        failure = self._run(number)  # This caller only, and never while holding the lock.
+            fetch = self._launch()
+        failure = self._wait(fetch)  # This caller only, and never while holding the lock.
         with self._lock:
             if time.monotonic() - self._loaded < self._cache_seconds and kid in self._keys:
                 return self._keys[kid]
-            if failure is not None or number != self._in_use:
+            if failure is not None or fetch is None or fetch.number != self._in_use:
                 # The fetch failed, or another one overtook it: this token cannot be judged yet.
                 raise OAuthUnavailable("OAuth signing keys unavailable") from failure
             raise OAuthError("Invalid OAuth access token")
@@ -866,6 +896,11 @@ class OAuthWarrantIssuerApp(_IssuerApp):
         super().__init__(issuer, **options)
         self._issuer: OAuthWarrantIssuer = issuer
         self._max_per_key = max_per_identity
+
+    def _check_threads(self) -> int:
+        # A provider that does not answer can hold one of these threads at a time, for
+        # its fetch. One spare for each provider keeps the usual number free.
+        return super()._check_threads() + len(self.issuer.credentials)
 
     async def _started(self) -> None:
         """Fetch each provider's keys before the server takes requests, so the first callers find them there.
