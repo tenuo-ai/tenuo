@@ -1270,7 +1270,7 @@ class TestCloudLeases:
     @pytest.mark.parametrize("reply", [(400, {"error": {"code": "invalid_request", "message": "team is required"}}),
                                        (409, {"error": {"code": "token_budget_exhausted", "message": "all leased out"}})],
                              ids=["invalid", "exhausted"])
-    def test_after_a_refusal_the_next_request_carries_the_event_data_of_then(self, cloud, reply):
+    def test_after_a_refusal_the_next_acquisition_starts_afresh(self, cloud, reply):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
         cloud.reply = reply
         with pytest.raises(LeaseUnavailable):
@@ -1278,8 +1278,9 @@ class TestCloudLeases:
         source.event_data["team"] = "b"
         cloud.reply = None
         source.acquire()
-        # Under the same ID: had an earlier request been granted, this is how its lease is found.
-        assert cloud.requests[1][2] == {"event_data": {"team": "b"}, "acquisition_id": cloud.requests[0][2]["acquisition_id"]}
+        # Nothing is out under the refused ID, so nothing ties the next request to it.
+        assert cloud.requests[1][2]["event_data"] == {"team": "b"}
+        assert cloud.requests[1][2]["acquisition_id"] != cloud.requests[0][2]["acquisition_id"]
 
     def test_a_lease_whose_answer_was_lost_is_still_found_after_a_refusal(self, cloud, one_sending):
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
@@ -1289,9 +1290,28 @@ class TestCloudLeases:
         cloud.reply = (403, {"error": {"code": "forbidden", "message": "not allowed"}})
         with pytest.raises(LeaseUnavailable):
             source.acquire()
+        source.event_data["team"] = "b"  # must not reach the ID a lease may be out under
         cloud.reply = None
         source.acquire()
         assert cloud.requests[0][2] == cloud.requests[1][2] == cloud.requests[2][2]
+
+    def test_a_refusal_that_follows_a_lost_answer_in_the_same_call_keeps_the_acquisition(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"team": "a"})
+        cloud.drop_once = True  # the first sending goes unanswered, the second is refused
+        cloud.reply = (403, {"error": {"code": "forbidden", "message": "not allowed"}})
+        with pytest.raises(LeaseUnavailable, match="HTTP 403"):
+            source.acquire()
+        assert len(cloud.requests) == 2
+        source.event_data["team"] = "b"
+        cloud.reply = None
+        source.acquire()
+        assert cloud.requests[0][2] == cloud.requests[1][2] == cloud.requests[2][2]
+
+    def test_event_data_that_is_not_json_is_no_lease_and_no_request(self, cloud):
+        source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test", event_data={"when": object()})
+        with pytest.raises(LeaseUnavailable, match="event_data cannot be sent as JSON"):
+            source.acquire()
+        assert cloud.requests == []
 
     def test_a_server_without_the_acquire_route_grants_nothing(self, cloud):
         cloud.legacy = True
@@ -1319,7 +1339,7 @@ class TestCloudLeases:
         import signal
 
         source = CloudLeases("trg_budget", url="http://localhost", api_key="test")
-        source._acquisition = parents = tenuo.budget_lease._Acquisition()
+        source._acquisition = parents = tenuo.budget_lease._Acquisition("parents", {})
         inherited_lock = source._acquiring
         inherited_lock.acquire()  # as if a parent thread were in the middle of an acquisition
         read, write = os.pipe()

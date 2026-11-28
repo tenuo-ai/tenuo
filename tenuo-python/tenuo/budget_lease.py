@@ -140,9 +140,11 @@ class _Over(LeaseUnavailable):
 class _Acquisition:
     """One request for a lease. It can be sent many times and is granted at most once."""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    # Fixed when first sent: the control plane refuses the ID with any other.
-    event_data: Optional[Dict[str, Any]] = None
+    id: str
+    event_data: Dict[str, Any]  # as first sent: the control plane refuses the ID with any other
+    # A sending under this ID got no answer, or one that settles nothing, so a
+    # lease may be out under it.
+    unanswered: bool = False
 
 
 _CLOUD_SOURCES: "weakref.WeakSet[CloudLeases]" = weakref.WeakSet()
@@ -170,8 +172,8 @@ class CloudLeases:
         url: The control plane. Defaults to ``TENUO_CONTROL_PLANE_URL``.
         api_key: Defaults to ``TENUO_API_KEY``.
         event_data: Sent with every acquisition, for triggers that bind from
-            it. Read when an acquisition is first sent: a change applies to the
-            next one.
+            it. Read when an acquisition starts: a change applies to the next
+            one.
         timeout: Seconds to wait for the control plane's answer to a request,
             sending it again included.
     """
@@ -213,21 +215,25 @@ class CloudLeases:
             parsed = {}
         return status, parsed if isinstance(parsed, dict) else {}
 
-    def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    def _post(self, path: str, body: Mapping[str, Any]) -> Tuple[int, Dict[str, Any], bool]:
         """POST and give the answer, sending again while there is none and time remains.
 
         No answer is a connection that failed or a 5xx. The last outcome is the
-        one reported: the answer, or the error that stood in for it.
+        one reported: the answer, or the error that stood in for it. The third
+        value says whether an earlier sending went unanswered.
         """
         data = json.dumps(body).encode()
         deadline = time.monotonic() + self.timeout
         pauses = iter(_RESEND_AFTER)
+        resent = False
 
         def wait_to_resend() -> bool:
+            nonlocal resent
             pause = next(pauses, None)
             if pause is None or time.monotonic() + pause >= deadline:
                 return False
             time.sleep(pause)
+            resent = True
             return True
 
         while True:
@@ -238,7 +244,7 @@ class CloudLeases:
                     raise
                 continue
             if status < 500 or not wait_to_resend():
-                return status, reply
+                return status, reply, resent
 
     def _reset_in_child(self) -> None:
         """Called in a forked child before anything else touches this object."""
@@ -257,25 +263,33 @@ class CloudLeases:
                 # the caller is not made to wait out a failure that is not one.
                 return self._acquire()
 
+    def _begin(self) -> _Acquisition:
+        try:
+            event_data = json.loads(json.dumps(self.event_data))
+        except (TypeError, ValueError) as e:
+            raise LeaseUnavailable(f"event_data cannot be sent as JSON: {e}") from e
+        return _Acquisition(uuid.uuid4().hex, event_data)
+
     def _acquire(self) -> Lease:
         """Ask for a lease under the acquisition in hand, or under a new one."""
-        acquisition = self._acquisition = self._acquisition or _Acquisition()
+        acquisition = self._acquisition = self._acquisition or self._begin()
         try:
-            if acquisition.event_data is None:
-                acquisition.event_data = json.loads(json.dumps(self.event_data))
             lease = self._ask(acquisition)
         except _Over:
             self._acquisition = None
             raise
         except _Refused:
-            # Nothing was granted for that request, so the next one carries the
-            # event data of its own time. The ID stays: an earlier request
-            # under it may have been granted without the answer arriving.
-            acquisition.event_data = None
+            if not acquisition.unanswered:
+                # Every request under this ID was refused, so nothing is out
+                # under it: the next acquisition starts afresh.
+                self._acquisition = None
             raise
-        except LeaseUnavailable:
-            raise  # an answer that settles nothing: the acquisition is asked for again as it is
-        except Exception as e:
+        except BaseException as e:
+            # No answer (an interrupt included), or one that settles nothing:
+            # the acquisition is asked for again exactly as it is.
+            acquisition.unanswered = True
+            if isinstance(e, LeaseUnavailable) or not isinstance(e, Exception):
+                raise
             raise LeaseUnavailable(f"no lease from the control plane: {type(e).__name__}: {e}") from e
         self._acquisition = None
         return lease
@@ -283,8 +297,9 @@ class CloudLeases:
     def _ask(self, acquisition: _Acquisition) -> Lease:
         from tenuo import Warrant
 
-        status, body = self._post(f"/v1/triggers/{self.trigger_id}/acquire",
-                                  {"event_data": acquisition.event_data, "acquisition_id": acquisition.id})
+        status, body, resent = self._post(f"/v1/triggers/{self.trigger_id}/acquire",
+                                          {"event_data": acquisition.event_data, "acquisition_id": acquisition.id})
+        acquisition.unanswered = acquisition.unanswered or resent
         error: Dict[str, Any] = body["error"] if isinstance(body.get("error"), dict) else {}
         code = str(error.get("code") or "")
         if (status, code) in ((410, "acquisition_closed"), (409, "acquisition_conflict")):
@@ -335,7 +350,7 @@ class CloudLeases:
         if self.signing_key is None:
             raise OSError("CloudLeases has no signing_key, so it cannot sign the return of a lease")
         signature = bytes(self.signing_key.sign_raw(lease_return_message(warrant_id, usage)))
-        status, body = self._post("/v1/metrics/tokens/leases/release", {
+        status, body, _ = self._post("/v1/metrics/tokens/leases/release", {
             "warrant_id": warrant_id, "usage": usage, "signature": base64.b64encode(signature).decode(),
         })
         if status != 200:
