@@ -3,8 +3,6 @@
     pip install 'tenuo[oauth]' uvicorn
     python quickstart.py
 
-(Until the adapter is in a release, see "Install and try it" in docs/oauth.md for the two lines that work today.)
-
 No Docker and no identity provider needed: part 1 stands in for yours by signing
 tokens with a key made on the spot. Parts 2 to 4 are what you would write. To
 use your real provider, replace part 1 with its issuer, key URL and one of its

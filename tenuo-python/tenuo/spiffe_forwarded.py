@@ -39,9 +39,9 @@ from cryptography.hazmat.primitives import hashes as certificate_hashes
 
 from tenuo import PublicKey, SigningKey, Warrant
 from tenuo._issuance_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
+from tenuo._issuance import _task_id_fault
 from tenuo.spiffe import (
     _JWT_NONCE_BYTES,
-    _MAX_TASK_ID,
     IssuerKeys,
     SpiffeError,
     SpiffeHolderProof,
@@ -389,8 +389,9 @@ def sign_forwarded_holder_proof(
     does not name the workload: a workload behind a sidecar does not hold its
     certificate, and its identity comes from the proxy.
     """
-    if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
-        raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
+    fault = _task_id_fault(task_id)  # The rule the issuer applies: no point signing what it will refuse.
+    if fault is not None:
+        raise SpiffeError(fault)
     if not isinstance(audience, str) or not audience:
         raise SpiffeError("audience must be a non-empty string")
     stamp = int(time.time()) if timestamp is None else timestamp

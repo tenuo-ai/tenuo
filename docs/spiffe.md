@@ -106,15 +106,12 @@ is always called "SPIRE agent".
 From a checkout of this repository:
 
 ```bash
-python -m venv /tmp/tenuo-spiffe-demo-venv
-/tmp/tenuo-spiffe-demo-venv/bin/pip install 'tenuo==0.3.8' 'cryptography>=42'
-PYTHONPATH=tenuo-python /tmp/tenuo-spiffe-demo-venv/bin/python tenuo-python/examples/spiffe/demo.py
+pip install 'tenuo[spiffe]'
+python tenuo-python/examples/spiffe/demo.py
 ```
 
-The released package supplies Tenuo's compiled core, and `PYTHONPATH` loads the
-adapter from the checkout until it ships in a release. The demo creates
-throwaway certificates shaped like SVIDs, runs an issuer and an agent on
-localhost, and makes four tool calls:
+The demo creates throwaway certificates shaped like SVIDs, runs an issuer and
+an agent on localhost, and makes four tool calls:
 
 ```text
 ALLOWED: approved customer, $40
@@ -138,11 +135,8 @@ step says which machine it runs on.
   issuer or an agent. The
   [SPIRE quickstarts](https://spiffe.io/docs/latest/try/) cover that part.
 - Python 3.9 or newer for the issuer and the agents.
-- The adapter: `pip install 'tenuo[spiffe-workload-api]'` once it is released.
-  Until then, install from a checkout with
-  `python -m pip install './tenuo-python[spiffe-workload-api]'` (needs Rust
-  build tools). The plain `tenuo[spiffe]` extra leaves out `grpcio` and
-  supports credential files only.
+- The adapter: `pip install 'tenuo[spiffe-workload-api]'`. The plain
+  `tenuo[spiffe]` extra leaves out `grpcio` and supports credential files only.
 - A registration entry for the issuer and one for each agent. Run on the SPIRE
   server:
 

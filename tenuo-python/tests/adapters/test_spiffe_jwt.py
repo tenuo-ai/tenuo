@@ -1138,6 +1138,27 @@ def test_jwt_policy_denials_and_invalid_grants(jwt_issuer, authority):
         issue(issuer, authority.token(), SigningKey.generate())
 
 
+@pytest.mark.parametrize("task", ["t\x00", "t\r\n2026 INFO all is well", "t\x1b[2K", "t\u2028", "t\x7f", "", "t" * 257])
+def test_the_signer_and_the_issuer_refuse_the_same_task_ids(jwt_issuer, authority, task):
+    """A proof the issuer will always refuse is not signed, and the client does not send it."""
+    issuer, *_ = jwt_issuer
+    holder, token = SigningKey.generate(), authority.token()
+    with pytest.raises(SpiffeError, match="task_id must"):
+        sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id=task)
+    with pytest.raises(SpiffeError, match="task_id must"):
+        request_warrant_jwt(
+            "http://127.0.0.1:9/warrants",
+            token=token,
+            audience=AUDIENCE,
+            issuer_key=SigningKey.generate().public_key,
+            holder_key=holder,
+            task_id=task,
+        )
+    proof = sign_jwt_holder_proof(token, holder, audience=AUDIENCE, task_id="task-123")
+    with pytest.raises(SpiffeError, match="task_id must"):
+        issuer.issue_jwt(token, holder.public_key, task, proof)
+
+
 def test_issuer_modes_are_explicit(validator, authority):
     root = SigningKey.generate()
     with pytest.raises(ValueError, match="tls .* jwt"):

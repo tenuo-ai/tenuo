@@ -23,27 +23,17 @@ else is read from it. What a caller may do comes from your approved task.
 
 ## Install and try it
 
-The adapter is not in a release yet: `tenuo` 0.3.8 on PyPI does not contain it,
-and `pip install 'tenuo[oauth]'` installs 0.3.8 with a warning that the extra
-does not exist. Until it ships, run it from a checkout of this repository:
-
 ```sh
-python -m venv /tmp/tenuo-oauth-venv
-/tmp/tenuo-oauth-venv/bin/pip install 'tenuo==0.3.8' 'cryptography>=42' 'PyJWT>=2.8' uvicorn
-PYTHONPATH=tenuo-python /tmp/tenuo-oauth-venv/bin/python tenuo-python/examples/oauth/quickstart.py
+pip install 'tenuo[oauth]' uvicorn
+python tenuo-python/examples/oauth/quickstart.py
 ```
 
-The released package supplies Tenuo's compiled core, and `PYTHONPATH` loads
-the adapter from the checkout. With Rust build tools you can install the
-checkout instead: `python -m pip install './tenuo-python[oauth]' uvicorn`.
-Once the adapter is released, `pip install 'tenuo[oauth]' uvicorn` is all it
-takes.
-
-Python 3.9 or later. [`quickstart.py`](../tenuo-python/examples/oauth/quickstart.py)
-is one file with no Docker and no identity provider: it signs its own tokens
-in place of yours, runs the issuer, and shows an approved refund going through
-and five other requests being refused. Its four parts are the four things you write,
-so it is also the file to copy from. The steps below explain each part.
+Python 3.9 or later. The example file is in this repository.
+[`quickstart.py`](../tenuo-python/examples/oauth/quickstart.py) is one file
+with no Docker and no identity provider: it signs its own tokens in place of
+yours, runs the issuer, and shows an approved refund going through and five
+other requests being refused. Its four parts are the four things you write, so
+it is also the file to copy from. The steps below explain each part.
 
 These run against real software, and CI runs all of them on every change to
 this adapter:

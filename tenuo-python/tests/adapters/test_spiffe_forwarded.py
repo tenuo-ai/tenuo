@@ -535,6 +535,26 @@ def test_warrant_lifetime_is_capped(forwarded):
         assert limit - 5 < remaining <= limit
 
 
+@pytest.mark.parametrize("task", ["t\x00", "t\r\n2026 INFO all is well", "t\x1b[2K", "t\u2028", "t\x7f", "", "t" * 257])
+def test_the_signer_and_the_issuer_refuse_the_same_task_ids(forwarded_issuer, task):
+    """A proof the issuer will always refuse is not signed, and the client does not send it."""
+    issuer, *_ = forwarded_issuer
+    holder = SigningKey.generate()
+    with pytest.raises(SpiffeError, match="task_id must"):
+        sign_forwarded_holder_proof(holder, audience=AUDIENCE, task_id=task)
+    with pytest.raises(SpiffeError, match="task_id must"):
+        request_warrant_forwarded(
+            "http://127.0.0.1:9/warrants",
+            audience=AUDIENCE,
+            issuer_key=SigningKey.generate().public_key,
+            holder_key=holder,
+            task_id=task,
+        )
+    proof = sign_forwarded_holder_proof(holder, audience=AUDIENCE, task_id="task-123")
+    with pytest.raises(SpiffeError, match="task_id must"):
+        issuer.issue_forwarded(element(), PROXY, holder.public_key, task, proof)
+
+
 def test_holder_proof_is_bound_to_audience_task_and_key(forwarded_issuer):
     issuer, *_ = forwarded_issuer
     holder, other = SigningKey.generate(), SigningKey.generate()

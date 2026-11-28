@@ -43,7 +43,6 @@ except ImportError as exc:
 
 from tenuo import Exact, PublicKey, Range, SigningKey, Warrant
 from tenuo._issuance import (
-    MAX_TASK_ID,
     HolderProof,
     IssuanceBusy,
     IssuanceError,
@@ -55,6 +54,7 @@ from tenuo._issuance import (
     _positive_int,
     _rsa_within_bounds,
     _seconds,
+    _task_id_fault,
 )
 from tenuo._issuance_http import (
     _IssuerApp,
@@ -922,7 +922,9 @@ def sign_oauth_holder_proof(token: str, holder_key: SigningKey, *, audience: str
     """Bind a holder key to one token, one issuer audience and one task. Each call is a new proof."""
     _text(token, "access token", _MAX_TOKEN)
     _text(audience, "audience")
-    _text(task_id, "task ID", MAX_TASK_ID)  # The rule the issuer applies.
+    fault = _task_id_fault(task_id)  # The rule the issuer applies.
+    if fault is not None:
+        raise OAuthError(fault)
     stamp, nonce = int(time.time()), secrets.token_bytes(16)
     message = _proof_bytes(token, audience, task_id, bytes(holder_key.public_key.to_bytes()), stamp, nonce)
     return OAuthHolderProof(stamp, nonce, bytes(holder_key.sign_raw(message)))

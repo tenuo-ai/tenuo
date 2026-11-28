@@ -41,10 +41,9 @@ except ImportError as exc:
     raise ImportError("JWT-SVID support requires pip install 'tenuo[spiffe-jwt]'") from exc
 
 from tenuo import PublicKey, SigningKey, Warrant
-from tenuo._issuance import _rsa_within_bounds
+from tenuo._issuance import _rsa_within_bounds, _task_id_fault
 from tenuo._issuance_http import _IssuerApp, _post_for_warrant, _Refusal, _request_body, _split_url, _where
 from tenuo.spiffe import (
-    _MAX_TASK_ID,
     _WORKLOAD_API_METADATA,
     IssuerKeys,
     SpiffeError,
@@ -789,8 +788,9 @@ def sign_jwt_holder_proof(
     """
     if not _one_spelling(token):
         raise SpiffeError("Malformed JWT-SVID")
-    if not isinstance(task_id, str) or not task_id or len(task_id) > _MAX_TASK_ID:
-        raise SpiffeError(f"task_id must contain 1–{_MAX_TASK_ID} characters")
+    fault = _task_id_fault(task_id)  # The rule the issuer applies: no point signing what it will refuse.
+    if fault is not None:
+        raise SpiffeError(fault)
     stamp = int(time.time()) if timestamp is None else timestamp
     if not _positive_int(stamp) or not 0 <= stamp < 2**40:
         raise SpiffeError("timestamp must be Unix seconds")

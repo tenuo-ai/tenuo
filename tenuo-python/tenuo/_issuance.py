@@ -99,6 +99,19 @@ def _consume_result(work: Any) -> None:
         work.exception()
 
 
+def _task_id_fault(task_id: Any) -> Optional[str]:
+    """What is wrong with a task ID, or None. One rule, for the side that signs and the side that issues.
+
+    Printable means no control characters, line separators or lone surrogates:
+    a task ID goes to the policy, the audit record and logs as it is.
+    """
+    if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
+        return f"task_id must contain 1–{MAX_TASK_ID} characters"
+    if not task_id.isprintable():
+        return "task_id must be printable text"
+    return None
+
+
 def _rsa_within_bounds(key: Any, minimum_bits: int = 2048) -> bool:
     """Whether an RSA public key is one to verify signatures with.
 
@@ -335,12 +348,9 @@ class SingleRequestIssuer:
             raise
 
     def check_request(self, holder: Any, task_id: Any) -> None:
-        if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
-            raise self._refused(f"task_id must contain 1–{MAX_TASK_ID} characters")
-        if not task_id.isprintable():
-            # No control characters, line separators or lone surrogates: a task ID goes to the
-            # policy, the audit record and logs as it is, and the agent's side signs the same rule.
-            raise self._refused("task_id must be printable text")
+        fault = _task_id_fault(task_id)
+        if fault is not None:
+            raise self._refused(fault)
         if not isinstance(holder, PublicKey):
             raise self._refused("holder must be a Tenuo PublicKey")
 
