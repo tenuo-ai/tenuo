@@ -107,7 +107,19 @@ def _strict_json(raw: Any) -> Any:
     def constant(name: str) -> Any:
         raise ValueError(f"{name} is not JSON")
 
-    return json.loads(raw, object_pairs_hook=members, parse_constant=constant)
+    def number(convert: Callable[[str], Any]) -> Callable[[str], Any]:
+        def parse(text: str) -> Any:
+            # No field here needs a longer number, and turning a very long run of
+            # digits into an integer is slow on interpreters without a limit of their own.
+            if len(text) > 64:
+                raise ValueError("Number too long")
+            return convert(text)
+
+        return parse
+
+    return json.loads(
+        raw, object_pairs_hook=members, parse_constant=constant, parse_int=number(int), parse_float=number(float)
+    )
 
 
 class _Refusal(Exception):
@@ -367,6 +379,8 @@ class _IssuerApp:
     def _holder_and_proof(request: Any) -> Tuple[PublicKey, Any, HolderProof]:
         """The holder key, task and proof from the fields every request shape carries."""
         try:
+            if type(request["timestamp"]) is not int or not isinstance(request["task"], str):
+                raise TypeError  # The wrong JSON type is a malformed request, not a refused one.
             holder = PublicKey.from_bytes(base64.b64decode(request["holder"], validate=True))
             proof = HolderProof(
                 request["timestamp"],
@@ -662,7 +676,9 @@ def _post_for_warrant(
     if status != 200 or not isinstance(reply, dict):
         message = reply.get("message") if isinstance(reply, dict) else None
         if isinstance(message, str) and message:
-            raise error(f"Issuer refused (HTTP {status}): {message[:200]}")
+            # Shown to whoever runs the agent: cut short, and with nothing that is not printable.
+            shown = "".join(character if character.isprintable() else "?" for character in message[:200])
+            raise error(f"Issuer refused (HTTP {status}): {shown}")
         raise error(f"The issuer at {where} answered HTTP {status} without a warrant")
     return _checked_warrant(reply.get("warrant"), trusted, holder_key, error)
 

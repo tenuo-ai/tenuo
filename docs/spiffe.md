@@ -1218,7 +1218,7 @@ that record. The agent supplies only the ID, never the scope.
 The rules:
 
 - `identity.spiffe_id` is the workload's SPIFFE ID, already verified.
-- `task_id` is a string of 1 to 256 characters chosen by the caller. Treat it
+- `task_id` is printable text of 1 to 256 characters chosen by the caller. Treat it
   as a lookup key. Check in your task system that this workload is assigned to
   it, and never parse scope out of the ID itself.
 - The task system must be one that agents cannot write to. An agent that can

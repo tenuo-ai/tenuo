@@ -99,6 +99,16 @@ def _consume_result(work: Any) -> None:
         work.exception()
 
 
+def _rsa_within_bounds(key: Any, minimum_bits: int = 2048) -> bool:
+    """Whether an RSA public key is one to verify signatures with.
+
+    Big enough to trust, and not so big that checking a signature is costly:
+    a provider's key with a huge modulus or public exponent makes every check
+    against it slow, for callers who have shown nothing yet.
+    """
+    return minimum_bits <= key.key_size <= 8192 and key.public_numbers().e <= 2**32
+
+
 @dataclass(frozen=True)
 class HolderProof:
     """A holder key's signed statement for one single-request exchange."""
@@ -327,10 +337,10 @@ class SingleRequestIssuer:
     def check_request(self, holder: Any, task_id: Any) -> None:
         if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
             raise self._refused(f"task_id must contain 1–{MAX_TASK_ID} characters")
-        try:
-            task_id.encode("utf-8")
-        except UnicodeEncodeError:  # A lone surrogate, which JSON can carry and no signed statement can.
-            raise self._refused("task_id must be valid Unicode text") from None
+        if not task_id.isprintable():
+            # No control characters, line separators or lone surrogates: a task ID goes to the
+            # policy, the audit record and logs as it is, and the agent's side signs the same rule.
+            raise self._refused("task_id must be printable text")
         if not isinstance(holder, PublicKey):
             raise self._refused("holder must be a Tenuo PublicKey")
 
