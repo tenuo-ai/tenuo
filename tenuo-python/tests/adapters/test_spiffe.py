@@ -1148,6 +1148,72 @@ def test_a_peer_that_has_shown_nothing_gives_up_its_place_to_a_newcomer(served):
     assert max(peak) <= 2
 
 
+def test_a_connection_that_gave_up_its_place_does_no_work_if_its_handshake_then_completes(served, monkeypatch):
+    """Records already received can complete a handshake after the place is gone. Nothing more is done for that peer."""
+    import tenuo.spiffe as spiffe_module
+    from tenuo.spiffe import _encode, _frame
+
+    issuer, client_tls, root, holder = served
+    asked, written = [], issuer._policy
+
+    def policy(identity, task_id):
+        asked.append(task_id)
+        return written(identity, task_id)
+
+    issuer._policy = policy
+    audits = []
+    issuer._audit = audits.append
+    real = spiffe_module._ServerConnection.handshake
+    state = {}
+
+    async def handshake(self):
+        await real(self)
+        if not state.get("first_parked"):
+            # The first peer's handshake is complete, and its request is already in the buffer.
+            state["first_parked"] = True
+            state["parked"].set()
+            await state["gate"].wait()
+
+    monkeypatch.setattr(spiffe_module._ServerConnection, "handshake", handshake)
+
+    def first_peer(address, outcome):
+        with socket.create_connection(address, timeout=5) as raw:
+            with client_tls.context.wrap_socket(raw) as connection:
+                key = SigningKey.generate()
+                connection.sendall(
+                    _frame({"v": 1, "holder": _encode(bytes(key.public_key.to_bytes())), "task": "task-123"})
+                )
+                connection.settimeout(5)
+                try:
+                    outcome.append(connection.recv(65536))
+                except OSError as exc:
+                    outcome.append(type(exc).__name__)
+
+    async def main():
+        state.update(parked=asyncio.Event(), gate=asyncio.Event())
+        async with SpiffeIssuerServer(issuer, host="127.0.0.1", port=0, max_connections=1, timeout=5.0) as server:
+            outcome = []
+            first = asyncio.ensure_future(asyncio.to_thread(first_peer, server.address, outcome))
+            await asyncio.wait_for(state["parked"].wait(), 5)
+            await asyncio.sleep(0.1)  # Let its request frame arrive behind the handshake.
+            options = dict(issuer_id=SERVER, issuer_key=root.public_key, holder_key=holder, task_id="task-123")
+            # A newcomer takes the one place. The first peer is still counted as not having shown anything.
+            warrant = await asyncio.to_thread(request_warrant, client_tls, server.address, **options)
+            assert asked == ["task-123"] and len(audits) == 1
+            state["gate"].set()  # Now the first peer's handshake "completes".
+            await first
+            await asyncio.sleep(0.2)
+            return warrant, outcome, server._active, dict(server._unproven), dict(server._by_identity)
+
+    warrant, outcome, active, unproven, by_identity = asyncio.run(main())
+    assert warrant.id
+    assert (
+        asked == ["task-123"] and len(audits) == 1
+    )  # No policy call and no audit record for the peer without a place.
+    assert outcome and b"challenge" not in (outcome[0] if isinstance(outcome[0], bytes) else b"")
+    assert (active, unproven, by_identity) == (0, {}, {})
+
+
 def test_one_workload_cannot_hold_every_place(ca):
     """A workload that completes the handshake and then stalls holds a share of the places, not all of them."""
     server_tls = _tls(ca.files("issuer", SERVER), True)

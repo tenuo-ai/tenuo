@@ -2035,6 +2035,10 @@ class SpiffeIssuerServer:
         await connection.handshake()
         place = connection.place
         if place is not None:
+            if not place.held:
+                # It gave up its place while the handshake was under way. Records that had
+                # already arrived can still complete one, and nothing more is done for it.
+                raise ConnectionError("The connection gave up its place to a newer one")
             # The peer has shown a certificate from a trusted authority. Its place is
             # no longer one a newcomer can take.
             self._unproven.pop(id(place), None)
