@@ -247,6 +247,27 @@ def test_a_wrong_key_url_is_named_in_the_log_and_not_called_a_bad_token(provider
             instance.authenticate(provider["token"]())
     assert "could not fetch signing keys from" in refused.value.reason and "HTTP 404" in refused.value.reason
     assert "check Trust.jwks_url" in caplog.text
+    # An availability problem is not logged as a verdict on the token.
+    assert "Token could not be checked for" in caplog.text and "Token not accepted" not in caplog.text
+
+
+def test_an_unavailable_reason_names_the_cause_that_applies(provider, validator, monkeypatch):
+    token = provider["token"]()
+    assert validator.authenticate(token).subject == "alice"
+    validator._refresh_interval = 60
+    # The keys aged out and the next fetch is not due: nothing failed, so no failure is reported.
+    validator._loaded = float("-inf")
+    with pytest.raises(OAuthUnavailable) as refused:
+        validator.authenticate(token)
+    assert "aged out" in refused.value.reason and "could not fetch" not in refused.value.reason
+    # A fetch that hangs is reported as that, not as whatever failed some time before.
+    validator._refresh_interval, validator._timeout, validator._attempted = 0.01, 0.2, float("-inf")
+    release = threading.Event()
+    monkeypatch.setattr(validator, "_fetch", lambda: release.wait(10) and {})
+    with pytest.raises(OAuthUnavailable) as refused:
+        validator.authenticate(token)
+    release.set()
+    assert "the fetch did not end in time" in refused.value.reason
 
 
 def test_identity_is_what_the_token_said(provider, validator):

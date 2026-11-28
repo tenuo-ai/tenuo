@@ -460,9 +460,7 @@ class OAuthTokens:
                 self._keys, self._loaded, self._in_use = keys, time.monotonic(), fetch.number
             if fetch.number >= self._in_use:
                 if failure is not None:
-                    # Our own reasons are fixed text. Anything else is named by its type only:
-                    # an error raised while reading someone else's document may quote from it.
-                    reason = str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
+                    reason = self._said(failure)
                     self._why = reason
                     if not self._failed:
                         logger.warning(
@@ -482,10 +480,20 @@ class OAuthTokens:
         A fetch still going then is left to end by itself and counts as failed.
         """
         if fetch is None:
-            return OAuthUnavailable("No thread for the key fetch")
+            return _FetchRefused("no thread could be started for the fetch")
         if not fetch.done.wait(self._timeout + 1):
-            return OAuthUnavailable("The key fetch did not end in time")
+            return _FetchRefused("the fetch did not end in time")
         return fetch.failure
+
+    @staticmethod
+    def _said(failure: BaseException) -> str:
+        """How a fetch failed, in words safe to log.
+
+        Our own reasons are fixed text. Anything else is named by its type
+        only: an error raised while reading someone else's document may quote
+        from it.
+        """
+        return str(failure) if isinstance(failure, _FetchRefused) else type(failure).__name__
 
     def refresh(self) -> None:
         """Fetch the keys now, for example at start-up or right after the provider withdrew one."""
@@ -506,29 +514,42 @@ class OAuthTokens:
                     self._launch()  # Fetch again well before the keys age out. Nobody waits for it.
                 return self._keys[kid]
             if not due:
+                # Each of these says what is known, and no more: the cause that is named is the one that applies.
                 if self._under_way:
                     raise _NotAccepted("the signing keys are being fetched; send the request again", unavailable=True)
-                if not usable or self._failed:
+                if self._failed:
                     # No keys to judge by, or a key that may be new and could not be fetched.
-                    raise _NotAccepted(self._no_keys(), unavailable=True)
+                    raise _NotAccepted(self._no_keys(self._why), unavailable=True)
+                if not usable:
+                    raise _NotAccepted(
+                        "the signing keys have aged out and the next fetch is not due yet; send the request again",
+                        unavailable=True,
+                    )
                 raise _NotAccepted(self._unknown(kid))
             fetch = self._launch()
         failure = self._wait(fetch)  # This caller only, and never while holding the lock.
         with self._lock:
             if time.monotonic() - self._loaded < self._cache_seconds and kid in self._keys:
                 return self._keys[kid]
-            if failure is not None or fetch is None or fetch.number != self._in_use:
-                # The fetch failed, or another one overtook it: this token cannot be judged yet.
-                raise _NotAccepted(self._no_keys(), unavailable=True) from failure
+            if failure is not None:  # This token cannot be judged yet.
+                raise _NotAccepted(self._no_keys(self._said(failure)), unavailable=True) from failure
+            if fetch is None or fetch.number != self._in_use:
+                raise _NotAccepted(
+                    "the signing keys were fetched again while this token was being checked; send the request again",
+                    unavailable=True,
+                )
             raise _NotAccepted(self._unknown(kid))
 
-    def _no_keys(self) -> str:
-        return f"could not fetch signing keys from {self.trust.jwks_url} ({self._why}); check Trust.jwks_url"
+    def _no_keys(self, why: str) -> str:
+        return (
+            f"could not fetch signing keys from {self.trust.jwks_url} ({why}); "
+            "if this does not clear, check Trust.jwks_url"
+        )
 
     def _unknown(self, kid: str) -> str:
         return (
             f"the token is signed with key ID {_shown(kid)}, which is not among the {len(self._keys)} usable keys "
-            f"at {self.trust.jwks_url}; is this the right provider and jwks_url?"
+            f"last fetched from {self.trust.jwks_url}; is this the right provider and jwks_url?"
         )
 
     # -- tokens -----------------------------------------------------------
@@ -569,9 +590,10 @@ class OAuthTokens:
             return self._identity(token)
         except _NotAccepted as refused:
             reason = refused.reason
-            logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
-            if refused.unavailable:
+            if refused.unavailable:  # Nothing is known about the token itself.
+                logger.info("Token could not be checked for %s: %s", self.trust.issuer, reason)
                 raise OAuthUnavailable("OAuth signing keys unavailable", reason) from refused.__cause__
+            logger.info("Token not accepted for %s: %s", self.trust.issuer, reason)
             raise OAuthError(refused.message, reason) from None
         except OAuthError:
             raise

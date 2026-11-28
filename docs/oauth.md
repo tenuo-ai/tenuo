@@ -159,7 +159,7 @@ template above and a person's task:
     "subject": "f3c1...",                                     # the caller's `sub`,
     "tenant_id": "acme",                                      # and tenant, since the trust has a tenant_claim.
     "status": "approved",
-    "expires_at": 1767225600,  # Unix seconds. The warrant ends no later than this.
+    "expires_at": int(time.time()) + 600,  # Unix seconds, in the future. The warrant ends no later than this.
     "payment_id": "payment-789",
     "currency": "USD",
     "max_amount_cents": 5000,
@@ -505,7 +505,7 @@ token's audience, client and scope names. It never includes the token.
 | 401 `Access token not accepted` | `Token not accepted for <issuer>: ...` | See the list below |
 | 403 `Task is not authorized for this caller` | `Task '<id>' is not granted to ...: ...` | No record, another owner, not approved, a missing scope, or an expired approval |
 | 403 `This holder proof was already used` | | The same signed request was sent twice; sign a new one |
-| 503 `Credential validation temporarily unavailable` | `Could not fetch signing keys from <url>: ...` | `Trust.jwks_url` is wrong or the provider is down. A wrong URL never recovers by itself |
+| 503 `Credential validation temporarily unavailable` | `Token could not be checked for <issuer>: ...` | The keys are being fetched or have aged out (send the request again), or they could not be fetched: the provider is down, or `Trust.jwks_url` is wrong, which never recovers by itself |
 | 503 `Issuer error` | A traceback | Your policy or audit function raised, or returned a grant that cannot be used |
 
 What the log says for a 401, and what to do:
@@ -519,8 +519,9 @@ What the log says for a 401, and what to do:
   preset for this provider.
 - `claim 'typ' is 'ID' ... this looks like an ID token`: send the access
   token, not the ID token.
-- `the token is signed with key ID ..., which is not among the N usable keys`:
-  `jwks_url` points at another realm or tenant.
+- `the token is signed with key ID ..., which is not among the N usable keys
+  last fetched from ...`: `jwks_url` points at another realm or tenant. If the
+  provider has just started using a new key, the next fetch picks it up.
 - `scopes: the token has ... and Trust.required_scopes also needs ...`
 - `not a JWT ...`: the provider issues opaque tokens for this client.
 
