@@ -233,16 +233,18 @@ With a store that can wait on another writer (anything but the in-memory one), a
 
 ---
 
-## With Tenuo Cloud
+## With a remote lease issuer
 
-Tenuo Cloud keeps a budget for a day, a week or a month, shows what each agent spent, and alerts when a budget runs low. For the setup in the dashboard, step by step, see [Token budgets](https://docs.tenuo.ai/guides/token-budgets) in the Tenuo Cloud docs.
+A lease issuer coordinates a shared budget across processes. Each process receives a short-lived warrant for a slice of the budget, meters its own calls, and returns signed usage. The issuer maintains the period's accounting; enforcement stays at the model-call boundary.
+
+The built-in HTTP adapter, `CloudLeases`, works with a service implementing the acquisition and signed-return protocol described below. For another transport or service API, implement `LeaseSource.acquire()` and `LeaseSource.release()` and pass that source to `LeasedBudget`.
 
 ### Before the code
 
-1. **A root key.** Create one under **Keys**. Its public key is what the agent trusts: copy it with **Copy Base64**.
-2. **An active agent.** Register it under **Agents** and claim it with a key the agent holds. A trigger can only issue warrants to an agent that has been claimed.
-3. **A trigger with a token budget.** Under **Triggers**, create one for that agent and turn on **Token budget**: choose the period (per day, week or month, or one total), the amount in tokens or dollars, and optionally a lease size, an output cap per call and the models it allows. A budget in dollars needs a price for each of its models, set under **Token Usage → Model prices**.
-4. **An API key that may fire the trigger.** Allow its service account on the trigger.
+1. **A trusted issuer key.** Configure the issuer's public key at the agent's enforcement boundary.
+2. **A holder key.** Register the agent's public key with the issuer so leases are bound to the key the agent holds.
+3. **A budget and issuance policy.** Configure the period, token allowance, lease size, permitted models, and output limits. The HTTP adapter identifies this policy by its trigger ID.
+4. **A service credential.** Give the agent an API key authorized to acquire leases for that policy.
 
 ### The agent
 
@@ -251,8 +253,8 @@ import tenuo.budget_http
 from tenuo import PublicKey, SigningKey
 from tenuo.budget_lease import CloudLeases, LeasedBudget
 
-agent_key = SigningKey.from_env("AGENT_SIGNING_KEY")    # the key the agent was claimed with
-root_key = PublicKey.from_env("TENUO_ROOT_PUBLIC_KEY")  # the root key's Base64 from the Keys page
+agent_key = SigningKey.from_env("AGENT_SIGNING_KEY")    # the registered holder key
+root_key = PublicKey.from_env("TENUO_ROOT_PUBLIC_KEY")  # the trusted issuer's Base64 public key
 
 lease = LeasedBudget(CloudLeases("trg_research_budget"))
 tenuo.budget_http.install(lease=lease, signing_key=agent_key, trusted_roots=[root_key])
@@ -262,9 +264,9 @@ With these set in the environment:
 
 | Variable | What it is |
 |----------|------------|
-| `TENUO_CONTROL_PLANE_URL` | Your Tenuo Cloud API URL |
+| `TENUO_CONTROL_PLANE_URL` | The lease service API URL |
 | `TENUO_API_KEY` | The API key that may fire the trigger |
-| `TENUO_AUTHORIZER_NAME` | A name for this process. Needed for each call's usage to show under **Token Usage**; without it the period budget still counts every call, but the usage charts stay empty |
+| `TENUO_AUTHORIZER_NAME` | The process identifier used when reporting per-call usage to a connected control plane |
 
 Model calls are then metered against the current lease. Anything with `acquire()` and `release()` can stand in for `CloudLeases` (`tenuo.budget_lease.LeaseSource`).
 
@@ -276,17 +278,17 @@ With a control plane connected, every finished call and every refusal is also se
 
 > **Experimental.** The interface may change.
 
-A budget for a period is kept by Cloud and handed out in *leases*: short-lived warrants for a slice of what the period has left. The meter takes a lease, spends from it, and returns it with what it used before taking the next one.
+A budget for a period is kept by the issuer and handed out in *leases*: short-lived warrants for a slice of what the period has left. The meter takes a lease, spends from it, and returns it with what it used before taking the next one.
 
 - A lease is charged in full until it is returned, so two hosts are never given the same tokens. What a lease did not use goes back to the budget.
 - Returns are signed with the agent's key: only the holder of a lease can report what it used.
-- When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets. When no lease can be taken for another reason (a wrong trigger id or API key, a paused trigger, Cloud unreachable), calls are refused with `lease_unavailable`, and the message says which.
+- When the period's budget is spent, calls are refused with `token_budget_exceeded`, and the message says how much is left and when the budget resets. When no lease can be taken for another reason (a wrong trigger id or API key, a paused trigger, lease service unreachable), calls are refused with `lease_unavailable`, and the message says which.
 - `uninstall()` returns the lease in hand, and so does a normal interpreter exit. A process killed by a signal it does not handle does not. Only the agent's key can report what a lease used, so that lease stays charged in full until the period resets, and a budget for one total never resets. Keep the lease size small for workers that may be stopped abruptly.
 - If a return does not get through, that lease stays closed and the same return is sent again later. Calls are refused until a new lease can be taken.
 - A lease is for one process. Another process takes its own lease from the same budget, and so does a forked child.
-- A request to Cloud that gets no answer (a dropped connection, a 5xx) is sent again, for as long as `timeout` allows. Nothing is counted twice: each acquisition carries an ID under which Cloud grants one lease however often it is asked, and a return is the same signed report each time.
-- If a lease was granted and its answer never arrived, the next request receives that same lease. When Cloud can no longer give it (it expired, or the trigger was changed in the meantime), the same call takes a new lease and the lost one stays charged until the period resets. This lasts as long as the process: one that is killed loses the acquisition it was waiting on, as it loses a lease it holds.
-- `CloudLeases` needs a Cloud server that has `POST /v1/triggers/{id}/acquire`. An older server answers 404 and grants nothing, and calls are refused with `lease_unavailable`. Upgrade Cloud before the SDK.
+- A request to the lease service that gets no answer (a dropped connection, a 5xx) is sent again, for as long as `timeout` allows. Nothing is counted twice: each acquisition carries an ID under which the issuer grants one lease however often it is asked, and a return is the same signed report each time.
+- If a lease was granted and its answer never arrived, the next request receives that same lease. When the issuer can no longer give it (it expired, or the trigger was changed in the meantime), the same call takes a new lease and the lost one stays charged until the period resets. This lasts as long as the process: one that is killed loses the acquisition it was waiting on, as it loses a lease it holds.
+- The HTTP lease adapter requires a service implementing `POST /v1/triggers/{id}/acquire`. An older server answers 404 and grants nothing, and calls are refused with `lease_unavailable`. Upgrade the lease service before its SDK clients.
 - Leases work with `install()`; `metered_client()` takes a fixed warrant.
 
 ---

@@ -1317,7 +1317,7 @@ class TestCloudLeases:
         cloud.legacy = True
         source = CloudLeases("trg_budget", url=cloud.url, api_key="tc_test")
         for _ in range(2):
-            with pytest.raises(LeaseUnavailable, match="upgrade Cloud"):
+            with pytest.raises(LeaseUnavailable, match="upgrade the lease service"):
                 source.acquire()
         assert [path for path, _, _ in cloud.requests] == ["/v1/triggers/trg_budget/acquire"] * 2
         assert cloud.requests[0][2] == cloud.requests[1][2]

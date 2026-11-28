@@ -93,3 +93,12 @@ This satisfies the explicit-waiver option in the checklist for this release
 only. The issues remain open for later work. Both npm packages remain on the
 `beta` channel at `0.3.8-beta.0`; this does not qualify a stable npm release
 or waive the CI, security, packaging, or provenance checks above.
+
+## 0.3.9-beta.0 release scope
+
+The coordinated 0.3.9 release retains the Node.js beta scope. The release
+owner agreed on 2026-11-27 to defer the broader example and new-runtime
+backlog: #580 (wrapped-tool example), #585 (Cloudflare Workers), and #640
+(Hono Node example). These remain open and are not blockers for this release.
+This does not waive CI, security, packaging, or provenance checks, and neither
+package is promoted to the stable npm channel.

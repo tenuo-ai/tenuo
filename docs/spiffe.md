@@ -106,7 +106,7 @@ is always called "SPIRE agent".
 From a checkout of this repository:
 
 ```bash
-pip install 'tenuo[spiffe]'
+pip install 'tenuo[spiffe]==0.3.9'
 python tenuo-python/examples/spiffe/demo.py
 ```
 

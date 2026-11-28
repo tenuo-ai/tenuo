@@ -432,7 +432,7 @@ __all__ = [
     "current_idempotency_key",
 ]
 
-__version__ = "0.3.8"
+__version__ = "0.3.9"
 
 
 def __getattr__(name: str):

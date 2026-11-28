@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-11-27
+
+### Upgrade notes
+
+- **Remote token-budget leases:** the HTTP lease adapter requires an issuer
+  that supports `POST /v1/triggers/{id}/acquire`. Upgrade the lease service
+  before upgrading its SDK clients from 0.3.8. An incompatible service
+  returns 404, and model calls fail closed with `lease_unavailable`.
+  Local token budgets and custom `LeaseSource` implementations are unaffected.
+- TypeScript packages remain prereleases (`0.3.9-beta.0`) on the `beta` npm
+  channel. Rust users of `tenuo::aat` must apply the source migration below.
+
 ### Breaking
 
 - **`tenuo::aat`: a trust anchor's key and the verified holder key are a
@@ -79,12 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Token budgets: `CloudLeases` asks again when Cloud does not answer
-  (Python).** A lease request or a return that gets no answer is sent again
+- **Token budgets: retry unanswered remote lease requests (Python).** A lease
+  request or a return that gets no answer is sent again
   within `timeout`, and a lease whose answer was lost is the lease the next
   request receives, so a dropped connection no longer leaves a lease charged
   and unused. Leases are now taken through
-  `POST /v1/triggers/{id}/acquire`: upgrade Tenuo Cloud before the SDK. A
+  `POST /v1/triggers/{id}/acquire`: upgrade the lease service before the SDK. A
   server without that route answers 404, grants nothing, and calls are
   refused with `lease_unavailable`. See
   [token budgets](docs/token-budgets.md#how-a-period-budget-is-handed-out).
@@ -97,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python LangGraph:** `state["warrant"]` accepts an encoded WarrantStack or
+  root-first list and carries its parents into authorization. Ambiguous
+  stack-plus-explicit-chain input is rejected. The 64 KiB pre-decode limit
+  applies to direct tokens and every string entry in a chain list.
 - **Python CrewAI:** `GuardedCrew.with_issuer()` carries the issuer warrant and
   its parents into every agent guard, so delegated calls verify against the
   trusted root. Issuers accept a WarrantStack, a root-first list, or explicit

@@ -17,7 +17,7 @@ services:
       - "127.0.0.1:18190:8080"
 
   tenuo-authorizer:
-    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.8}
+    image: ${TENUO_AUTHORIZER_IMAGE:-tenuo/authorizer:0.3.9}
     command: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
     environment:
       RUST_LOG: info

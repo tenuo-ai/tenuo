@@ -25,8 +25,9 @@ Nothing else changes: model calls are metered against the current lease, and
 the lease is renewed and returned for you. Returns are signed with the agent's
 key, so only the holder of a lease can say what it used.
 
-:class:`CloudLeases` takes leases from Tenuo Cloud. Anything with ``acquire()``
-and ``release()`` can stand in for it (see :class:`LeaseSource`).
+:class:`CloudLeases` is the built-in HTTP adapter for a compatible lease issuer.
+Anything with ``acquire()`` and ``release()`` can stand in for it
+(see :class:`LeaseSource`).
 
 Not covered: a process killed by a signal it does not handle (SIGTERM, SIGKILL)
 does not return its lease, which then stays charged in full until the period
@@ -151,10 +152,10 @@ _CLOUD_SOURCES: "weakref.WeakSet[CloudLeases]" = weakref.WeakSet()
 
 
 class CloudLeases:
-    """Leases from Tenuo Cloud: each one is an acquisition on a trigger that has a ``token_budget``.
+    """HTTP leases from an issuer: each acquisition uses a trigger with a ``token_budget``.
 
     Both requests this class makes can be repeated without being counted twice.
-    An acquisition carries an ID, and Cloud grants one lease under it however
+    An acquisition carries an ID, and the issuer grants one lease under it however
     often it is asked; a return is the same signed report each time. So a
     request that gets no answer is sent again, and a lease whose answer was
     lost is the lease the next request receives.
@@ -162,7 +163,7 @@ class CloudLeases:
     This holds for as long as the process lives. One that dies loses the
     acquisition it was waiting on, as it loses a lease it holds.
 
-    Needs a Cloud server that has ``POST /v1/triggers/{id}/acquire``. An older
+    Needs a lease service that implements ``POST /v1/triggers/{id}/acquire``. An older
     one answers 404 and grants nothing.
 
     Args:
@@ -316,7 +317,7 @@ class CloudLeases:
         if status != 200 or not body.get("warrant"):
             if status == 404:
                 why = (f"trigger {self.trigger_id} was not found; check the trigger id, "
-                       "and upgrade Cloud if it has no acquire route")
+                       "and upgrade the lease service if it has no acquire route")
             elif status == 401:
                 why = "the control plane did not accept the API key (TENUO_API_KEY)"
             elif status == 403:
