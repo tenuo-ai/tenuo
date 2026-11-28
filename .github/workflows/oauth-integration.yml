@@ -14,6 +14,7 @@ on:
       - 'tenuo-python/tests/e2e/test_oauth_oidc_provider.py'
       - 'tenuo-python/tests/e2e/test_oauth_github_actions.py'
       - 'tenuo-python/tests/e2e/test_oauth_gateway.py'
+      - 'tenuo-python/tests/e2e/test_oauth_entra.py'
       - 'tenuo-python/pyproject.toml'
       - 'tenuo-core/**'
       - '.github/workflows/oauth-integration.yml'
@@ -92,3 +93,32 @@ jobs:
           PYTHONPATH: tenuo-python
           TENUO_REQUIRE_GITHUB_OIDC: '1'
         run: python -m pytest tenuo-python/tests/e2e/test_oauth_github_actions.py -q --override-ini='addopts='
+
+  entra-id:
+    name: OAuth Microsoft Entra ID token to warrant
+    # Needs an Entra tenant that trusts this repository's workflow runs; the three
+    # identifiers are repository variables, not secrets. A pull request from a fork
+    # gets no workflow token, and a repository without the variables skips the job.
+    if: >-
+      vars.TENUO_ENTRA_TENANT_ID != '' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write  # Presented to Entra as the client assertion. No secret is stored.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Build this checkout and install test dependencies
+        run: python -m pip install './tenuo-python[oauth]' pytest uvicorn
+      - name: Exchange an Entra access token for a warrant
+        env:
+          PYTHONPATH: tenuo-python
+          TENUO_REQUIRE_ENTRA: '1'
+          TENUO_ENTRA_TENANT_ID: ${{ vars.TENUO_ENTRA_TENANT_ID }}
+          TENUO_ENTRA_API_CLIENT_ID: ${{ vars.TENUO_ENTRA_API_CLIENT_ID }}
+          TENUO_ENTRA_CLIENT_ID: ${{ vars.TENUO_ENTRA_CLIENT_ID }}
+        run: python -m pytest tenuo-python/tests/e2e/test_oauth_entra.py -q -s --override-ini='addopts='
