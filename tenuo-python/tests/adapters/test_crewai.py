@@ -1860,7 +1860,9 @@ class TestGuardedCrewIssuerChain:
                                   tool_name="search", tool_input={"query": "evil.com"})
         assert hook(context) is False
 
-    def test_existing_hook_keeps_runtime_trust_roots(self):
+    @pytest.mark.parametrize("runtime_at_kickoff", [False, True])
+    def test_existing_hook_keeps_runtime_trust_roots(self, runtime_at_kickoff):
+        from contextlib import nullcontext
         from types import SimpleNamespace
         from tenuo import HolderIdentity, Runtime, SigningKey, Warrant, config
         from tenuo.crewai import GuardedCrew
@@ -1874,13 +1876,15 @@ class TestGuardedCrewIssuerChain:
         runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[SigningKey.generate().public_key])
         token = config._config_context.set(config.TenuoConfig())
         try:
-            with runtime.bind():
+            with runtime.bind() if runtime_at_kickoff else nullcontext():
                 hook = crew._create_combined_hook()
             runtime.trusted_roots[:] = [root.public_key]
+            runtime.install()
             context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
                                       tool_name="search", tool_input={"query": "arxiv:1"})
             assert hook(context) is False
         finally:
+            Runtime.uninstall()
             config._config_context.reset(token)
 
 

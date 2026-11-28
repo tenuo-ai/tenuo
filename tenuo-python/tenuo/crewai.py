@@ -2708,12 +2708,13 @@ class _GuardedCrewImpl:
 
     def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
         """Create a hook that routes to the appropriate per-agent guard."""
+        from copy import copy
         from .config import _config_context, get_config
         from .consumption import _set_current_idempotency_key
         from .decorators import _chain_context, chain_scope
         from .runtime import _runtime_context, get_runtime
 
-        guards = dict(self._guards)
+        guards = {role: copy(guard) for role, guard in self._guards.items()}
         # Carry policy into CrewAI workers, not per-call outputs such as the
         # idempotency key shared by hooks and the downstream tool handler.
         config = get_config()
@@ -2723,6 +2724,13 @@ class _GuardedCrewImpl:
             roots = list(kickoff_runtime.trusted_roots)
         kickoff_config = replace(config, trusted_roots=list(roots or []), _authorizer=None)
         kickoff_chain = list(chain_scope() or [])
+        for guard in guards.values():
+            guard_roots = resolve_trusted_roots(guard._trusted_roots)
+            if guard_roots is None:
+                guard_roots = roots
+            # An empty explicit list also freezes the absence of trust: a
+            # later Runtime.install() must not grant this kickoff authority.
+            guard._trusted_roots = list(guard_roots or [])
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
