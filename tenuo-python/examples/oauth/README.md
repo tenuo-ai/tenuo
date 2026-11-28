@@ -1,5 +1,9 @@
 # OAuth login to task-scoped refunds and email
 
+New here? Run [`quickstart.py`](quickstart.py) first: one file, no Docker, no
+identity provider, about a second. This page is the fuller example with a real
+Keycloak and a browser login.
+
 This example uses a real Keycloak server, browser Authorization Code + PKCE
 login, Tenuo's HTTP warrant issuer, and separate FastMCP payments and mail
 processes. The upstream payments service is simulated with real SQLite writes;

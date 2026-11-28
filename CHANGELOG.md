@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The endpoint accepts a compact JSON request or an OAuth 2.0 Token Exchange
   (RFC 8693) request. A recipe adds warrant checks to an Envoy gateway that
   already validates Keycloak tokens. See [the guide](docs/oauth.md).
+- **Python: OAuth first run.** `examples/oauth/quickstart.py` runs the whole
+  flow in one file with no Docker and no identity provider. When a token is
+  not accepted, the issuer's log and `OAuthError.reason` now say which check
+  failed (audience, client, preset, scope, key URL); the caller is still told
+  the same thing every time. A task that is not granted is logged with the
+  reason, and a token-exchange request names a parameter it does not support.
 - **Python: one issuance core.** The SPIFFE JWT-SVID and forwarded-identity
   endpoints and the OAuth endpoint share holder-proof checking, proof memory,
   policy and audit handling. `SpiffeWarrantIssuer(proof_store=)` accepts a
