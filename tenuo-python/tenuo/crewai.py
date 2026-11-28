@@ -131,6 +131,7 @@ from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
     _apply_observe_mode,
+    _sign_path_trusted_roots,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -786,6 +787,7 @@ class CrewAIGuard:
         # None leaves any ambient chain_scope() in effect.
         self._warrant, self._warrant_chain = split_presented_warrant(warrant, warrant_chain)
         self._signing_key = signing_key
+        self._crew_issuer: Optional[Warrant] = None
         self._trusted_roots = trusted_roots
         self._on_denial = on_denial
         self._audit_callback = audit_callback
@@ -1238,6 +1240,21 @@ class CrewAIGuard:
             warrant_id=warrant_id if isinstance(warrant_id, str) else None,
         )
 
+    def _parents_for_call(self, roots: Optional[list]) -> Optional[List[Warrant]]:
+        """Resolve implicit crew ancestry at call time; explicit chains win."""
+        if self._crew_issuer is None or self._warrant_chain is not None:
+            return self._warrant_chain
+        from .decorators import chain_scope
+
+        parents = list(chain_scope() or [])
+        if not parents and self._warrant.issuer in (roots or []):
+            # Preserve the existing single-warrant path for an explicitly
+            # trusted issuer. Never retry a rejected chain as a single leaf.
+            return []
+        if not parents or parents[-1].id != self._crew_issuer.id:
+            parents.append(self._crew_issuer)
+        return parents
+
     def _authorize(
         self,
         tool_name: str,
@@ -1268,16 +1285,17 @@ class CrewAIGuard:
         observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
+            roots = _sign_path_trusted_roots(resolve_trusted_roots(self._trusted_roots), bound)
 
             try:
                 enforcement: EnforcementResult = enforce_tool_call(
                     tool_name=tool_name,
                     tool_args=args,
                     bound_warrant=bound,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                    trusted_roots=roots,
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
-                    warrant_chain=self._warrant_chain,
+                    warrant_chain=self._parents_for_call(roots),
                 )
             except _APPROVAL_ERRORS as e:
                 # A refused, missing or unverifiable approval is raised, not
@@ -1358,16 +1376,17 @@ class CrewAIGuard:
         observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
+            roots = _sign_path_trusted_roots(resolve_trusted_roots(self._trusted_roots), bound)
 
             try:
                 enforcement: EnforcementResult = await enforce_tool_call_async(
                     tool_name=tool_name,
                     tool_args=args,
                     bound_warrant=bound,
-                    trusted_roots=resolve_trusted_roots(self._trusted_roots),
+                    trusted_roots=roots,
                     approval_handler=self._approval_handler,
                     approvals=self._approvals,
-                    warrant_chain=self._warrant_chain,
+                    warrant_chain=self._parents_for_call(roots),
                 )
             except _APPROVAL_ERRORS as e:
                 # A refused, missing or unverifiable approval is raised, not
@@ -2413,7 +2432,9 @@ class GuardedCrewBuilder:
         self._tasks = tasks
         self._process = process
         self._issuer_warrant: Optional[Warrant] = None
+        self._issuer_chain: Optional[List[Warrant]] = None
         self._issuer_key: Optional[SigningKey] = None
+        self._trusted_roots: Optional[list] = None
         self._policy: Dict[str, List[str]] = {}
         self._constraints: Dict[str, Dict[str, Dict[str, Constraint]]] = {}
         self._on_denial: DenialMode = "raise"
@@ -2421,13 +2442,31 @@ class GuardedCrewBuilder:
         self._strict: bool = False
         self._ttl: Optional[str] = None
 
-    def with_issuer(self, warrant: Warrant, signing_key: SigningKey) -> "GuardedCrewBuilder":
+    def with_issuer(
+        self,
+        warrant: Warrant,
+        signing_key: SigningKey,
+        *,
+        warrant_chain: Optional[List[Warrant]] = None,
+    ) -> "GuardedCrewBuilder":
         """Set the warrant issuer for Tier 2.
 
-        The issuer will create per-agent warrants based on the policy.
+        The issuer will create per-agent warrants based on the policy. Each
+        agent warrant carries the issuer warrant (and its parents) as its
+        chain, so it verifies against the trusted root alone. If the issuer
+        warrant was itself delegated, pass its parents as ``warrant_chain``,
+        or pass the whole chain as ``warrant`` (WarrantStack string or
+        root-first list). Without explicit parents, call-time ``chain_scope()``
+        supplies ancestry; directly trusting the issuer key still works when
+        no ambient chain is present.
         """
-        self._issuer_warrant = warrant
+        self._issuer_warrant, self._issuer_chain = split_presented_warrant(warrant, warrant_chain)
         self._issuer_key = signing_key
+        return self
+
+    def with_trusted_roots(self, roots: list) -> "GuardedCrewBuilder":
+        """Set trusted root public keys for every agent guard."""
+        self._trusted_roots = list(roots)
         return self
 
     def policy(self, agent_tools: Dict[str, List[str]]) -> "GuardedCrewBuilder":
@@ -2503,6 +2542,8 @@ class GuardedCrewBuilder:
             audit_callback=self._audit_callback,
             strict=self._strict,
             ttl=self._ttl,
+            issuer_chain=self._issuer_chain,
+            trusted_roots=self._trusted_roots,
         )
 
 
@@ -2528,6 +2569,8 @@ class _GuardedCrewImpl:
         audit_callback: Optional[Callable[[AuditEvent], None]],
         strict: bool,
         ttl: Optional[str],
+        issuer_chain: Optional[List[Warrant]] = None,
+        trusted_roots: Optional[list] = None,
     ):
         self._agents = agents
         self._tasks = tasks
@@ -2540,6 +2583,8 @@ class _GuardedCrewImpl:
         self._audit_callback = audit_callback
         self._strict = strict
         self._ttl = ttl
+        self._issuer_chain = issuer_chain
+        self._trusted_roots = trusted_roots
 
         # Built crew instance (created on first kickoff)
         self._crew = None
@@ -2575,6 +2620,9 @@ class _GuardedCrewImpl:
         if self._audit_callback:
             builder.audit(self._audit_callback)
 
+        if self._trusted_roots is not None:
+            builder.with_trusted_roots(self._trusted_roots)
+
         # Tier 2: Issue per-agent warrant from issuer
         if self._issuer_warrant and self._issuer_key:
             # Generate agent-specific signing key (in production, agent provides their own)
@@ -2590,7 +2638,16 @@ class _GuardedCrewImpl:
                     attenuations={tool: agent_constraints.get(tool, {}) for tool in allowed_tools},
                     ttl=_parse_ttl(self._ttl) if self._ttl else None,
                 )
-                builder.with_warrant(agent_warrant, agent_key)
+                # The issuer warrant (and its parents) travel with the agent
+                # warrant so it verifies against the trusted root alone.
+                builder.with_warrant(
+                    agent_warrant,
+                    agent_key,
+                    warrant_chain=(
+                        [*self._issuer_chain, self._issuer_warrant]
+                        if self._issuer_chain is not None else None
+                    ),
+                )
                 logger.debug(f"Issued Tier 2 warrant to agent '{role}'")
             except EscalationAttempt:
                 # Escalation attempt during delegation is always a security error
@@ -2604,7 +2661,9 @@ class _GuardedCrewImpl:
                     "Check that the issuer warrant has the necessary capabilities."
                 )
 
-        return builder.build()
+        guard = builder.build()
+        guard._crew_issuer = self._issuer_warrant
+        return guard
 
     def _protect_agents(self) -> List[Any]:
         """Build guards for all agents (tools are protected via hooks)."""
@@ -2649,7 +2708,31 @@ class _GuardedCrewImpl:
 
     def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
         """Create a hook that routes to the appropriate per-agent guard."""
-        guards = self._guards
+        from copy import copy
+        from .config import _config_context, get_config
+        from .consumption import _set_current_idempotency_key
+        from .decorators import _chain_context, chain_scope
+        from .runtime import _runtime_context, get_runtime
+
+        guards = {role: copy(guard) for role, guard in self._guards.items()}
+        # Carry policy into CrewAI workers, not per-call outputs such as the
+        # idempotency key shared by hooks and the downstream tool handler.
+        config = get_config()
+        kickoff_runtime = get_runtime()
+        roots = resolve_trusted_roots(None)
+        if roots is None and kickoff_runtime is not None:
+            roots = list(kickoff_runtime.trusted_roots)
+        kickoff_config = replace(config, trusted_roots=list(roots or []), _authorizer=None)
+        kickoff_chain = list(chain_scope() or [])
+        for guard in guards.values():
+            guard._allowed = {tool: dict(constraints) for tool, constraints in guard._allowed.items()}
+            guard._namespaced = guard._index_namespaced(guard._allowed)
+            guard_roots = resolve_trusted_roots(guard._trusted_roots)
+            if guard_roots is None:
+                guard_roots = roots
+            # An empty explicit list also freezes the absence of trust: a
+            # later Runtime.install() must not grant this kickoff authority.
+            guard._trusted_roots = list(guard_roots or [])
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
@@ -2665,17 +2748,32 @@ class _GuardedCrewImpl:
             if role is None:
                 # SECURITY: Fail-closed - cannot determine agent, block
                 logger.warning("GuardedCrew hook: cannot determine agent role, blocking")
+                _set_current_idempotency_key(None)
                 return False
 
             guard = guards.get(role)
             if guard is None:
                 # SECURITY: Fail-closed - agent not in policy
                 logger.warning(f"GuardedCrew hook: no guard for role '{role}', blocking")
+                _set_current_idempotency_key(None)
                 return False
 
-            # Delegate to the agent's guard hook (never raises; CrewAI would
-            # treat an escaped exception as "allow").
-            return guard.authorize_hook(context, agent_role=role)
+            config_token = _config_context.set(kickoff_config)
+            chain_token = _chain_context.set(kickoff_chain)
+            runtime_token = _runtime_context.set(kickoff_runtime)
+            try:
+                result = guard.authorize_hook(context, agent_role=role)
+                if result is False:
+                    _set_current_idempotency_key(None)
+                return result
+            except Exception:
+                _set_current_idempotency_key(None)
+                logger.exception("GuardedCrew hook failed; blocking tool call")
+                return False
+            finally:
+                _runtime_context.reset(runtime_token)
+                _chain_context.reset(chain_token)
+                _config_context.reset(config_token)
 
         return guarded_crew_hook
 

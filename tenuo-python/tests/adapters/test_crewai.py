@@ -1621,6 +1621,278 @@ class TestDenialRecord:
         assert result.warrant_id == warrant.id
         assert events[-1].warrant_id == warrant.id
 
+class TestGuardedCrewIssuerChain:
+    """Agent warrants verify against the trusted root alone (issuer chain travels)."""
+
+    def _agent_guard(self, issuer, issuer_key, root_key, *, warrant_chain=None):
+        from tenuo.crewai import GuardedCrew
+
+        crew = (
+            GuardedCrew(agents=[MagicMock(role="researcher")], tasks=[MagicMock(agent=None)])
+            .with_issuer(issuer, issuer_key, warrant_chain=warrant_chain)
+            .with_trusted_roots([root_key.public_key])
+            .policy({"researcher": ["search"]})
+            .constraints({"researcher": {"search": {"query": Pattern("arxiv:*")}}})
+            .on_denial("skip")
+            .build()
+        )
+        crew._protect_agents()
+        return crew._guards["researcher"]
+
+    def test_root_minted_issuer_only_root_trusted(self):
+        """Issuer warrant minted by the root; only the root key is trusted."""
+        from tenuo import SigningKey, Warrant
+
+        root_key = SigningKey.generate()
+        issuer_key = SigningKey.generate()
+        issuer_warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("arxiv:*"))
+            .holder(issuer_key.public_key)
+            .mint(root_key)
+        )
+
+        guard = self._agent_guard(issuer_warrant, issuer_key, root_key)
+
+        assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
+        assert isinstance(guard._authorize("search", {"query": "evil.com"}), DenialResult)
+        assert isinstance(guard._authorize("delete", {"query": "arxiv:1"}), DenialResult)
+
+    @pytest.mark.parametrize("presentation", ["list", "stack", "explicit"])
+    def test_delegated_issuer_chain(self, presentation):
+        """Issuer warrant delegated from a control-plane root, passed root-first."""
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+
+        root_key = SigningKey.generate()
+        orchestrator_key = SigningKey.generate()
+        issuer_key = SigningKey.generate()
+        root_warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("*"))
+            .holder(orchestrator_key.public_key)
+            .mint(root_key)
+        )
+        issuer_warrant = WarrantDelegator().delegate(
+            parent_warrant=root_warrant,
+            parent_key=orchestrator_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+
+        from tenuo import encode_warrant_stack
+
+        chain = [root_warrant, issuer_warrant]
+        if presentation == "explicit":
+            guard = self._agent_guard(issuer_warrant, issuer_key, root_key, warrant_chain=[root_warrant])
+        else:
+            presented = encode_warrant_stack(chain) if presentation == "stack" else chain
+            guard = self._agent_guard(presented, issuer_key, root_key)
+
+        from tenuo.decorators import chain_scope
+
+        # An unrelated ambient scope must not replace explicit issuer parents.
+        with chain_scope([issuer_warrant]):
+            assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
+        assert isinstance(guard._authorize("search", {"query": "evil.com"}), DenialResult)
+
+
+    def test_untrusted_root_is_still_denied(self):
+        from tenuo import SigningKey, Warrant
+
+        root_key = SigningKey.generate()
+        issuer_key = SigningKey.generate()
+        issuer = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("arxiv:*"))
+            .holder(issuer_key.public_key)
+            .mint(root_key)
+        )
+        guard = self._agent_guard(issuer, issuer_key, SigningKey.generate())
+        result = guard._authorize("search", {"query": "arxiv:2401.00001"})
+        assert isinstance(result, DenialResult)
+        assert result.error_code == "UNTRUSTED_WARRANT"
+
+    def test_missing_issuer_parent_is_denied(self):
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+
+        root_key, parent_key, issuer_key = [SigningKey.generate() for _ in range(3)]
+        parent = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("arxiv:*"))
+            .holder(parent_key.public_key)
+            .mint(root_key)
+        )
+        issuer = WarrantDelegator().delegate(
+            parent_warrant=parent,
+            parent_key=parent_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+        guard = self._agent_guard(issuer, issuer_key, root_key)
+        assert isinstance(guard._authorize("search", {"query": "arxiv:2401.00001"}), DenialResult)
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("trust_source", ["explicit", "global", "installed", "scoped"])
+    def test_directly_trusted_issuer(self, asynchronous, trust_source, monkeypatch):
+        import asyncio
+        from tenuo import SigningKey, Warrant
+
+        root, issuer_key = SigningKey.generate(), SigningKey.generate()
+        issuer = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(issuer_key.public_key).mint(root))
+        guard = self._agent_guard(issuer, issuer_key, issuer_key)
+        from contextlib import ExitStack
+        from tenuo import HolderIdentity, Runtime
+        from tenuo import config
+
+        cfg = config.TenuoConfig()
+        monkeypatch.setattr(config, "get_config", lambda: cfg)
+        with ExitStack() as stack:
+            if trust_source != "explicit":
+                guard._trusted_roots = None
+            if trust_source == "global":
+                cfg.trusted_roots = [issuer_key.public_key]
+            elif trust_source in ("installed", "scoped"):
+                runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[issuer_key.public_key])
+                if trust_source == "installed":
+                    runtime.install()
+                    stack.callback(Runtime.uninstall)
+                else:
+                    stack.enter_context(runtime.bind())
+            args = {"query": "arxiv:2401.00001"}
+            result = asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
+            assert result is None
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize("includes_issuer", [False, True])
+    def test_ambient_parents_resolved_at_call_time(self, asynchronous, includes_issuer):
+        import asyncio
+        from tenuo import SigningKey, Warrant
+        from tenuo.crewai import WarrantDelegator
+        from tenuo.decorators import chain_scope
+
+        root, parent_key, issuer_key = [SigningKey.generate() for _ in range(3)]
+        parent = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(parent_key.public_key).mint(root))
+        issuer = WarrantDelegator().delegate(
+            parent_warrant=parent, parent_key=parent_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+        guard = self._agent_guard(issuer, issuer_key, root)
+        args = {"query": "arxiv:2401.00001"}
+        def call():
+            return asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
+
+        assert isinstance(call(), DenialResult)
+        with chain_scope([parent, issuer] if includes_issuer else [parent]):
+            assert call() is None
+        assert isinstance(call(), DenialResult)
+
+    def test_combined_hook_preserves_scope_in_worker_threads(self, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from types import SimpleNamespace
+        from tenuo import HolderIdentity, Runtime, SigningKey, Warrant, config
+        from tenuo.crewai import GuardedCrew, WarrantDelegator
+        from tenuo.decorators import chain_scope
+
+        monkeypatch.setattr(config, "get_config", lambda: config.TenuoConfig())
+        root, parent_key, issuer_key = [SigningKey.generate() for _ in range(3)]
+        parent = (Warrant.mint_builder()
+                  .capability("search", query=Pattern("arxiv:*"))
+                  .holder(parent_key.public_key).mint(root))
+        issuer = WarrantDelegator().delegate(
+            parent_warrant=parent, parent_key=parent_key,
+            child_holder=issuer_key.public_key,
+            attenuations={"search": {"query": Pattern("arxiv:*")}},
+        )
+        agent = SimpleNamespace(role="researcher")
+        crew = (GuardedCrew(agents=[agent], tasks=[])
+                .with_issuer(issuer, issuer_key)
+                .policy({"researcher": ["search"]})
+                .constraints({"researcher": {"search": {"query": Pattern("arxiv:*")}}})
+                .on_denial("skip").build())
+        crew._protect_agents()
+        runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[root.public_key])
+        with runtime.bind(), chain_scope([parent, issuer]):
+            hook = crew._create_combined_hook()
+        barrier = Barrier(2)
+        def call(query):
+            assert chain_scope() is None
+            barrier.wait(timeout=5)
+            return hook(SimpleNamespace(agent=agent, tool_name="search", tool_input={"query": query}))
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            allowed = pool.submit(call, "arxiv:2401.00001")
+            denied = pool.submit(call, "evil.com")
+            assert allowed.result(timeout=10) is None
+            assert denied.result(timeout=10) is False
+        # Another kickoff outside the scope must not inherit the previous one.
+        unscoped_hook = crew._create_combined_hook()
+        assert unscoped_hook(SimpleNamespace(
+            agent=agent, tool_name="search", tool_input={"query": "arxiv:2401.00001"}
+        )) is False
+
+    def test_existing_hook_keeps_its_guards_and_policy(self):
+        from types import SimpleNamespace
+        from tenuo import config
+        from tenuo.crewai import GuardedCrew
+
+        crew = GuardedCrew(agents=[], tasks=[]).build()
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Pattern("arxiv:*"))
+                                     .on_denial("skip").build())
+        cfg = config.TenuoConfig()
+        token = config._config_context.set(cfg)
+        try:
+            hook = crew._create_combined_hook()
+        finally:
+            config._config_context.reset(token)
+        context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                  tool_name="search", tool_input={"query": "evil.com"})
+        assert hook(context) is False
+        # In-place changes to the exposed guard must not alter the hook either.
+        crew.guards["researcher"]._allowed["search"]["query"] = Wildcard()
+        assert hook(context) is False
+        # A later kickoff/configuration cannot broaden an earlier hook.
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Wildcard())
+                                     .on_denial("skip").build())
+        cfg.mode = config.EnforcementMode.OBSERVE
+        context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                  tool_name="search", tool_input={"query": "evil.com"})
+        assert hook(context) is False
+
+    @pytest.mark.parametrize("runtime_at_kickoff", [False, True])
+    def test_existing_hook_keeps_runtime_trust_roots(self, runtime_at_kickoff):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from tenuo import HolderIdentity, Runtime, SigningKey, Warrant, config
+        from tenuo.crewai import GuardedCrew
+
+        root, holder = SigningKey.generate(), SigningKey.generate()
+        warrant = (Warrant.mint_builder().capability("search", query=Wildcard())
+                   .holder(holder.public_key).mint(root))
+        crew = GuardedCrew(agents=[], tasks=[]).build()
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Wildcard())
+                                     .with_warrant(warrant, holder).on_denial("skip").build())
+        runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[SigningKey.generate().public_key])
+        token = config._config_context.set(config.TenuoConfig())
+        try:
+            with runtime.bind() if runtime_at_kickoff else nullcontext():
+                hook = crew._create_combined_hook()
+            runtime.trusted_roots[:] = [root.public_key]
+            runtime.install()
+            context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                      tool_name="search", tool_input={"query": "arxiv:1"})
+            assert hook(context) is False
+        finally:
+            Runtime.uninstall()
+            config._config_context.reset(token)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
