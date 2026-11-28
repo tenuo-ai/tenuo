@@ -1734,7 +1734,8 @@ class TestGuardedCrewIssuerChain:
         assert isinstance(guard._authorize("search", {"query": "arxiv:2401.00001"}), DenialResult)
 
     @pytest.mark.parametrize("asynchronous", [False, True])
-    def test_directly_trusted_issuer(self, asynchronous):
+    @pytest.mark.parametrize("trust_source", ["explicit", "global", "installed", "scoped"])
+    def test_directly_trusted_issuer(self, asynchronous, trust_source, monkeypatch):
         import asyncio
         from tenuo import SigningKey, Warrant
 
@@ -1743,9 +1744,27 @@ class TestGuardedCrewIssuerChain:
                   .capability("search", query=Pattern("arxiv:*"))
                   .holder(issuer_key.public_key).mint(root))
         guard = self._agent_guard(issuer, issuer_key, issuer_key)
-        args = {"query": "arxiv:2401.00001"}
-        result = asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
-        assert result is None
+        from contextlib import ExitStack
+        from tenuo import HolderIdentity, Runtime
+        from tenuo import config
+
+        cfg = config.TenuoConfig()
+        monkeypatch.setattr(config, "get_config", lambda: cfg)
+        with ExitStack() as stack:
+            if trust_source != "explicit":
+                guard._trusted_roots = None
+            if trust_source == "global":
+                cfg.trusted_roots = [issuer_key.public_key]
+            elif trust_source in ("installed", "scoped"):
+                runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[issuer_key.public_key])
+                if trust_source == "installed":
+                    runtime.install()
+                    stack.callback(Runtime.uninstall)
+                else:
+                    stack.enter_context(runtime.bind())
+            args = {"query": "arxiv:2401.00001"}
+            result = asyncio.run(guard._authorize_async("search", args)) if asynchronous else guard._authorize("search", args)
+            assert result is None
 
     @pytest.mark.parametrize("asynchronous", [False, True])
     @pytest.mark.parametrize("includes_issuer", [False, True])

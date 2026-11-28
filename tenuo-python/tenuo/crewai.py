@@ -131,6 +131,7 @@ from tenuo._enforcement import (
     DenialResult,
     EnforcementResult,
     _apply_observe_mode,
+    _sign_path_trusted_roots,
     enforce_tool_call,
     enforce_tool_call_async,
     handle_denial,
@@ -1284,7 +1285,7 @@ class CrewAIGuard:
         observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
-            roots = resolve_trusted_roots(self._trusted_roots)
+            roots = _sign_path_trusted_roots(resolve_trusted_roots(self._trusted_roots), bound)
 
             try:
                 enforcement: EnforcementResult = enforce_tool_call(
@@ -1375,7 +1376,7 @@ class CrewAIGuard:
         observed_result: Optional[EnforcementResult] = None
         if self._warrant is not None and self._signing_key is not None:
             bound = self._warrant.bind(self._signing_key)
-            roots = resolve_trusted_roots(self._trusted_roots)
+            roots = _sign_path_trusted_roots(resolve_trusted_roots(self._trusted_roots), bound)
 
             try:
                 enforcement: EnforcementResult = await enforce_tool_call_async(
