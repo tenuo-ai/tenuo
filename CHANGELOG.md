@@ -88,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reply without usage: the reservation is the charge, and `usage_counts`
   returns `None` for it. Before, a zero count was charged nothing.
 
+### Fixed
+
+- **Python CrewAI:** `GuardedCrew.with_issuer()` carries the issuer warrant and
+  its parents into every agent guard, so delegated calls verify against the
+  trusted root. Issuers accept a WarrantStack, a root-first list, or explicit
+  `warrant_chain` parents. `with_trusted_roots()` sets roots for the crew;
+  otherwise guards continue to use the global configuration.
+
 ## [0.3.8] - 2026-11-24
 
 ### Added
