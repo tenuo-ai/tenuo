@@ -650,6 +650,54 @@ def test_a_grant_is_copied_when_it_is_checked(provider, setup):
     assert audits == []
 
 
+def test_callbacks_that_would_need_awaiting_do_not_count_as_having_run(provider, setup):
+    issuer, holder, _, _, audits, *_ = setup
+
+    async def later(record):
+        audits.append(record)
+
+    for callbacks in (dict(policy=later, audit=audits.append), dict(policy=lambda *_: None, audit=later)):
+        with pytest.raises(ValueError, match="plain functions"):
+            OAuthWarrantIssuer(credentials=issuer.credentials, signing_key=SigningKey.generate(), **callbacks)
+    # One that is not declared async and still hands back something to await.
+    written = issuer.audit
+    issuer.audit = lambda record: later(record)
+    token = provider["token"]()
+    proof = sign_oauth_holder_proof(token, holder, audience=AUDIENCE, task_id="t1")
+    with pytest.raises(TypeError, match="plain functions"):
+        issuer.issue(token, holder.public_key, "t1", proof)
+    assert audits == []  # No audit record, so no warrant.
+    issuer.audit = written
+    assert issuer.issue(token, holder.public_key, "t1", proof).id and len(audits) == 1
+
+
+def test_only_a_store_that_says_the_proof_is_new_lets_issuance_go_on(provider, validator):
+    answers = [True, None, "ok", 1]
+
+    class Other:
+        """A store written to some other contract."""
+
+        def claim(self, key, keep_until, owner):
+            return answers[0]
+
+        def release(self, key):
+            pass
+
+    audits = []
+    issuer = OAuthWarrantIssuer(
+        credentials=validator,
+        signing_key=SigningKey.generate(),
+        proof_store=Other(),
+        policy=lambda identity, task_id: TaskGrant({"refund": {"payment_id": Exact("p1")}}),
+        audit=audits.append,
+    )
+    while answers:
+        with pytest.raises(OAuthUnavailable, match="cannot record holder proofs"):
+            ask(issuer, provider["token"](), SigningKey.generate())
+        answers.pop(0)
+    assert audits == []
+
+
 def test_a_proof_store_that_looks_empty_is_still_the_one_used(provider, validator):
     class Counting(MemoryProofStore):
         claims = 0
@@ -788,7 +836,12 @@ def test_sqlite_store_closes_what_it_opens(tmp_path, recwarn):
     store.claim("a", time.time() + 100, "alice")
     store.release("a")
     gc.collect()
-    assert not [warning for warning in recwarn if issubclass(warning.category, ResourceWarning)]
+    # Only this store's connections: something else in the process may be collected here too.
+    assert not [
+        warning
+        for warning in recwarn
+        if issubclass(warning.category, ResourceWarning) and "sqlite3" in str(warning.message)
+    ]
 
 
 def test_one_caller_cannot_fill_the_proof_memory_and_a_denial_leaves_nothing(provider, validator, tmp_path):

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import heapq
+import inspect
 import logging
 import math
 import sqlite3
@@ -67,9 +68,19 @@ def _run_callback(callback: Callable[..., Any], *arguments: Any) -> Any:
     The exception still reaches a direct caller unchanged. The bundled
     endpoints read the mark: a callback may raise anything, a refusal type
     included, and that is the issuer failing, not the caller being refused.
+
+    A callback is a plain function. One that returns something to await (an
+    ``async def``, most likely) has not run, so it fails here rather than
+    count as a policy that answered or an audit that was written.
     """
     try:
-        return callback(*arguments)
+        result = callback(*arguments)
+        if inspect.isawaitable(result):
+            close = getattr(result, "close", None)
+            if callable(close):
+                close()  # It will never run. Closed, so it does not warn when collected.
+            raise TypeError("Policy and audit callbacks must be plain functions, not async ones")
+        return result
     except Exception as exc:
         try:
             exc._tenuo_callback_failure = True  # type: ignore[attr-defined]
@@ -372,6 +383,11 @@ class SingleRequestIssuer:
             raise self._busy(
                 f"This {self._wording.who} is at its limit for recent single-request exchanges; retry shortly"
             )
+        if outcome != CLAIMED:
+            # Only a store that says the proof is new lets the exchange go on. Any other
+            # answer (a store written to another contract, a fault) is not that.
+            self._log.error("The proof store answered %r, which is not a ProofStore outcome", outcome)
+            raise self._busy("Issuer cannot record holder proofs; retry shortly")
         try:
             return self.mint(identity, owner, expires_at, key, task_id, self.grant(identity, owner, task_id))
         except BaseException:

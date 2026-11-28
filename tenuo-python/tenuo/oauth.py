@@ -21,6 +21,7 @@ import asyncio
 import base64
 import hashlib
 import http.client
+import inspect
 import ipaddress
 import json
 import logging
@@ -735,6 +736,8 @@ class OAuthWarrantIssuer:
         self.credentials = (credentials,) if isinstance(credentials, OAuthTokens) else tuple(credentials)
         if not self.credentials or not callable(policy) or not callable(audit):
             raise ValueError("credentials, policy and audit are required")
+        if inspect.iscoroutinefunction(policy) or inspect.iscoroutinefunction(audit):
+            raise ValueError("policy and audit are plain functions: they run in worker threads, not on the event loop")
         if len({source.trust.issuer for source in self.credentials}) != len(self.credentials):
             raise ValueError("Each issuer may be trusted once")
         self.policy, self.audit = policy, audit

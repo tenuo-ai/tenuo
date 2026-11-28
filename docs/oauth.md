@@ -412,8 +412,8 @@ was denied or failed can be sent again.
   file on a network filesystem. For several hosts, implement `ProofStore`
   (`claim` and `release`) on a store that claims atomically across them.
   Without one, each replica remembers its own proofs.
-- **Callbacks.** Policy and audit run in worker threads and must set their own
-  deadlines on what they call. Whatever they raise is the issuer failing: it
+- **Callbacks.** Policy and audit are plain functions, not `async` ones. They
+  run in worker threads and must set their own deadlines on what they call. Whatever they raise is the issuer failing: it
   is logged in full and the caller is told only `Issuer error`. The same goes
   for a grant the policy returns that cannot be used, such as a tool with no
   argument constraints.
