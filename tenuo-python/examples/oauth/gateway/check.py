@@ -232,6 +232,12 @@ def exercise(root, support, reports, audits, environment):
     subprocess.run([*COMPOSE, "stop", "tenuo-authorizer"], env=environment, check=True, capture_output=True)
     status, _, _ = refund(REFUND, token=support, warrant=warrant, holder=holder)
     check(status == 403, "with the authorizer stopped, the gateway refuses the refund")
+    # Put it back, so that --keep leaves a gateway that works.
+    subprocess.run([*COMPOSE, "start", "tenuo-authorizer"], env=environment, check=True, capture_output=True)
+    wait_for(
+        "The authorizer", lambda: refund(REFUND, token=support, warrant=warrant, holder=holder)[0] == 200, seconds=60
+    )
+    check(True, "with the authorizer back, the approved refund goes through again")
 
 
 if __name__ == "__main__":
