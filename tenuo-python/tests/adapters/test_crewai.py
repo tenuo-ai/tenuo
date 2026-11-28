@@ -1838,6 +1838,51 @@ class TestGuardedCrewIssuerChain:
             agent=agent, tool_name="search", tool_input={"query": "arxiv:2401.00001"}
         )) is False
 
+    def test_existing_hook_keeps_its_guards_and_policy(self):
+        from types import SimpleNamespace
+        from tenuo import config
+        from tenuo.crewai import GuardedCrew
+
+        crew = GuardedCrew(agents=[], tasks=[]).build()
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Pattern("arxiv:*"))
+                                     .on_denial("skip").build())
+        cfg = config.TenuoConfig()
+        token = config._config_context.set(cfg)
+        try:
+            hook = crew._create_combined_hook()
+        finally:
+            config._config_context.reset(token)
+        # A later kickoff/configuration cannot broaden an earlier hook.
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Wildcard())
+                                     .on_denial("skip").build())
+        cfg.mode = config.EnforcementMode.OBSERVE
+        context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                  tool_name="search", tool_input={"query": "evil.com"})
+        assert hook(context) is False
+
+    def test_existing_hook_keeps_runtime_trust_roots(self):
+        from types import SimpleNamespace
+        from tenuo import HolderIdentity, Runtime, SigningKey, Warrant, config
+        from tenuo.crewai import GuardedCrew
+
+        root, holder = SigningKey.generate(), SigningKey.generate()
+        warrant = (Warrant.mint_builder().capability("search", query=Wildcard())
+                   .holder(holder.public_key).mint(root))
+        crew = GuardedCrew(agents=[], tasks=[]).build()
+        crew._guards["researcher"] = (GuardBuilder().allow("search", query=Wildcard())
+                                     .with_warrant(warrant, holder).on_denial("skip").build())
+        runtime = Runtime(identity=HolderIdentity.generate(), trusted_roots=[SigningKey.generate().public_key])
+        token = config._config_context.set(config.TenuoConfig())
+        try:
+            with runtime.bind():
+                hook = crew._create_combined_hook()
+            runtime.trusted_roots[:] = [root.public_key]
+            context = SimpleNamespace(agent=SimpleNamespace(role="researcher"),
+                                      tool_name="search", tool_input={"query": "arxiv:1"})
+            assert hook(context) is False
+        finally:
+            config._config_context.reset(token)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

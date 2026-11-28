@@ -2713,12 +2713,16 @@ class _GuardedCrewImpl:
         from .decorators import _chain_context, chain_scope
         from .runtime import _runtime_context, get_runtime
 
-        guards = self._guards
+        guards = dict(self._guards)
         # Carry policy into CrewAI workers, not per-call outputs such as the
         # idempotency key shared by hooks and the downstream tool handler.
-        kickoff_config = get_config()
-        kickoff_chain = list(chain_scope() or [])
+        config = get_config()
         kickoff_runtime = get_runtime()
+        roots = resolve_trusted_roots(None)
+        if roots is None and kickoff_runtime is not None:
+            roots = list(kickoff_runtime.trusted_roots)
+        kickoff_config = replace(config, trusted_roots=list(roots or []), _authorizer=None)
+        kickoff_chain = list(chain_scope() or [])
 
         def guarded_crew_hook(context: Any) -> Optional[bool]:
             """Combined hook for GuardedCrew - routes to per-agent guards."""
