@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed (audience, client, preset, scope, key URL); the caller is still told
   the same thing every time. A task that is not granted is logged with the
   reason, and a token-exchange request names a parameter it does not support.
+- **Python: issuance hardening.** A task ID must be printable text, and a
+  timestamp or task of the wrong JSON type is answered 400 instead of 403, on
+  the OAuth and SPIFFE HTTP endpoints alike. Request JSON refuses numbers
+  longer than 64 characters. RSA keys over 8192 bits or with a public exponent
+  above 2^32 are passed over when OAuth and JWT-SVID key sets are read.
+  Identity claims must be printable text. The Entra ID preset refuses tokens
+  issued for a signed-in user.
 - **Python: one issuance core.** The SPIFFE JWT-SVID and forwarded-identity
   endpoints and the OAuth endpoint share holder-proof checking, proof memory,
   policy and audit handling. `SpiffeWarrantIssuer(proof_store=)` accepts a

@@ -99,6 +99,29 @@ def _consume_result(work: Any) -> None:
         work.exception()
 
 
+def _task_id_fault(task_id: Any) -> Optional[str]:
+    """What is wrong with a task ID, or None. One rule, for the side that signs and the side that issues.
+
+    Printable means no control characters, line separators or lone surrogates:
+    a task ID goes to the policy, the audit record and logs as it is.
+    """
+    if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
+        return f"task_id must contain 1–{MAX_TASK_ID} characters"
+    if not task_id.isprintable():
+        return "task_id must be printable text"
+    return None
+
+
+def _rsa_within_bounds(key: Any, minimum_bits: int = 2048) -> bool:
+    """Whether an RSA public key is one to verify signatures with.
+
+    Big enough to trust, and not so big that checking a signature is costly:
+    a provider's key with a huge modulus or public exponent makes every check
+    against it slow, for callers who have shown nothing yet.
+    """
+    return minimum_bits <= key.key_size <= 8192 and key.public_numbers().e <= 2**32
+
+
 @dataclass(frozen=True)
 class HolderProof:
     """A holder key's signed statement for one single-request exchange."""
@@ -325,12 +348,9 @@ class SingleRequestIssuer:
             raise
 
     def check_request(self, holder: Any, task_id: Any) -> None:
-        if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_TASK_ID:
-            raise self._refused(f"task_id must contain 1–{MAX_TASK_ID} characters")
-        try:
-            task_id.encode("utf-8")
-        except UnicodeEncodeError:  # A lone surrogate, which JSON can carry and no signed statement can.
-            raise self._refused("task_id must be valid Unicode text") from None
+        fault = _task_id_fault(task_id)
+        if fault is not None:
+            raise self._refused(fault)
         if not isinstance(holder, PublicKey):
             raise self._refused("holder must be a Tenuo PublicKey")
 

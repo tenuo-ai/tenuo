@@ -199,6 +199,11 @@ def allowed(root, warrant, holder, tool, args):
         {"scope": 5},
         {"scope": ["refunds:write", 5]},
         {"sub": ""},
+        {"sub": "alice\x85bob"},  # Text that a log or a terminal would break into two lines, or act on.
+        {"sub": "alice\x7f"},
+        {"sub": "alice\u2028bob"},
+        {"azp": "support\x9b2K"},
+        {"tenant_id": "acme\u2029"},
         {"sub": ...},
     ],
 )
@@ -417,6 +422,86 @@ def test_a_key_id_must_be_plain_text_even_if_the_provider_publishes_it(provider,
     with pytest.raises(OAuthError) as refused:
         validator.authenticate(token)
     assert refused.value.reason == "the header has no usable key ID (kid)"
+
+
+def test_key_set_entries_that_are_not_keys_are_passed_over(provider, validator):
+    good = provider["keys"][0]
+    provider["keys"] = ["a string", None, 7, [good], {**good, "kid": "odd", "kty": ["RSA"]}, {"kid": "bare"}, good]
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    assert set(validator._keys) == {"one"}
+
+
+def test_a_key_that_would_make_every_check_costly_is_not_used(provider, validator):
+    """A provider's RSA key with a huge public exponent makes verifying against it slow for everyone asked to."""
+
+    def b64(number):
+        return base64.urlsafe_b64encode(number.to_bytes((number.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+
+    good = provider["keys"][0]
+    modulus = int.from_bytes(base64.urlsafe_b64decode(good["n"] + "=" * (-len(good["n"]) % 4)), "big")
+    provider["keys"] = [
+        {**good, "kid": "costly", "e": b64(2**2040 + 1)},
+        {**good, "kid": "big", "e": b64(2**33 + 1)},
+        good,
+    ]
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    assert set(validator._keys) == {"one"}
+    from cryptography.hazmat.primitives.asymmetric import rsa as rsa_keys
+
+    from tenuo._issuance import _rsa_within_bounds
+
+    assert _rsa_within_bounds(rsa_keys.RSAPublicNumbers(65537, modulus).public_key())
+    assert not _rsa_within_bounds(rsa_keys.RSAPublicNumbers(2**33 + 1, modulus).public_key())
+    assert not _rsa_within_bounds(rsa_keys.RSAPublicNumbers(65537, modulus).public_key(), minimum_bits=4096)
+
+
+def test_the_largest_rsa_modulus_taken_is_8192_bits(provider, validator):
+    """At the limit a key is used. One bit over, it is passed over, and the keys next to it are not lost."""
+
+    def b64(number):
+        return base64.urlsafe_b64encode(number.to_bytes((number.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
+
+    good = provider["keys"][0]
+    at_the_limit, over_it = 2**8191 + 1, 2**8192 + 1  # Stand-ins for moduli of 8192 and 8193 bits.
+    provider["keys"] = [
+        {**good, "kid": "limit", "n": b64(at_the_limit)},
+        {**good, "kid": "over", "n": b64(over_it)},
+        good,
+    ]
+    assert validator.authenticate(provider["token"]()).subject == "alice"
+    assert set(validator._keys) == {"limit", "one"}
+    assert validator._keys["limit"][1].key_size == 8192
+    with pytest.raises(OAuthError) as refused:
+        validator.authenticate(provider["token"](headers={"kid": "over", "typ": "JWT"}))
+    assert "is not among the 2 usable keys" in refused.value.reason
+
+
+def test_every_refused_token_gets_the_same_message(provider, validator):
+    messages = set()
+    for changes in ({"aud": "elsewhere"}, {"cnf": {"jkt": "x"}}, {"act": {"sub": "s"}}, {"azp": "other"}, {"exp": 1}):
+        with pytest.raises(OAuthError) as refused:
+            validator.authenticate(provider["token"](**changes))
+        messages.add(str(refused.value))
+    assert messages == {"Invalid OAuth access token"}
+
+
+def test_a_claim_map_can_require_and_forbid_claims(provider):
+    """As the Entra ID preset does: a claim only access tokens carry, and none of a signed-in user's permissions."""
+    from tenuo.oauth import ENTRA_ID
+
+    entra = dict(ver="2.0", azpacr="2", roles=["Warrants.Request"], scope=..., typ=..., tenant_id=...)
+    instance = tokens(provider, claims=ENTRA_ID, required_scopes=frozenset({"Warrants.Request"}))
+    identity = instance.authenticate(provider["token"](**entra))
+    assert identity.client_id == "support" and identity.scopes == {"Warrants.Request"}
+    for changes, says in (
+        ({"azpacr": ...}, "no 'azpacr' claim"),
+        ({"scp": "Warrants.Request"}, "has a 'scp' claim"),
+        ({"ver": "1.0"}, "claim 'ver' is '1.0'"),
+        ({"roles": ...}, "Trust.required_scopes also needs"),
+    ):
+        with pytest.raises(OAuthError) as refused:
+            instance.authenticate(provider["token"](**{**entra, **changes}))
+        assert says in refused.value.reason
 
 
 def test_duplicate_jwt_claims_and_unsigned_token(provider, validator):
@@ -1254,6 +1339,59 @@ def test_keys_are_fetched_before_the_server_takes_requests(provider, setup, app)
         application.close()
 
 
+@pytest.mark.parametrize(
+    "task", ["t1\x00", "t1\r\n2026 INFO Issued warrant to bob", "t\x1b[2K", "t\u2028", "t\x7f", "t\x85"]
+)
+def test_a_task_id_is_printable_text_on_both_sides(provider, setup, app, task):
+    issuer, holder, *_ = setup
+    seen = []
+    written = issuer.policy
+    issuer.policy = lambda identity, task_id: seen.append(task_id) or written(identity, task_id)
+    token = provider["token"]()
+    with pytest.raises(OAuthError):  # The agent's side will not sign it.
+        sign_oauth_holder_proof(token, holder, audience=AUDIENCE, task_id=task)
+    body = json.loads(compact(token, holder))
+    body["task"] = task
+    status, _, reply, _ = call_app(app, headers=bearer(token), body=json.dumps(body).encode())
+    assert (status, reply["message"]) == (403, "task_id must be printable text")
+    assert seen == []  # It never reached the policy, the audit record or a log line of theirs.
+    with pytest.raises(OAuthError):
+        sign_oauth_holder_proof(token, holder, audience=AUDIENCE, task_id="t" * 257)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("timestamp", "1"), ("timestamp", 1.5), ("timestamp", None), ("task", 7), ("task", ["t1"])]
+)
+def test_a_field_of_the_wrong_type_is_malformed_not_refused(provider, setup, app, field, value):
+    _, holder, *_ = setup
+    token = provider["token"]()
+    body = json.loads(compact(token, holder))
+    body[field] = value
+    status, _, reply, _ = call_app(app, headers=bearer(token), body=json.dumps(body).encode())
+    assert (status, reply["message"]) == (400, "Malformed request")
+    status, _, reply, _ = call_app(app, headers=FORM, body=exchange(token, holder, detail={field: value}))
+    assert (status, reply["error"]) == (400, "invalid_request")
+
+
+def test_very_long_numbers_are_refused_before_they_are_converted(provider, setup, app):
+    from tenuo._issuance_http import _strict_json
+
+    for document in (b'{"a": ' + b"1" * 65 + b"}", b"[" + b"9" * 60000 + b"]", b'{"a": ' + b"1" * 70 + b".5}"):
+        with pytest.raises(ValueError, match="Number too long"):
+            _strict_json(document)
+    assert _strict_json(b'{"a": 18446744073709551615, "b": 1.5}') == {"a": 18446744073709551615, "b": 1.5}
+    _, holder, *_ = setup
+    token = provider["token"]()
+    fields = json.loads(compact(token, holder))
+    body = json.dumps({**fields, "v": 0}).replace('"v": 0', '"v": ' + "1" * 5000).encode()
+    assert len(body) > 5000 and call_app(app, headers=bearer(token), body=body)[0] == 400
+    details = (
+        '[{"type":"tenuo_task","task":"t1","holder":"x","timestamp":' + "9" * 60000 + ',"nonce":"x","signature":"x"}]'
+    )
+    status, _, reply, _ = call_app(app, headers=FORM, body=exchange(token, holder, authorization_details=details))
+    assert (status, reply["error"]) == (400, "invalid_request")
+
+
 def test_one_identity_cannot_take_every_place(provider, setup):
     issuer, holder, *_ = setup
     application = OAuthWarrantIssuerApp(issuer, max_concurrent=8, max_per_identity=1)
@@ -1616,3 +1754,42 @@ def test_the_quickstart_runs_as_printed():
     ):
         assert line in done.stdout, line
     assert done.stdout.count("refunded 4000 cents") == 1  # The approved refund is made once.
+
+
+def test_the_client_shows_only_printable_text_from_an_issuer(setup):
+    """What an issuer says is shown to whoever runs the agent. Nothing in it should drive their terminal or their log."""
+    _, holder, root, *_ = setup
+
+    class Hostile(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            body = json.dumps(
+                {"error": "refused", "message": "no\x1b[2K\r\n2026 INFO all is well\u2028" + "x" * 500}
+            ).encode()
+            self.send_response(403)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Hostile)
+    threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True).start()
+    try:
+        with pytest.raises(OAuthError) as refused:
+            request_warrant_oauth(
+                f"http://127.0.0.1:{server.server_port}/warrants",
+                token="aaaa.bbbb.cccc",
+                audience=AUDIENCE,
+                issuer_key=root.public_key,
+                holder_key=holder,
+                task_id="t1",
+                allow_loopback_http=True,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+    text = str(refused.value)
+    assert text.startswith("Issuer refused (HTTP 403): no?[2K??2026 INFO all is well?") and text.isprintable()
+    assert len(text) < 260

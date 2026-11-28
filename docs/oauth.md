@@ -28,11 +28,12 @@ pip install 'tenuo[oauth]' uvicorn
 python tenuo-python/examples/oauth/quickstart.py
 ```
 
-Python 3.9 or later. [`quickstart.py`](../tenuo-python/examples/oauth/quickstart.py)
-is one file with no Docker and no identity provider: it signs its own tokens
-in place of yours, runs the issuer, and shows an approved refund going through
-and three others being refused. Its four parts are the four things you write,
-so it is also the file to copy from. The steps below explain each part.
+Python 3.9 or later. The example file is in this repository.
+[`quickstart.py`](../tenuo-python/examples/oauth/quickstart.py) is one file
+with no Docker and no identity provider: it signs its own tokens in place of
+yours, runs the issuer, and shows an approved refund going through and five
+other requests being refused. Its four parts are the four things you write, so
+it is also the file to copy from. The steps below explain each part.
 
 These run against real software, and CI runs all of them on every change to
 this adapter:
@@ -115,8 +116,10 @@ A `ClaimMap` cannot describe every provider. A token must carry `iss`, `sub`,
 `aud`, `iat` and `exp`. Amazon Cognito access tokens have no `aud` claim, so
 they are refused today.
 
-All providers: RS256 (RSA of 2048 bits or more) or ES256, with a key ID. The
-only headers accepted are `alg`, `kid`, `typ` and those the preset names.
+All providers: RS256 (RSA of 2048 to 8192 bits) or ES256, with a key ID. The
+only headers accepted are `alg`, `kid`, `typ` and those the preset names. The
+subject, the client and the tenant must be printable text of at most 1024
+characters: no control characters and no line separators.
 Refused: opaque tokens, encrypted tokens, unsigned tokens, tokens with
 duplicate JSON members, sender-constrained tokens (`cnf`), and tokens with an
 actor chain (`act`, `may_act`).
@@ -401,8 +404,9 @@ Things to know:
   Grant the role to the calling application with admin consent, and require
   it with `required_scopes`. Without a role an application in your tenant can
   still get a token for the API, so `clients` matters too.
-- Tested with tokens an application gets for itself. Tokens issued for a
-  signed-in user carry `scp` instead of `roles` and are not tested here.
+- The preset is for tokens an application gets for itself. A token issued
+  for a signed-in user carries `scp`, and is refused. So is a token without
+  `azpacr`, which Entra puts on access tokens and not on ID tokens.
 - A CI job needs no stored secret: Entra accepts the job's GitHub Actions
   token as the client assertion (workload identity federation). The
   [test](../tenuo-python/tests/e2e/test_oauth_entra.py) does exactly that.
@@ -475,7 +479,9 @@ Content-Type: application/json
 ```
 
 The token is checked before the body is read. Success is
-`200 {"warrant": "<base64>"}` with `Cache-Control: no-store`.
+`200 {"warrant": "<base64>"}` with `Cache-Control: no-store`. A task ID is
+printable text of 1 to 256 characters; the helper refuses to sign any other,
+and so does the endpoint.
 
 The holder signs, with Ed25519: the ASCII bytes
 `tenuo.oauth.holder-binding.v1`, one zero byte, SHA-256 of the token, SHA-256
@@ -487,7 +493,7 @@ was denied or failed can be sent again.
 
 | Status | Meaning |
 |---|---|
-| 400 | Malformed request, including JSON with a duplicated member |
+| 400 | Malformed request, including JSON with a duplicated member, a field of the wrong JSON type, or a number longer than 64 characters |
 | 401 | Token not accepted |
 | 403 | Task not granted, or holder proof refused |
 | 408, 413, 415 | Body too slow, too large (64 KiB), or not `application/json` |
@@ -498,7 +504,11 @@ was denied or failed can be sent again.
 The caller is told little on purpose: the same words for every token that is
 not accepted, so the endpoint does not help someone probe it. The issuer's log
 (logger `tenuo.oauth`, level INFO) says which check failed. It can include the
-token's audience, client and scope names. It never includes the token.
+token's audience, client and scope names, and its value for any claim you
+named in `Trust.where` or that the claim map fixes. If you put a personal
+attribute such as an email address in `Trust.where`, a refused caller's value
+of it is logged. Values are quoted, escaped and cut at 80 characters. The log
+never includes the token.
 
 | The caller sees | Look for in the issuer's log | Usual cause |
 |---|---|---|
@@ -569,8 +579,9 @@ except OAuthError as refused:
   fetches at once, and a fetch that began before it cannot bring the key
   back.
 - **Key sets.** An entry this adapter has no use for (another algorithm or
-  curve, an encryption key, an RSA key under 2048 bits, no key ID) is passed
-  over, and a token signed by it is not accepted. A key ID listed twice, or
+  curve, an encryption key, an RSA key under 2048 or over 8192 bits or with a
+  public exponent above 2^32, no key ID, something that is not a key at all)
+  is passed over, and a token signed by it is not accepted. A key ID listed twice, or
   private key material, refuses the whole set.
 - **Several processes or hosts.** `SQLiteProofStore` shares proof memory
   between processes on one host and keeps it across restarts. Do not put the
