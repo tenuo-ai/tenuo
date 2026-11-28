@@ -102,6 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Python LangGraph:** `state["warrant"]` accepts an encoded WarrantStack or
+  root-first list and carries its parents into authorization. Ambiguous
+  stack-plus-explicit-chain input is rejected. The 64 KiB pre-decode limit
+  applies to direct tokens and every string entry in a chain list.
 - **Python CrewAI:** `GuardedCrew.with_issuer()` carries the issuer warrant and
   its parents into every agent guard, so delegated calls verify against the
   trusted root. Issuers accept a WarrantStack, a root-first list, or explicit
