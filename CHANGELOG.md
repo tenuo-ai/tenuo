@@ -74,6 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default is `Ed25519` only, so behavior is unchanged until ES256 is
   listed.
 
+- **Python SPIFFE: the mutual-TLS issuer stays reachable when its connection
+  places are contested.** At the limit, a new connection takes the place of
+  the peer that has waited longest without completing a handshake, and one
+  SPIFFE ID holds at most a quarter of the places
+  (`SpiffeIssuerServer(max_per_identity=)`).
 - Python SPIFFE adapter (`tenuo[spiffe]`): authenticate X.509-SVID peers over
   mTLS, verify a separate Tenuo holder key, and issue task-scoped warrants under
   explicit application policy. Includes an asyncio issuance endpoint

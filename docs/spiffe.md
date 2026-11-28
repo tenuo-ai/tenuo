@@ -1299,6 +1299,7 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 | Outstanding challenges, total | 1024 | `SpiffeWarrantIssuer(max_pending=)` |
 | Outstanding challenges, per SPIFFE ID | 16 | `SpiffeWarrantIssuer(max_pending_per_identity=)` |
 | Open connections, counted from accept | 256 | `SpiffeIssuerServer(max_connections=)` |
+| Open connections for one SPIFFE ID | a quarter of that (64) | `SpiffeIssuerServer(max_per_identity=)` |
 | Issuer deadline for handshake plus exchange | 10 seconds | `SpiffeIssuerServer(timeout=)` |
 | Agent socket timeout | 10 seconds | `request_warrant(timeout=)` |
 | Policy and audit threads | 32 | `SpiffeIssuerServer(max_workers=)` |
@@ -1346,8 +1347,19 @@ The issuer key is yours to rotate; SPIRE does not manage it.
 - A request is refused once 16 challenges for the same SPIFFE ID are already
   outstanding. Raise `max_pending_per_identity` if many replicas share one
   SPIFFE ID and start tasks at the same moment.
-- Connections over `max_connections` are closed at once. Also limit new
-  connections per source at the firewall or the layer-4 load balancer.
+- When every connection place is taken, a new connection takes the place of
+  the peer that has waited longest without completing its TLS handshake. A
+  peer that connects and sends nothing therefore cannot keep agents out. A
+  peer that has completed the handshake keeps its place until it finishes or
+  the deadline passes, and a new connection is closed if every place is held
+  that way.
+- One SPIFFE ID holds at most a quarter of the places. A workload that
+  completes the handshake and then stalls cannot take them all, but it does
+  make the issuer do a handshake for each connection it opens: in a test, one
+  such workload reconnecting as fast as it could left other agents served
+  about a third of the time. Raise `max_per_identity` if many replicas share
+  one SPIFFE ID. Limit new connections per source at the firewall or the
+  layer-4 load balancer as well.
 - If the deadline passes while `audit` is still running, the audit call
   finishes but the agent gets no warrant. An audit log can therefore hold a
   warrant that was never delivered. It cannot miss one that was.
@@ -1411,6 +1423,7 @@ matching reason on the `tenuo.spiffe` logger.
 | `Trust bundle may contain only CA certificates` | `bundle_file` points at the SVID or another non-CA file. | Point it at the bundle file. |
 | `Issuer refused: Workload is not authorized for this task` | The policy returned `None`. | Check the task record and the caller's SPIFFE ID in the issuer log. |
 | `Issuer refused: Too many pending holder challenges for this workload` | 16 requests from one SPIFFE ID are unfinished at the same time. | Raise `max_pending_per_identity`, or find the agents that open requests and stall. |
+| `Issuer refused: Too many connections open for this workload; retry shortly` | One SPIFFE ID already holds its share of the issuer's connections (64 by default). | Retry. Raise `max_per_identity` if many replicas share one SPIFFE ID. |
 | `Issuer refused: SVID expires too soon to issue a warrant` | The agent's SVID has about a second left. | The agent is not receiving renewals. |
 | `Issuer error; see the issuer's log` | The policy or audit callback raised. | Read the traceback in the issuer log. |
 | `Challenge is from a different issuer key` | The agent's `issuer_key` is not this issuer's key. | Redistribute `tenuo-issuer.pub`. |
@@ -1653,7 +1666,7 @@ language. With a JWT-SVID it refuses plain `http://` except to loopback.
 | `SpiffeTLS(trust_domain=, bundle_file=, cert_file=, key_file=, server_side=, federated_bundle_files=)` | Loads credentials from files. `reload()` and `reload_if_changed()` pick up new ones. |
 | `transport.authenticate(connection, expected_id=)` | Returns the peer's `SpiffeIdentity`. `transport.identity` is the local one. |
 | `SpiffeWarrantIssuer(tls=, jwt=, forwarded=, signing_key=, policy=, audit=, max_pending=, max_pending_per_identity=, max_jwt_proofs=, max_jwt_proofs_per_identity=, proof_store=)` | Runs policy, challenges the holder key, mints warrants. |
-| `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
+| `SpiffeIssuerServer(issuer, host=, port=, max_connections=, timeout=, reload_interval=, max_workers=, max_per_identity=)` | The mTLS endpoint. `async with` it, then `serve_forever()`. |
 | `request_warrant(tls, address, issuer_id=, issuer_key=, holder_key=, task_id=, timeout=)` | Agent-side call. `arequest_warrant` for asyncio. `issuer_key` may be a list. |
 | `SpiffeJWT.from_workload_api(trust_domain=, audience=, socket_path=, federates_with=)` / `SpiffeJWT(trust_domain=, audience=, bundle_file=, federated_bundle_files=)` | Validates JWT-SVIDs. `authenticate(token)` returns a `SpiffeIdentity`. In `tenuo.spiffe_jwt`. |
 | `SpiffeJWTIssuerApp(issuer, path="/warrants", max_concurrent=, max_workers=, body_timeout=, max_per_identity=)` | ASGI endpoint for JWT-SVID bearers. |
