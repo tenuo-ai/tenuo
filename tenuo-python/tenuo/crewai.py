@@ -2455,7 +2455,9 @@ class GuardedCrewBuilder:
         chain, so it verifies against the trusted root alone. If the issuer
         warrant was itself delegated, pass its parents as ``warrant_chain``,
         or pass the whole chain as ``warrant`` (WarrantStack string or
-        root-first list).
+        root-first list). Without explicit parents, call-time ``chain_scope()``
+        supplies ancestry; directly trusting the issuer key still works when
+        no ambient chain is present.
         """
         self._issuer_warrant, self._issuer_chain = split_presented_warrant(warrant, warrant_chain)
         self._issuer_key = signing_key

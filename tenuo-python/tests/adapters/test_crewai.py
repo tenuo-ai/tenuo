@@ -1689,7 +1689,11 @@ class TestGuardedCrewIssuerChain:
             presented = encode_warrant_stack(chain) if presentation == "stack" else chain
             guard = self._agent_guard(presented, issuer_key, root_key)
 
-        assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
+        from tenuo.decorators import chain_scope
+
+        # An unrelated ambient scope must not replace explicit issuer parents.
+        with chain_scope([issuer_warrant]):
+            assert guard._authorize("search", {"query": "arxiv:2401.00001"}) is None
         assert isinstance(guard._authorize("search", {"query": "evil.com"}), DenialResult)
 
 
